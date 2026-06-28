@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>genropy-asgi for Dummies</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2d3140;
+    --text: #e1e4ed;
+    --text-dim: #8b90a0;
+    --accent: #6c9eff;
+    --accent2: #a78bfa;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --red: #f87171;
+    --cyan: #22d3ee;
+    --pink: #f472b6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 1.2rem 2rem 0;
+    background: linear-gradient(180deg, #161926 0%, var(--bg) 100%);
+    flex-shrink: 0;
+    text-align: center;
+    position: relative;
+  }
+  header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse 500px 200px at 50% 20%, rgba(108,158,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  header h1 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.2rem;
+  }
+  header .subtitle {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+  }
+
+  /* ── Tab bar ── */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    flex-shrink: 0;
+    overflow-x: auto;
+    background: var(--bg);
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    padding: 0.7rem 1.2rem;
+    border: none;
+    background: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Tab content ── */
+  .tab-panels { flex: 1; overflow: hidden; position: relative; }
+  .tab-panel {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    padding: 2rem;
+    display: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .tab-panel.active { display: block; }
+  .tab-panel .content { max-width: 860px; margin: 0 auto; }
+
+  /* ── Typography ── */
+  h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 1.2rem; letter-spacing: -0.02em; }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 2rem 0 0.8rem; color: var(--accent); }
+  h3:first-child { margin-top: 0; }
+  p { margin-bottom: 1rem; }
+  p.dim { color: var(--text-dim); }
+  ul { color: var(--text-dim); margin: 1rem 0; padding-left: 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+
+  /* ── SVG diagrams ── */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
+  }
+  .diagram svg { max-width: 100%; height: auto; }
+
+  /* ── Code ── */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.2rem 1.5rem;
+    padding-right: 3.5rem;
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.65;
+    position: relative;
+  }
+  code { font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace; font-size: 0.85rem; }
+  pre code { color: var(--text); }
+  .kw { color: var(--accent2); }
+  .fn { color: var(--accent); }
+  .str { color: var(--green); }
+  .cmt { color: var(--text-dim); font-style: italic; }
+  .dec { color: var(--orange); }
+  .cls { color: var(--cyan); }
+  .num { color: var(--orange); }
+  code.il {
+    background: var(--surface2);
+    padding: 0.15em 0.45em;
+    border-radius: 5px;
+    font-size: 0.83em;
+  }
+
+  /* ── Copy button ── */
+  .copy-btn {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.15s, border-color 0.15s;
+    z-index: 1;
+  }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); }
+
+  /* ── Cards ── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.2rem;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; }
+  .card p { font-size: 0.85rem; color: var(--text-dim); margin: 0; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 5px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .b-wsgi { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-asgi { background: rgba(108,158,255,0.15); color: var(--accent); }
+  .b-db { background: rgba(74,222,128,0.15); color: var(--green); }
+  .b-cli { background: rgba(167,139,250,0.15); color: var(--accent2); }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.5rem; font-size: 0.88rem; }
+  th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:last-child td { border-bottom: none; }
+
+  /* ── Callout ── */
+  .callout {
+    background: rgba(108,158,255,0.06);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 0.9rem 1.2rem;
+    margin: 1.2rem 0;
+  }
+  .callout p { margin: 0; font-size: 0.9rem; }
+  .callout.warn {
+    background: rgba(251,146,60,0.06);
+    border-left-color: var(--orange);
+  }
+
+  /* ── Footer ── */
+  .tab-footer {
+    text-align: center;
+    padding: 2rem 0;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    margin-top: 2rem;
+    border-top: 1px solid var(--border);
+  }
+  .tab-footer a { color: var(--accent); text-decoration: none; }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    header h1 { font-size: 1.4rem; }
+    .tab-btn { padding: 0.6rem 0.8rem; font-size: 0.8rem; }
+    .tab-panel { padding: 1.2rem; }
+    pre { font-size: 0.78rem; padding: 0.9rem; white-space: pre-wrap; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>genropy-asgi for Dummies</h1>
+  <p class="subtitle">Run your GenroPy sites on ASGI &mdash; same config, same workflow, modern server</p>
+</header>
+
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="why">Why</button>
+  <button class="tab-btn" data-tab="quickstart">Quick Start</button>
+  <button class="tab-btn" data-tab="concepts">Concepts</button>
+  <button class="tab-btn" data-tab="cli">CLI</button>
+  <button class="tab-btn" data-tab="config">Config</button>
+  <button class="tab-btn" data-tab="gateway">WSGI Gateway</button>
+  <button class="tab-btn" data-tab="database">Database</button>
+  <button class="tab-btn" data-tab="advanced">Advanced</button>
+  <button class="tab-btn" data-tab="cheat">Cheat Sheet</button>
+</nav>
+
+<div class="tab-panels">
+
+<!-- ═══════════════════════ WHY ═══════════════════════ -->
+<div class="tab-panel active" id="tab-why">
+<div class="content">
+
+<h2>The Problem</h2>
+
+<p>You have a GenroPy site. It works. It runs on <code class="il">werkzeug</code> (WSGI), which
+has been the standard for years. But WSGI is a synchronous protocol from 2003.
+It cannot handle WebSockets, it blocks on every I/O operation, and adding
+modern features means fighting the protocol itself.</p>
+
+<p>You want to add a REST API with auto-generated Swagger docs, or a WebSocket
+endpoint for real-time updates, or serve an MCP bridge for AI agents. With
+pure WSGI, each of these requires a separate server or an awkward hack.</p>
+
+<div class="callout">
+<p><strong>genropy-asgi lets you keep your GenroPy site untouched while running it
+on a modern ASGI server.</strong> Your existing pages, RPCs, and workflows work
+exactly as before. New ASGI-native features (REST APIs, WebSocket, MCP)
+run alongside them on the same port.</p>
+</div>
+
+<div class="diagram">
+<svg viewBox="0 0 720 340" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8b90a0" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- Client -->
+  <rect x="280" y="10" width="160" height="40" rx="8" fill="#232733" stroke="#8b90a0" stroke-width="1"/>
+  <text x="360" y="35" text-anchor="middle" fill="#8b90a0" font-size="11" font-weight="600">Browser / Client</text>
+
+  <!-- Arrow down -->
+  <line x1="360" y1="50" x2="360" y2="75" stroke="#8b90a0" marker-end="url(#arrow)"/>
+
+  <!-- uvicorn -->
+  <rect x="250" y="80" width="220" height="40" rx="8" fill="#232733" stroke="#6c9eff" stroke-width="1.5"/>
+  <text x="360" y="105" text-anchor="middle" fill="#6c9eff" font-size="11" font-weight="600">uvicorn (ASGI server)</text>
+
+  <!-- Arrow down -->
+  <line x1="360" y1="120" x2="360" y2="145" stroke="#8b90a0" marker-end="url(#arrow)"/>
+
+  <!-- WSGI Gateway -->
+  <rect x="200" y="150" width="320" height="45" rx="8" fill="#232733" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="360" y="170" text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="600">WsgiGatewayMiddleware</text>
+  <text x="360" y="186" text-anchor="middle" fill="#8b90a0" font-size="9">"Is this path an ASGI route?"</text>
+
+  <!-- Two arrows -->
+  <line x1="280" y1="195" x2="150" y2="235" stroke="#fb923c" marker-end="url(#arrow)"/>
+  <text x="185" y="215" fill="#fb923c" font-size="9" font-weight="600">NO → WSGI</text>
+
+  <line x1="440" y1="195" x2="560" y2="235" stroke="#4ade80" marker-end="url(#arrow)"/>
+  <text x="510" y="215" fill="#4ade80" font-size="9" font-weight="600">YES → ASGI</text>
+
+  <!-- GenroPy box -->
+  <rect x="50" y="240" width="200" height="50" rx="8" fill="#232733" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="150" y="262" text-anchor="middle" fill="#fb923c" font-size="11" font-weight="600">GnrWsgiSite</text>
+  <text x="150" y="278" text-anchor="middle" fill="#8b90a0" font-size="9">your GenroPy site (unchanged)</text>
+
+  <!-- ASGI Apps box -->
+  <rect x="470" y="240" width="200" height="50" rx="8" fill="#232733" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="570" y="262" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="600">ASGI Applications</text>
+  <text x="570" y="278" text-anchor="middle" fill="#8b90a0" font-size="9">REST API, Swagger, MCP, WebSocket</text>
+
+  <!-- Bottom labels -->
+  <text x="150" y="310" text-anchor="middle" fill="#8b90a0" font-size="9">/index, /mypage, /rpc → GenroPy</text>
+  <text x="570" y="310" text-anchor="middle" fill="#8b90a0" font-size="9">/api/*, /docs, /_server → ASGI</text>
+</svg>
+</div>
+
+<h3>What changes for you</h3>
+
+<table>
+  <tr><th>Aspect</th><th>Before (gnrwsgiserve)</th><th>After (gnrasgiserve)</th></tr>
+  <tr><td>Your GenroPy code</td><td>Unchanged</td><td>Unchanged</td></tr>
+  <tr><td>Your config files</td><td>Unchanged</td><td>Unchanged</td></tr>
+  <tr><td>Your workflow</td><td><code class="il">gnrwsgiserve mysite</code></td><td><code class="il">gnrasgiserve mysite</code></td></tr>
+  <tr><td>WebSocket support</td><td>No</td><td>Native</td></tr>
+  <tr><td>REST APIs alongside site</td><td>Separate server</td><td>Same port</td></tr>
+  <tr><td>Server technology</td><td>werkzeug (WSGI)</td><td>uvicorn (ASGI)</td></tr>
+</table>
+
+<div class="tab-footer">genropy-asgi v0.1.0 &mdash; Apache 2.0 License</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ QUICK START ═══════════════════════ -->
+<div class="tab-panel" id="tab-quickstart">
+<div class="content">
+
+<h2>Up and Running in 2 Minutes</h2>
+
+<h3>Install</h3>
+
+<pre><code><span class="cmt"># genro-asgi core (from PyPI)</span>
+pip install genro-asgi --pre          <span class="cmt"># or pin: pip install genro-asgi==0.5.1.dev1</span>
+
+<span class="cmt"># genropy-asgi bridge (not yet on PyPI — install from local checkout)</span>
+pip install -e /path/to/genro-asgi/contrib/genropy_asgi</code></pre>
+
+<p>This gives you the <code class="il">gnrasgiserve</code> command. GenroPy must already be installed
+and configured (<code class="il">~/.gnr/environment.xml</code> must exist).
+<code class="il">genropy-asgi</code> is not yet published on PyPI — install it from the local
+repository checkout.</p>
+
+<h3>Run your site</h3>
+
+<pre><code><span class="cmt"># Exactly like gnrwsgiserve &mdash; same name, same options</span>
+gnrasgiserve mysite</code></pre>
+
+<p>Open <code class="il">http://localhost:8080/index</code> in your browser. That's it. Your site is running on ASGI.</p>
+
+<h3>Common variations</h3>
+
+<pre><code><span class="cmt"># Custom port</span>
+gnrasgiserve mysite -p 9000
+
+<span class="cmt"># Auto-reload on file changes (development)</span>
+gnrasgiserve mysite --reload
+
+<span class="cmt"># Open browser automatically</span>
+gnrasgiserve mysite -o
+
+<span class="cmt"># Remote database (via gnrdaemon SSH tunnel)</span>
+gnrasgiserve mysite --remotedb myremote
+
+<span class="cmt"># All together</span>
+gnrasgiserve mysite -p 9000 --reload -o</code></pre>
+
+<div class="callout">
+<p><strong>Key insight:</strong> <code class="il">gnrasgiserve</code> replicates steps 1&ndash;6 of
+<code class="il">gnrwsgiserve</code> identically (argument parsing, config resolution,
+site path lookup, siteconfig loading, option merging, GnrWsgiSite creation).
+Only step 7 differs: uvicorn instead of werkzeug.</p>
+</div>
+
+<h3>Verify it works</h3>
+
+<pre><code><span class="cmt"># Your GenroPy pages</span>
+curl http://localhost:8080/index
+
+<span class="cmt"># Server meta endpoint (new, ASGI-native)</span>
+curl http://localhost:8080/_server/info</code></pre>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ CONCEPTS ═══════════════════════ -->
+<div class="tab-panel" id="tab-concepts">
+<div class="content">
+
+<h2>Core Concepts</h2>
+
+<p>genropy-asgi has three moving parts. Understanding how they connect is
+all you need.</p>
+
+<div class="cards">
+  <div class="card">
+    <h4>GenropyAsgiServer</h4>
+    <p>An <code class="il">AsgiServer</code> that knows how to create GenroPy database connections
+    from <code class="il">config.yaml</code>. It reads <code class="il">databases.*.genropy_app</code> entries,
+    creates <code class="il">GnrApp</code> instances, and registers their <code class="il">.db</code> in the
+    server's <code class="il">db_registry</code>.</p>
+  </div>
+  <div class="card">
+    <h4>WsgiGatewayMiddleware</h4>
+    <p>Sits in the middleware chain. For each HTTP request, it checks
+    if the first path segment matches an ASGI app. If yes, the request
+    flows to the ASGI Dispatcher. If no, it's converted to a WSGI call
+    and executed against the GenroPy site in a thread.</p>
+  </div>
+  <div class="card">
+    <h4>gnrasgiserve CLI</h4>
+    <p>Drop-in replacement for <code class="il">gnrwsgiserve</code>. Same arguments, same
+    config resolution, same site creation. Only the server engine
+    changes from werkzeug to uvicorn.</p>
+  </div>
+</div>
+
+<h3>The two worlds</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <marker id="arr2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8b90a0" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- WSGI World -->
+  <rect x="30" y="20" width="300" height="160" rx="12" fill="none" stroke="#fb923c" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="180" y="45" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">WSGI WORLD (synchronous, threaded)</text>
+
+  <rect x="60" y="60" width="240" height="35" rx="6" fill="#232733" stroke="#fb923c" stroke-width="1"/>
+  <text x="180" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10">GnrWsgiSite &bull; pages &bull; RPCs</text>
+
+  <rect x="60" y="110" width="240" height="35" rx="6" fill="#232733" stroke="#fb923c" stroke-width="1"/>
+  <text x="180" y="132" text-anchor="middle" fill="#e1e4ed" font-size="10">werkzeug patterns &bull; SCRIPT_NAME</text>
+
+  <!-- ASGI World -->
+  <rect x="390" y="20" width="300" height="160" rx="12" fill="none" stroke="#4ade80" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="540" y="45" text-anchor="middle" fill="#4ade80" font-size="10" font-weight="600">ASGI WORLD (async, native)</text>
+
+  <rect x="420" y="60" width="240" height="35" rx="6" fill="#232733" stroke="#4ade80" stroke-width="1"/>
+  <text x="540" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10">REST APIs &bull; Swagger &bull; MCP</text>
+
+  <rect x="420" y="110" width="240" height="35" rx="6" fill="#232733" stroke="#4ade80" stroke-width="1"/>
+  <text x="540" y="132" text-anchor="middle" fill="#e1e4ed" font-size="10">WebSocket &bull; WSX &bull; Middleware</text>
+
+  <!-- Bridge arrow -->
+  <line x1="330" y1="100" x2="390" y2="100" stroke="#a78bfa" stroke-width="2" marker-end="url(#arr2)"/>
+  <text x="360" y="90" text-anchor="middle" fill="#a78bfa" font-size="8" font-weight="600">bridge</text>
+</svg>
+</div>
+
+<p>The gateway is transparent. GenroPy never knows it's running behind ASGI.
+It receives a standard WSGI <code class="il">environ</code> dict and returns a standard WSGI
+response. The conversion happens entirely inside the middleware.</p>
+
+<div class="callout">
+<p><strong>Rule of thumb:</strong> everything that <em>already works</em> in GenroPy
+keeps working through the WSGI gateway. Everything <em>new</em> (APIs,
+WebSocket, MCP) is built natively on the ASGI side.</p>
+</div>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ CLI ═══════════════════════ -->
+<div class="tab-panel" id="tab-cli">
+<div class="content">
+
+<h2>gnrasgiserve Command Reference</h2>
+
+<p>The command-line interface is a drop-in replacement for <code class="il">gnrwsgiserve</code>.
+If you've used the GenroPy development server before, you already know
+how to use it.</p>
+
+<pre><code>gnrasgiserve &lt;site_name&gt; [options]</code></pre>
+
+<h3>All options</h3>
+
+<table>
+  <tr><th>Option</th><th>Description</th><th>Default</th></tr>
+  <tr><td><code class="il">site_name</code></td><td>GenroPy instance name (positional)</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">-s, --site</code></td><td>Site name (alternative to positional)</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">-p, --port</code></td><td>Listening port</td><td>8080</td></tr>
+  <tr><td><code class="il">-H, --host</code></td><td>Listening address</td><td>0.0.0.0</td></tr>
+  <tr><td><code class="il">--reload</code></td><td>Auto-restart on file changes</td><td>off</td></tr>
+  <tr><td><code class="il">--noreload</code></td><td>Explicitly disable file monitor</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">--nodebug</code></td><td>Disable debug mode</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">-o, --open</code></td><td>Open browser on startup</td><td>off</td></tr>
+  <tr><td><code class="il">-c, --config</code></td><td>Path to gnrserve directory</td><td>~/.gnr</td></tr>
+  <tr><td><code class="il">-n, --noclean</code></td><td>Skip clean restart</td><td>off</td></tr>
+  <tr><td><code class="il">--restore</code></td><td>Restore from a backup path</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">--source_instance</code></td><td>Import data from another instance</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">--remote_edit</code></td><td>Enable remote editing</td><td>off</td></tr>
+  <tr><td><code class="il">--remotedb [NAME]</code></td><td>Use remote database (via gnrdaemon)</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">--ssl</code></td><td>Enable SSL</td><td>off</td></tr>
+  <tr><td><code class="il">--ssl_cert</code></td><td>SSL certificate path</td><td>&mdash;</td></tr>
+  <tr><td><code class="il">--ssl_key</code></td><td>SSL key path</td><td>&mdash;</td></tr>
+</table>
+
+<h3>Option resolution order</h3>
+
+<p>When the same option is set in multiple places, the highest priority wins:</p>
+
+<pre><code><span class="num">1.</span> CLI arguments         <span class="cmt"># -p 9000</span>
+<span class="num">2.</span> Environment variables  <span class="cmt"># GNR_WSGI_OPT_port=9000</span>
+<span class="num">3.</span> Site siteconfig        <span class="cmt"># wsgi?port in siteconfig.xml</span>
+<span class="num">4.</span> Defaults               <span class="cmt"># host=0.0.0.0, port=8080, debug=true</span></code></pre>
+
+<h3>Remote database</h3>
+
+<p>To develop locally while connecting to a remote database (e.g. production on Hetzner):</p>
+
+<pre><code><span class="cmt"># gnrdaemon must be running (it creates the SSH tunnel)</span>
+gnrasgiserve mysite --remotedb myremote</code></pre>
+
+<p>The remote DB must be configured in <code class="il">~/.gnr/instanceconfig/default.xml</code>:</p>
+
+<pre><code><span class="kw">&lt;GenRoBag&gt;</span>
+    <span class="kw">&lt;remote_db&gt;</span>
+        <span class="kw">&lt;myremote</span> <span class="fn">ssh_host</span>=<span class="str">"1.2.3.4"</span> <span class="fn">ssh_user</span>=<span class="str">"root"</span>
+                  <span class="fn">host</span>=<span class="str">"127.0.0.1"</span> <span class="fn">port</span>=<span class="str">"5432"</span>
+                  <span class="fn">dbname</span>=<span class="str">"mydb"</span> <span class="fn">user</span>=<span class="str">"dbuser"</span>
+                  <span class="fn">password</span>=<span class="str">"secret"</span><span class="kw">/&gt;</span>
+    <span class="kw">&lt;/remote_db&gt;</span>
+<span class="kw">&lt;/GenRoBag&gt;</span></code></pre>
+
+<div class="callout">
+<p><strong>Tip:</strong> If you pass <code class="il">--remotedb</code> without a name, the site name is
+used as the remote name. So <code class="il">gnrasgiserve mysite --remotedb</code> looks for
+<code class="il">&lt;mysite&gt;</code> in the remote_db config.</p>
+</div>
+
+<h3>Environment variable shortcut</h3>
+
+<pre><code><span class="cmt"># Set once, then omit the site name</span>
+<span class="kw">export</span> GNR_CURRENT_SITE=mysite
+gnrasgiserve          <span class="cmt"># uses "mysite"</span></code></pre>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ CONFIG ═══════════════════════ -->
+<div class="tab-panel" id="tab-config">
+<div class="content">
+
+<h2>Configuration</h2>
+
+<p>genropy-asgi supports two modes: <strong>CLI mode</strong> (gnrasgiserve, for
+existing GenroPy sites) and <strong>config.yaml mode</strong> (for new ASGI-native
+projects with GenroPy databases).</p>
+
+<h3>CLI mode (gnrasgiserve)</h3>
+
+<p>No config.yaml needed. The command reads your existing GenroPy configuration
+(<code class="il">~/.gnr/environment.xml</code>, siteconfig) exactly like <code class="il">gnrwsgiserve</code>.</p>
+
+<pre><code>gnrasgiserve mysite -p 9000</code></pre>
+
+<h3>Config.yaml mode (GenropyAsgiServer)</h3>
+
+<p>When building a project that combines GenroPy databases with ASGI-native
+apps (REST APIs, MCP endpoints), use <code class="il">config.yaml</code>:</p>
+
+<pre><code><span class="cmt"># config.yaml</span>
+<span class="fn">server</span>:
+  <span class="fn">host</span>: <span class="str">"0.0.0.0"</span>
+  <span class="fn">port</span>: <span class="num">8082</span>
+
+<span class="fn">databases</span>:
+  <span class="fn">default</span>:
+    <span class="fn">genropy_app</span>: <span class="str">"sourcerer"</span>    <span class="cmt"># creates GnrApp("sourcerer")</span>
+  <span class="fn">analytics</span>:
+    <span class="fn">genropy_app</span>: <span class="str">"analytics"</span>    <span class="cmt"># second database</span>
+
+<span class="fn">middleware</span>:
+  <span class="fn">cors</span>: <span class="kw">on</span>
+  <span class="fn">errors</span>: <span class="kw">on</span>
+
+<span class="fn">apps</span>:
+  <span class="fn">api</span>:
+    <span class="fn">module</span>: <span class="str">"my_project.api:MyAPI"</span>
+    <span class="fn">db_name</span>: <span class="str">default</span>
+    <span class="fn">docs</span>: <span class="str">swagger</span></code></pre>
+
+<h3>Minimal Python script</h3>
+
+<pre><code><span class="cmt"># run.py &mdash; fully declarative, config.yaml does everything</span>
+<span class="kw">from</span> genropy_asgi <span class="kw">import</span> <span class="cls">GenropyAsgiServer</span>
+
+server = <span class="cls">GenropyAsgiServer</span>(server_dir=<span class="str">"."</span>)
+server.<span class="fn">run</span>()</code></pre>
+
+<h3>databases section reference</h3>
+
+<table>
+  <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+  <tr><td><code class="il">genropy_app</code></td><td>string</td><td>GenroPy instance name &rarr; creates <code class="il">GnrApp(name)</code> and registers <code class="il">gnr_app.db</code></td></tr>
+</table>
+
+<p>Each key under <code class="il">databases</code> becomes a name in the server's <code class="il">db_registry</code>.
+Apps access it via <code class="il">server.get_db("default")</code> or <code class="il">request.db</code>.</p>
+
+<h3>apps section &mdash; db_name</h3>
+
+<p>Declare which database an app uses:</p>
+
+<pre><code><span class="fn">apps</span>:
+  <span class="fn">api</span>:
+    <span class="fn">module</span>: <span class="str">"my_project.api:MyAPI"</span>
+    <span class="fn">db_name</span>: <span class="str">default</span>          <span class="cmt"># resolved from db_registry</span>
+    <span class="fn">docs</span>: <span class="str">swagger</span>             <span class="cmt"># swagger | redoc | off</span></code></pre>
+
+<p>When <code class="il">request.db</code> is accessed, it looks up the app's <code class="il">db_name</code> in the registry.</p>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ GATEWAY ═══════════════════════ -->
+<div class="tab-panel" id="tab-gateway">
+<div class="content">
+
+<h2>The WSGI Gateway</h2>
+
+<p>This is the core innovation of genropy-asgi: a middleware that
+transparently bridges the WSGI and ASGI worlds. Understanding how it
+decides where to send requests helps you reason about your application's
+behavior.</p>
+
+<h3>Decision logic</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 620 280" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <marker id="arr3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8b90a0" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- Request -->
+  <rect x="220" y="10" width="180" height="35" rx="6" fill="#232733" stroke="#8b90a0" stroke-width="1"/>
+  <text x="310" y="32" text-anchor="middle" fill="#e1e4ed" font-size="10" font-weight="600">Incoming HTTP Request</text>
+
+  <line x1="310" y1="45" x2="310" y2="70" stroke="#8b90a0" marker-end="url(#arr3)"/>
+
+  <!-- Decision -->
+  <polygon points="310,75 410,110 310,145 210,110" fill="#232733" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="310" y="107" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Is first segment</text>
+  <text x="310" y="120" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">an ASGI prefix?</text>
+
+  <!-- NO branch -->
+  <line x1="210" y1="110" x2="110" y2="170" stroke="#fb923c" marker-end="url(#arr3)"/>
+  <text x="140" y="145" fill="#fb923c" font-size="9" font-weight="600">NO</text>
+
+  <rect x="20" y="175" width="180" height="80" rx="8" fill="#232733" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="110" y="198" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">WSGI Bridge</text>
+  <text x="110" y="215" text-anchor="middle" fill="#8b90a0" font-size="9">1. Read full body</text>
+  <text x="110" y="229" text-anchor="middle" fill="#8b90a0" font-size="9">2. Build PEP 3333 environ</text>
+  <text x="110" y="243" text-anchor="middle" fill="#8b90a0" font-size="9">3. Run in thread pool</text>
+
+  <!-- YES branch -->
+  <line x1="410" y1="110" x2="500" y2="170" stroke="#4ade80" marker-end="url(#arr3)"/>
+  <text x="470" y="145" fill="#4ade80" font-size="9" font-weight="600">YES</text>
+
+  <rect x="420" y="175" width="180" height="80" rx="8" fill="#232733" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="510" y="198" text-anchor="middle" fill="#4ade80" font-size="10" font-weight="600">ASGI Dispatcher</text>
+  <text x="510" y="215" text-anchor="middle" fill="#8b90a0" font-size="9">Routes to mounted app</text>
+  <text x="510" y="229" text-anchor="middle" fill="#8b90a0" font-size="9">Fully async, native ASGI</text>
+  <text x="510" y="243" text-anchor="middle" fill="#8b90a0" font-size="9">WebSocket supported</text>
+</svg>
+</div>
+
+<h3>What counts as an "ASGI prefix"</h3>
+
+<p>The gateway builds the list of ASGI prefixes lazily (once, on first request)
+by scanning:</p>
+
+<ul>
+  <li>All mounted apps where <code class="il">app_protocol == "asgi"</code></li>
+  <li>All children of the server's main router</li>
+</ul>
+
+<p>If you mount an app named <code class="il">"api"</code>, then any request starting with
+<code class="il">/api/...</code> goes to ASGI. Everything else goes to GenroPy.</p>
+
+<h3>ASGI &rarr; WSGI conversion</h3>
+
+<p>When a request goes to the WSGI side, the gateway:</p>
+
+<pre><code><span class="cmt"># 1. Read the full request body from ASGI</span>
+body = <span class="kw">await</span> <span class="fn">_read_body</span>(receive)
+
+<span class="cmt"># 2. Build a PEP 3333 environ dict</span>
+environ = <span class="fn">_build_environ</span>(scope, body)
+<span class="cmt">#   REQUEST_METHOD, PATH_INFO, QUERY_STRING,</span>
+<span class="cmt">#   SERVER_NAME/PORT, wsgi.input, HTTP_* headers...</span>
+
+<span class="cmt"># 3. Run the WSGI callable in a thread (non-blocking)</span>
+status, headers, body = <span class="kw">await</span> <span class="fn">smartasync</span>(<span class="fn">_run_wsgi</span>)(wsgi_app, environ)
+
+<span class="cmt"># 4. Send ASGI response</span>
+<span class="kw">await</span> <span class="fn">send</span>({<span class="str">"type"</span>: <span class="str">"http.response.start"</span>, ...})
+<span class="kw">await</span> <span class="fn">send</span>({<span class="str">"type"</span>: <span class="str">"http.response.body"</span>, ...})</code></pre>
+
+<div class="callout">
+<p><strong>Thread safety:</strong> the WSGI callable (GnrWsgiSite) runs in a thread
+pool via <code class="il">smartasync</code>, so it never blocks the async event loop. Each
+request gets its own thread, just like werkzeug.</p>
+</div>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ DATABASE ═══════════════════════ -->
+<div class="tab-panel" id="tab-database">
+<div class="content">
+
+<h2>Database Integration</h2>
+
+<p>When you need GenroPy's <code class="il">GnrApp</code> database in your ASGI apps
+(REST APIs, MCP endpoints), <code class="il">GenropyAsgiServer</code> handles the setup.</p>
+
+<h3>How it flows</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 620 200" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <marker id="arr4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8b90a0" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="30" width="160" height="40" rx="6" fill="#232733" stroke="#4ade80" stroke-width="1"/>
+  <text x="100" y="48" text-anchor="middle" fill="#4ade80" font-size="9" font-weight="600">config.yaml</text>
+  <text x="100" y="62" text-anchor="middle" fill="#8b90a0" font-size="8">genropy_app: "sourcerer"</text>
+
+  <line x1="180" y1="50" x2="220" y2="50" stroke="#8b90a0" marker-end="url(#arr4)"/>
+
+  <rect x="220" y="30" width="140" height="40" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="290" y="48" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">GnrApp("sourcerer")</text>
+  <text x="290" y="62" text-anchor="middle" fill="#8b90a0" font-size="8">GenroPy app instance</text>
+
+  <line x1="360" y1="50" x2="400" y2="50" stroke="#8b90a0" marker-end="url(#arr4)"/>
+
+  <rect x="400" y="30" width="180" height="40" rx="6" fill="#232733" stroke="#6c9eff" stroke-width="1"/>
+  <text x="490" y="48" text-anchor="middle" fill="#6c9eff" font-size="9" font-weight="600">db_registry["default"]</text>
+  <text x="490" y="62" text-anchor="middle" fill="#8b90a0" font-size="8">gnr_app.db registered</text>
+
+  <!-- Access paths -->
+  <line x1="490" y1="70" x2="490" y2="100" stroke="#8b90a0" marker-end="url(#arr4)"/>
+
+  <rect x="310" y="105" width="140" height="30" rx="6" fill="#232733" stroke="#6c9eff" stroke-width="1"/>
+  <text x="380" y="124" text-anchor="middle" fill="#e1e4ed" font-size="9">server.get_db("default")</text>
+
+  <rect x="470" y="105" width="110" height="30" rx="6" fill="#232733" stroke="#6c9eff" stroke-width="1"/>
+  <text x="525" y="124" text-anchor="middle" fill="#e1e4ed" font-size="9">request.db</text>
+
+  <rect x="390" y="155" width="130" height="30" rx="6" fill="#232733" stroke="#6c9eff" stroke-width="1"/>
+  <text x="455" y="174" text-anchor="middle" fill="#e1e4ed" font-size="9">server.db (shortcut)</text>
+</svg>
+</div>
+
+<h3>Three ways to access the database</h3>
+
+<table>
+  <tr><th>Access</th><th>Where</th><th>What it does</th></tr>
+  <tr><td><code class="il">server.get_db("default")</code></td><td>Anywhere with server reference</td><td>Explicit lookup by name</td></tr>
+  <tr><td><code class="il">request.db</code></td><td>Inside request handlers</td><td>Auto-resolves via app's <code class="il">db_name</code></td></tr>
+  <tr><td><code class="il">server.db</code></td><td>Anywhere with server reference</td><td>Shortcut for <code class="il">get_db("default")</code></td></tr>
+</table>
+
+<h3>Script mode (no config.yaml)</h3>
+
+<pre><code><span class="kw">from</span> gnr.app.gnrapp <span class="kw">import</span> <span class="cls">GnrApp</span>
+<span class="kw">from</span> genro_asgi <span class="kw">import</span> <span class="cls">AsgiServer</span>, <span class="cls">OpenApiApplication</span>
+<span class="kw">from</span> my_project.api <span class="kw">import</span> <span class="cls">MyAPI</span>
+
+gnr_app = <span class="cls">GnrApp</span>(<span class="str">"myapp"</span>)
+api = <span class="cls">MyAPI</span>(gnr_app.db)
+
+server = <span class="cls">AsgiServer</span>()
+app = <span class="cls">OpenApiApplication</span>(routing_class=api, docs=<span class="str">"swagger"</span>)
+server.<span class="fn">mount</span>(<span class="str">"api"</span>, app)
+server.<span class="fn">run</span>()</code></pre>
+
+<h3>Config mode (recommended)</h3>
+
+<pre><code><span class="cmt"># config.yaml handles database creation</span>
+<span class="kw">from</span> genropy_asgi <span class="kw">import</span> <span class="cls">GenropyAsgiServer</span>
+
+server = <span class="cls">GenropyAsgiServer</span>(server_dir=<span class="str">"."</span>)
+server.<span class="fn">run</span>()  <span class="cmt"># databases, apps, middleware all from config</span></code></pre>
+
+<h3>Multiple databases</h3>
+
+<pre><code><span class="fn">databases</span>:
+  <span class="fn">main</span>:
+    <span class="fn">genropy_app</span>: <span class="str">"myapp"</span>
+  <span class="fn">reporting</span>:
+    <span class="fn">genropy_app</span>: <span class="str">"reports"</span>
+
+<span class="fn">apps</span>:
+  <span class="fn">api</span>:
+    <span class="fn">module</span>: <span class="str">"my_project.api:MyAPI"</span>
+    <span class="fn">db_name</span>: <span class="str">main</span>
+  <span class="fn">reports</span>:
+    <span class="fn">module</span>: <span class="str">"my_project.reports:ReportsAPI"</span>
+    <span class="fn">db_name</span>: <span class="str">reporting</span></code></pre>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ ADVANCED ═══════════════════════ -->
+<div class="tab-panel" id="tab-advanced">
+<div class="content">
+
+<h2>Advanced Usage</h2>
+
+<h3>GenropyProxy &mdash; mount GenroPy on a prefix</h3>
+
+<p>If you don't want GenroPy at root but on a specific path (e.g. <code class="il">/legacy/</code>),
+use <code class="il">GenropyProxy</code> as a mountable ASGI application:</p>
+
+<pre><code><span class="kw">from</span> genropy_asgi.genropy_proxy <span class="kw">import</span> <span class="cls">GenropyProxy</span>
+<span class="kw">from</span> genro_asgi <span class="kw">import</span> <span class="cls">AsgiServer</span>
+
+server = <span class="cls">AsgiServer</span>()
+
+<span class="cmt"># Mount GenroPy site on /legacy/</span>
+proxy = <span class="cls">GenropyProxy</span>(site_name=<span class="str">"mysite"</span>)
+server.<span class="fn">mount</span>(<span class="str">"legacy"</span>, proxy)
+
+<span class="cmt"># Mount your ASGI API on /api/</span>
+server.<span class="fn">mount</span>(<span class="str">"api"</span>, my_api_app)
+
+server.<span class="fn">run</span>()</code></pre>
+
+<p><code class="il">GenropyProxy</code> sets <code class="il">app_protocol = "wsgi"</code>, so the gateway
+knows not to intercept requests for it.</p>
+
+<h3>Subclassing GenropyAsgiServer</h3>
+
+<p>For project-specific needs (custom auth, shared resources):</p>
+
+<pre><code><span class="kw">from</span> genropy_asgi <span class="kw">import</span> <span class="cls">GenropyAsgiServer</span>
+
+<span class="kw">class</span> <span class="cls">MyServer</span>(<span class="cls">GenropyAsgiServer</span>):
+    __slots__ = (<span class="str">"api_key"</span>,)
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, **kwargs):
+        <span class="fn">super</span>().__init__(**kwargs)
+        self.api_key = self.<span class="fn">_load_api_key</span>()
+
+    <span class="kw">def</span> <span class="fn">authenticate</span>(self, scope):
+        <span class="cmt"># Custom auth using GenroPy database</span>
+        db = self.<span class="fn">get_db</span>(<span class="str">"default"</span>)
+        token = <span class="fn">extract_token</span>(scope)
+        <span class="kw">return</span> <span class="fn">validate</span>(db, token)</code></pre>
+
+<h3>Startup flow internals</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 700 280" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <defs>
+    <marker id="arr5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#8b90a0" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- Steps -->
+  <rect x="20" y="20" width="100" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="70" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 1</text>
+  <text x="70" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Parse CLI args</text>
+
+  <line x1="120" y1="37" x2="140" y2="37" stroke="#8b90a0" marker-end="url(#arr5)"/>
+
+  <rect x="140" y="20" width="100" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="190" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 2</text>
+  <text x="190" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Read ~/.gnr/ config</text>
+
+  <line x1="240" y1="37" x2="260" y2="37" stroke="#8b90a0" marker-end="url(#arr5)"/>
+
+  <rect x="260" y="20" width="100" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="310" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 3</text>
+  <text x="310" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Resolve site path</text>
+
+  <line x1="360" y1="37" x2="380" y2="37" stroke="#8b90a0" marker-end="url(#arr5)"/>
+
+  <rect x="380" y="20" width="100" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="430" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 4</text>
+  <text x="430" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Load siteconfig</text>
+
+  <line x1="480" y1="37" x2="500" y2="37" stroke="#8b90a0" marker-end="url(#arr5)"/>
+
+  <rect x="500" y="20" width="100" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="550" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 5</text>
+  <text x="550" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Merge options</text>
+
+  <line x1="600" y1="37" x2="620" y2="37" stroke="#8b90a0" marker-end="url(#arr5)"/>
+
+  <rect x="620" y="20" width="60" height="35" rx="6" fill="#232733" stroke="#a78bfa" stroke-width="1"/>
+  <text x="650" y="42" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600">Step 6</text>
+
+  <!-- Step 6 label -->
+  <text x="650" y="18" text-anchor="middle" fill="#8b90a0" font-size="7">Create site</text>
+
+  <!-- Arrow down to fork -->
+  <line x1="350" y1="55" x2="350" y2="90" stroke="#8b90a0" marker-end="url(#arr5)"/>
+  <text x="350" y="82" text-anchor="middle" fill="#8b90a0" font-size="8">Steps 1-6: identical to gnrwsgiserve</text>
+
+  <!-- Fork -->
+  <rect x="100" y="100" width="200" height="50" rx="8" fill="#232733" stroke="#fb923c" stroke-width="1.5"/>
+  <text x="200" y="120" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">gnrwsgiserve (Step 7)</text>
+  <text x="200" y="138" text-anchor="middle" fill="#8b90a0" font-size="9">werkzeug.run_simple(site)</text>
+
+  <rect x="400" y="100" width="200" height="50" rx="8" fill="#232733" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="500" y="120" text-anchor="middle" fill="#4ade80" font-size="10" font-weight="600">gnrasgiserve (Step 7)</text>
+  <text x="500" y="138" text-anchor="middle" fill="#8b90a0" font-size="9">AsgiServer + uvicorn</text>
+
+  <!-- Bottom detail -->
+  <rect x="400" y="170" width="200" height="90" rx="8" fill="#232733" stroke="#4ade80" stroke-width="1"/>
+  <text x="500" y="192" text-anchor="middle" fill="#e1e4ed" font-size="9">server = AsgiServer(host, port)</text>
+  <text x="500" y="210" text-anchor="middle" fill="#e1e4ed" font-size="9">server.wsgi_app = gnr_site</text>
+  <text x="500" y="228" text-anchor="middle" fill="#e1e4ed" font-size="9">server.run()</text>
+  <text x="500" y="250" text-anchor="middle" fill="#8b90a0" font-size="8">WsgiGateway auto-routes to site</text>
+</svg>
+</div>
+
+<div class="tab-footer">genropy-asgi v0.1.0</div>
+</div>
+</div>
+
+<!-- ═══════════════════════ CHEAT SHEET ═══════════════════════ -->
+<div class="tab-panel" id="tab-cheat">
+<div class="content">
+
+<h2>Cheat Sheet</h2>
+
+<h3>I want to&hellip;</h3>
+
+<table>
+  <tr><th>I want to&hellip;</th><th>How</th></tr>
+  <tr><td>Run my GenroPy site on ASGI</td><td><code class="il">gnrasgiserve mysite</code></td></tr>
+  <tr><td>Use a custom port</td><td><code class="il">gnrasgiserve mysite -p 9000</code></td></tr>
+  <tr><td>Enable auto-reload</td><td><code class="il">gnrasgiserve mysite --reload</code></td></tr>
+  <tr><td>Open browser on start</td><td><code class="il">gnrasgiserve mysite -o</code></td></tr>
+  <tr><td>Use a remote database</td><td><code class="il">gnrasgiserve mysite --remotedb myremote</code></td></tr>
+  <tr><td>Set site via env var</td><td><code class="il">export GNR_CURRENT_SITE=mysite</code></td></tr>
+  <tr><td>Override port via env var</td><td><code class="il">export GNR_WSGI_OPT_port=9000</code></td></tr>
+  <tr><td>Add a REST API alongside my site</td><td>Use <code class="il">config.yaml</code> with <code class="il">apps</code> section</td></tr>
+  <tr><td>Access GenroPy db in ASGI app</td><td><code class="il">server.get_db("default")</code> or <code class="il">request.db</code></td></tr>
+  <tr><td>Mount GenroPy on a prefix</td><td>Use <code class="il">GenropyProxy(site_name="mysite")</code></td></tr>
+  <tr><td>Run fully from config</td><td><code class="il">GenropyAsgiServer(server_dir=".").run()</code></td></tr>
+  <tr><td>Use multiple databases</td><td>Multiple entries in <code class="il">databases:</code> section</td></tr>
+</table>
+
+<h3>Architecture at a glance</h3>
+
+<table>
+  <tr><th>Component</th><th>What it does</th></tr>
+  <tr><td><code class="il">GenropyAsgiServer</code></td><td>AsgiServer + GenroPy database loading from config</td></tr>
+  <tr><td><code class="il">GenropyProxy</code></td><td>Mountable ASGI app that wraps a GnrWsgiSite</td></tr>
+  <tr><td><code class="il">WsgiGatewayMiddleware</code></td><td>Routes requests to WSGI (GenroPy) or ASGI (new apps)</td></tr>
+  <tr><td><code class="il">gnrasgiserve</code></td><td>CLI command (drop-in for gnrwsgiserve)</td></tr>
+  <tr><td><code class="il">db_registry</code></td><td>Named database connections, accessible from apps</td></tr>
+</table>
+
+<h3>Files at a glance</h3>
+
+<table>
+  <tr><th>File</th><th>Contains</th></tr>
+  <tr><td><code class="il">genropy_asgi/server.py</code></td><td>GenropyAsgiServer class</td></tr>
+  <tr><td><code class="il">genropy_asgi/genropy_proxy.py</code></td><td>GenropyProxy (mountable WSGI app)</td></tr>
+  <tr><td><code class="il">genropy_asgi/cli.py</code></td><td>gnrasgiserve CLI entry point</td></tr>
+  <tr><td><code class="il">genro_asgi/middleware/wsgi_gateway.py</code></td><td>WSGI Gateway middleware (genro-asgi core)</td></tr>
+</table>
+
+<h3>Troubleshooting</h3>
+
+<table>
+  <tr><th>Problem</th><th>Solution</th></tr>
+  <tr><td>"site name is required"</td><td>Pass site name: <code class="il">gnrasgiserve mysite</code></td></tr>
+  <tr><td>"no ~/.gnr/ found"</td><td>Create <code class="il">~/.gnr/environment.xml</code> with GenroPy paths</td></tr>
+  <tr><td>"no root.py in site"</td><td>Check path: <code class="il">gnr app sitepath mysite</code></td></tr>
+  <tr><td>Port already in use</td><td><code class="il">lsof -i :8080</code> to find the process</td></tr>
+  <tr><td>--remotedb silent failure</td><td>Check gnrdaemon is running + config in <code class="il">default.xml</code></td></tr>
+  <tr><td>ASGI app not reachable</td><td>Verify app is mounted: check <code class="il">/_server/info</code></td></tr>
+</table>
+
+<div class="tab-footer">genropy-asgi v0.1.0 &mdash; Apache 2.0 License</div>
+</div>
+</div>
+
+</div><!-- /tab-panels -->
+
+<script>
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// Copy buttons on pre blocks
+document.querySelectorAll('pre').forEach(pre => {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copy';
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(pre.querySelector('code').textContent).then(() => {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    });
+  });
+  pre.appendChild(btn);
+});
+</script>
+</body>
+</html>

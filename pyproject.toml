@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "genropy-asgi"
+version = "0.1.0"
+description = "Daemon-less commander/worker model serving GenroPy legacy sites on top of genro-asgi"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Genropy Team", email = "info@softwell.it"}
+]
+keywords = ["asgi", "genropy", "commander", "worker", "sticky", "reverse-proxy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Framework :: AsyncIO",
+]
+
+dependencies = [
+    "genro-asgi>=0.5.0",
+    "httpx>=0.27",
+    "genro-ws-web",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.21.0",
+]
+dev = [
+    "genropy-asgi[test]",
+    "black>=23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+gnrasgiserve = "genropy_asgi.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/genropy/genropy-asgi"
+Repository = "https://github.com/genropy/genropy-asgi"
+"Bug Tracker" = "https://github.com/genropy/genropy-asgi/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/genropy_asgi"]
+exclude = ["**/tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=genropy_asgi --cov-report=term-missing --cov-report=html --cov-report=xml"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+exclude = ["tests/", ".*/tests/"]

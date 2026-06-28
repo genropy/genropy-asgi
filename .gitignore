@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Testing & coverage
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Editors
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+.DS_Store
+specs/.DS_Store
+
+# Documentation builds
+docs/_build/
+design_documentation/_build/
+
+# Temporary files
+temp/
+
+# Database files (test artifacts)
+*.db
+
+# Sphinx generated
+design_documentation/conf.py
+design_documentation/serve.sh
+
+# Package metadata
+src/*.egg-info/
+
+# Secondary git worktrees (convention: never committed from here)
+worktrees/
