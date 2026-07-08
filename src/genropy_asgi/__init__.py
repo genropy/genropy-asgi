@@ -3,10 +3,17 @@
 
 """genropy-asgi — the bridge between genro-asgi and legacy GenroPy.
 
-The first commander/worker attempt was archived: that model is now the core's
-(``genro_asgi.applications.multi_worker_application``). The GenroPy bridge is being
-rebuilt on top of it — the in-process siteregister and the SPA worker roles. This
-package is intentionally empty until that lands.
+The generic commander/worker model lives in genro-asgi core
+(``genro_asgi.applications.multi_worker_application``); this package is the
+GenroPy-specific bridge on top of it. Three submodules, the only ``gnr.*``-aware code:
+
+- ``genropy_asgi.spa`` — the SPA bridge: ``GenropySpaApplication`` (single) and
+  ``GenropyWorkerApplication`` (pool child) host a legacy ``GnrWsgiSite``, plus the
+  ``gnrasgiserve`` CLI and the in-process register client.
+- ``genropy_asgi.proxy`` — the OpenAPI bridge: a ``GnrApp`` behind an
+  ``OpenApiApplication`` with thread-local db cleanup.
+- ``genropy_asgi.siteregister`` — the daemonless register the legacy imports as
+  ``gnr.web.daemon`` (entry-point ``gnr.web:daemon``), replacing the register daemon.
 """
 
 __version__ = "0.1.0"
