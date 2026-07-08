@@ -35,7 +35,7 @@ class StubWorker:
 
 
 def make_client(app):
-    from genropy_asgi.spa.siteregister_client import GenropyRegisterClient
+    from genropy_asgi.siteregister.siteregister_client import GenropyRegisterClient
 
     client = GenropyRegisterClient.__new__(GenropyRegisterClient)
     client.__dict__["site"] = SimpleNamespace(spa_application=app)
@@ -130,19 +130,22 @@ def test_pool_child_pulls_from_the_commander_endpoint(monkeypatch):
     assert stub.calls[1] == ("/_commander/datachanges", {"page_id": "p1", "user": "u1"})
 
 
-def test_post_ops_answer_true_and_unknown_commands_raise():
-    from genropy_asgi.spa.siteregister_client import LOCAL_POST_OPS
-
-    dispatched = []
+def test_post_commands_fold_to_the_worker_and_are_explicit_methods():
+    # Each POST command is an explicit public method that folds to the worker; there is
+    # no _sr_call funnel and no per-string dispatch table.
+    folded = []
     client = make_client(single_app(StubMailbox({})))
-    client.__dict__["_dispatch_to_registries"] = (
-        lambda op, args, kwargs: dispatched.append(op)
-    )
-    for op in sorted(LOCAL_POST_OPS):
-        assert client._sr_call(op, "p1", table="probe.tbl") is True
-    assert dispatched == sorted(LOCAL_POST_OPS)
-    assert LOCAL_POST_OPS >= {"subscribeTable", "notifyDbEvents", "set_datachange",
-                              "setStoreSubscription"}
-    # outside the served set: an explicit error, never a silent fallback to a daemon
-    with pytest.raises(NotImplementedError):
-        client._sr_call("someUnknownCommand", "p1")
+    client.__dict__["_fold"] = lambda op, args=(), kwargs=None: folded.append(op)
+    client.subscribeTable("p1", table="probe.tbl")
+    client.notifyDbEvents({"probe.tbl": ["evt"]})
+    client.setStoreSubscription("p1", storename="user", client_path="chat", active=True)
+    client.set_datachange("p1", "some.path", register_name="page", value=1)
+    assert folded == ["subscribeTable", "notifyDbEvents", "setStoreSubscription", "set_datachange"]
+
+
+def test_unknown_command_is_a_plain_attribute_error():
+    # A command that is not a method here is not served — a deterministic AttributeError,
+    # never a silent fallback to a daemon.
+    client = make_client(single_app(StubMailbox({})))
+    with pytest.raises(AttributeError):
+        client.someUnknownCommand("p1")

@@ -216,5 +216,5 @@ def test_register_is_served_by_the_application_machinery(app, register):
     assert len(changes) == 1
     assert changes[0][0] == "gnr.dbchanges." + table.replace(".", "_")
     # an unserved command is an explicit error, not a silent daemon fallback
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(AttributeError):
         register.someUnknownRegisterCommand("p1")

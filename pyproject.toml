@@ -28,7 +28,6 @@ classifiers = [
 dependencies = [
     "genro-asgi>=0.5.0",
     "httpx>=0.27",
-    "genro-nodaemon",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +45,12 @@ dev = [
 
 [project.scripts]
 gnrasgiserve = "genropy_asgi.spa.cli:main"
+
+# The daemonless register: the legacy `gnr.web.daemon` switcher imports the module
+# named here and installs it as `gnr.web.daemon`, so `SiteRegisterClient` and friends
+# resolve to genropy_asgi.siteregister — no register daemon. Replaces genro-nodaemon.
+[project.entry-points."gnr.web"]
+daemon = "genropy_asgi.siteregister"
 
 [project.urls]
 Homepage = "https://github.com/genropy/genropy-asgi"

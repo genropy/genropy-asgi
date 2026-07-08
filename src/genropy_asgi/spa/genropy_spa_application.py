@@ -47,8 +47,6 @@ from genro_asgi.applications.spa_application import (
     SpaSingleWorkerApplication,
 )
 
-from .siteregister_client import install_inprocess_register
-
 log = logging.getLogger("genropy_asgi.spa")
 
 
@@ -105,16 +103,15 @@ class GnrSiteHostingMixin:
         self._wire_register()
 
     def _wire_register(self) -> None:
-        """Point the site at this app and promote its register client to the in-process one.
+        """Point the site at this app so the register client can reach it.
 
-        ``site.spa_application`` lets the register client reach the worker, the surface
-        and the mailbox. ``install_inprocess_register`` rebinds the existing register
-        client in place (no second client), so every register command is served by this
-        application's own machinery — no daemon.
+        The register client is already the in-process ``GenropyRegisterClient`` (the
+        ``genropy_asgi.siteregister`` submodule provides the ``gnr.web:daemon``
+        entry-point, so the ``GnrWsgiSite`` builds it directly at ``site.register`` —
+        no daemon, no rebind). It reaches the worker, the surface and the mailbox lazily
+        through ``site.spa_application``, set here.
         """
-        site = self._gnr_site
-        site.spa_application = self
-        install_inprocess_register(site)
+        self._gnr_site.spa_application = self
 
     @AsgiApplication.mount_name.setter  # type: ignore[attr-defined]
     def mount_name(self, value: str) -> None:
