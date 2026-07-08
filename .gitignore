@@ -55,3 +55,4 @@ src/*.egg-info/
 
 # Secondary git worktrees (convention: never committed from here)
 worktrees/
+archive/
