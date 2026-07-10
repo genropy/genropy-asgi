@@ -1,13 +1,22 @@
 # genropy-asgi
 
-Daemon-less **commander/worker** model that serves GenroPy legacy (synchronous) sites on
-top of [genro-asgi](https://github.com/genropy/genro-asgi). No central daemon: session
-state lives in the workers, global affinity in the commander.
+Serve legacy (synchronous) **GenroPy** sites on an ASGI server — no register
+daemon. genropy-asgi is the GenroPy-specific bridge on top of
+[genro-asgi](https://github.com/genropy/genro-asgi): it hosts an unmodified
+`GnrWsgiSite` behind uvicorn and, on demand, spreads the load over a supervised
+pool of worker processes.
 
 - **GitHub**: https://github.com/genropy/genropy-asgi
 - **Status**: Alpha
 - **Package**: `genropy-asgi` (PyPI) · **import**: `genropy_asgi`
-- **License**: Apache-2.0
+- **Python**: >= 3.11 · **License**: Apache-2.0
+
+## What it replaces
+
+- **`gnrwsgiserve`** (werkzeug/WSGI) → **`gnrasgiserve`** (uvicorn/ASGI). Same
+  site, same options, unmodified code — plus native WebSocket support.
+- **The register daemon** (Pyro4, then `genro-nodaemon`) → an **in-process**
+  register. There is no daemon to start or connect to.
 
 ## Installation
 
@@ -15,52 +24,67 @@ state lives in the workers, global affinity in the commander.
 pip install genropy-asgi
 ```
 
-`genro-asgi` is a dependency and is installed automatically. **GenroPy** must be available
-in the environment at runtime (the worker runs a `GnrWsgiSite`).
-
-## What it is
-
-A standard multi-app `AsgiServer` (from genro-asgi) on which a **commander** app is mounted.
-The commander:
-
-- spawns and supervises N **worker** processes (each a minimal `GenroAsgiWorker` hosting a
-  `GenropyProxy` that runs the GnrWsgiSite in a thread),
-- forwards every request to the right worker — it is an application-level reverse proxy,
-- keeps the **affinity registries** (`cid_to_user` + `user_registry`) and routes by our
-  opaque `gnr_cid` cookie: a user always returns to the same worker (sticky-per-user).
-
-Alongside the commander you can mount native async apps (e.g. the `MonitorApp` live
-dashboard on `/_monitor`).
-
-## Running
-
-### Single site (debug / one process)
+Latest development version, straight from GitHub:
 
 ```bash
-gnrasgiserve <site_name> -p 8000
+pip install git+https://github.com/genropy/genropy-asgi.git
 ```
 
-Serves one GenroPy site directly through `genropy_config.py` (no commander).
+`genro-asgi` is installed automatically. **GenroPy** must be present at runtime
+(the worker runs a `GnrWsgiSite`) and configured as usual (`~/.gnr/environment.xml`
+plus an existing site). genropy-asgi imports `gnr.*` only at runtime.
 
-### Commander + workers
+## Usage
 
-The front server boots from `commander_config.py`, which reads launch parameters from
-environment variables:
-
-| variable | default | controls |
-|----------|---------|----------|
-| `GNR_ASGI_SITE` | *required* | the GenroPy site served by the workers |
-| `GNR_ASGI_HOST` | `127.0.0.1` | front-server bind host |
-| `GNR_ASGI_PORT` | `8080` | front-server port |
-| `GNR_ASGI_WORKERS` | `1` | how many pool workers (the first also serves guests) |
-| `GNR_ASGI_MAX_USERS_FIRST` | `20` | user cap of the first worker |
-| `GNR_ASGI_MAX_USERS_OTHER` | `30` | user cap of the other workers |
-| `GNR_ASGI_METRICS_INTERVAL` | `2.0` | metrics pull cadence (s) |
-
-For debugging, a worker can be launched standalone:
+**Single process** — the drop-in for `gnrwsgiserve`:
 
 ```bash
-python -m genropy_asgi.worker_entry <site> -p <port> --name pool_01 --group pool --nodebug
+gnrasgiserve mysite -p 8080
+# site on http://0.0.0.0:8080/index
+```
+
+**Pool** — one commander supervising N workers, sticky per user:
+
+```bash
+gnrasgiserve mysite --workers 2 -p 8080
+```
+
+`mysite` is the GenroPy instance name (or a site path). With `--workers N` the
+same command runs the commander/worker model: each user is routed to a stable
+worker and the pool grows under load.
+
+Watch the pool:
+
+```bash
+curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
+```
+
+## How it works
+
+A GenroPy site is synchronous WSGI. genropy-asgi converts each ASGI request to a
+PEP 3333 environ and runs the site in a thread executor, so uvicorn is never
+blocked. The site's register — connections, pages, sessions, datachanges,
+stores — is served **in-process**, not by a daemon.
+
+- **Single** (`GenropySpaApplication`): one process hosts the site and is the
+  commander of itself.
+- **Pool**: a commander (`SpaMultiWorkerApplication`, from genro-asgi) supervises
+  N workers (`GenropyWorkerApplication`), forwards every request to the right
+  worker by an opaque `sticky_cid` cookie, and grows the pool when every worker
+  crosses 80% of its user cap. Datachanges live locally on the page's own worker
+  (the *switch model*); cross-worker changes arrive via the commander.
+
+See [`docs/`](docs/) for the full architecture, single-vs-multi guide,
+configuration, CLI reference, FAQ and troubleshooting.
+
+## Documentation
+
+The documentation is built with Sphinx:
+
+```bash
+pip install -e .[docs]
+cd docs && make html
+# open docs/_build/html/index.html
 ```
 
 ## Development
@@ -71,9 +95,7 @@ pytest tests/
 ruff check src/
 ```
 
-## Architecture
+## License
 
-See the vision document `architettura_daemonless.html` (in the genro-asgi repo) for the
-target model. Cemented decisions: routing via the `gnr_cid` cookie (the GenroPy
-session-cookie decoder is dead); a single `pool` group with the first worker as welcome;
-user migration via `move_user`/`pop_user`/`add_user` with an opaque pickled blob.
+Apache License 2.0 — Copyright 2025 Softwell S.r.l. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE).

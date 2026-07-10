@@ -1,0 +1,62 @@
+FAQ
+===
+
+What is genropy-asgi, in one sentence?
+   The way to serve an existing GenroPy site on an ASGI server (uvicorn) instead
+   of WSGI (werkzeug), with no register daemon — and, on demand, across a pool
+   of worker processes.
+
+Do I have to change my site?
+   No. The ``GnrWsgiSite`` runs unmodified. Same ``root.py``, same auth, same
+   sessions. genropy-asgi changes how the site is served, not what it is.
+
+How is this different from ``gnrwsgiserve``?
+   ``gnrwsgiserve`` runs the site under werkzeug (WSGI). ``gnrasgiserve`` runs it
+   under uvicorn (ASGI), converting each request to WSGI in a thread executor so
+   the site code stays synchronous. You gain native WebSocket support and the
+   optional worker pool. The command-line experience is the same: a site name
+   and a port.
+
+Single or pool — which do I pick?
+   Single (the default) for development and low concurrency; it is the exact
+   drop-in for ``gnrwsgiserve``. Pool (``--workers N``) when many users hit one
+   host at once — a synchronous GenroPy site saturates one process at a few
+   concurrent users, and the pool spreads the load over N processes. See
+   :doc:`single-vs-multi`.
+
+What happened to the register daemon?
+   It is gone. Historically the site register was a separate process reached
+   over a wire (Pyro4, then ``genro-nodaemon``). genropy-asgi serves the register
+   **in-process**; there is nothing to start or connect to. It provides the
+   ``gnr.web:daemon`` entry point that the legacy resolves, so the legacy imports
+   keep working with no daemon behind them. This replaces ``genro-nodaemon``.
+
+Does a user always land on the same worker?
+   Yes. In the pool, the commander mints an opaque ``sticky_cid`` cookie and
+   routes every request from that user to the worker that holds their session.
+   The pin is per user, so their in-process session state stays coherent.
+
+How does the pool decide to grow?
+   It grows only when the pool *as a whole* is out of room — every worker is at
+   or over 80% of its user cap. Idle workers fill before a new one is spawned,
+   and a spawn already in flight is waited for rather than duplicated. See
+   :doc:`single-vs-multi` for the worked example.
+
+Can I set the per-worker user cap?
+   Yes, but not from the CLI — through a config file (``max_users_first`` /
+   ``max_users_other`` on the application). See :doc:`configuration`.
+
+Is shared global state consistent across workers?
+   Not yet. Per-user and per-page state is pinned to one worker and is coherent.
+   The legacy global store is currently process-local per worker; the
+   cross-worker replica is an open follow-up. Do not rely on a shared global
+   store across users on different workers in this Alpha.
+
+Does it need GenroPy at build time?
+   No. GenroPy is a **runtime** requirement (the worker runs a ``GnrWsgiSite``).
+   The package imports ``gnr.*`` only at runtime. Its only Python build
+   dependency is ``genro-asgi``.
+
+Where do I see what the pool is doing?
+   ``GET /_server/monitor_state`` returns a JSON snapshot: the workers, their
+   status, their user counts, and the commander's surface totals.

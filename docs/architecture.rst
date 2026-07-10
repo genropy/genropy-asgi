@@ -1,0 +1,160 @@
+Architecture
+============
+
+This chapter explains how genropy-asgi runs a legacy GenroPy site — the moving
+parts, why they exist, and how a request flows through them. For the practical
+"which mode do I pick" question see :doc:`single-vs-multi`.
+
+The three layers
+----------------
+
+.. code-block:: text
+
+   ┌─────────────────────────────────────────────┐
+   │  Legacy GenroPy site (GnrWsgiSite)           │  synchronous, WSGI, unmodified
+   │  auth · session · pages · datachanges        │
+   ├─────────────────────────────────────────────┤
+   │  genropy-asgi   (the bridge)                 │  hosts the site, serves its
+   │  GenropySpaApplication / WorkerApplication   │  register in-process
+   │  GenropyRegisterClient (in-process register) │
+   ├─────────────────────────────────────────────┤
+   │  genro-asgi     (the framework)              │  AsgiServer, SpaApplication,
+   │  commander / worker / sticky routing         │  the commander/worker model
+   ├─────────────────────────────────────────────┤
+   │  ASGI (uvicorn)                              │
+   └─────────────────────────────────────────────┘
+
+The commander/worker model itself is generic and lives in **genro-asgi core**
+(``genro_asgi.applications.multi_worker_application``). genropy-asgi is the thin,
+GenroPy-aware layer on top: it is the only code that imports ``gnr.*``.
+
+Everything runs behind uvicorn. A GenroPy site is a **synchronous WSGI**
+application; genropy-asgi converts each ASGI request into a PEP 3333 environ and
+runs the site inside the worker's thread executor, so the async server is never
+blocked by synchronous site code.
+
+The site is never modified. The same ``root.py``, the same auth, the same
+sessions that run under ``gnrwsgiserve`` run here unchanged.
+
+The GenroPy site host
+---------------------
+
+A GenroPy site talks to its **register** (``site.register``) for every piece of
+shared state: which connections and pages exist, who is logged in, the pending
+datachanges to push to the browser, the page/user/connection/global stores.
+Historically that register was a **daemon** — a separate process reached over a
+wire (Pyro4, later the ``genro-nodaemon`` TCP daemon). Every command was
+serialised onto that wire.
+
+genropy-asgi removes the wire. The register is served **entirely in-process** by
+``GenropyRegisterClient``: every ``site.register`` command is answered from the
+hosting application's own registries, surface and stores. There is no daemon to
+start, connect to, or keep alive.
+
+Two application classes host the site, sharing one mixin
+(``GnrSiteHostingMixin``):
+
+``GenropySpaApplication`` (the *single*)
+   Hosts the site **and** is the commander of itself: it owns the surface, the
+   mailbox and the global store. This is what ``gnrasgiserve <site>`` runs.
+
+``GenropyWorkerApplication`` (the *pool child*)
+   Hosts the same site as one worker inside a commander's pool. Nothing
+   legacy-specific changes; the role differences (events ride the pool channel,
+   datachanges stay local) are inherited from genro-asgi.
+
+The daemonless register
+-----------------------
+
+``GenropyRegisterClient`` is a standalone in-process register — no daemon-client
+base class, no wire funnel. Every command the legacy calls is an **explicit
+public method** with its own body; there is no ``__getattr__`` dispatch magic.
+
+A mutating command does two things:
+
+#. ``_fold(op, args, kwargs)`` — hand the command to the SPA worker so the local
+   registries update. On a pool child the lifecycle/POST event also rides up to
+   the commander on the pool **channel**. Reads never fold.
+#. its own in-process body — read the local registries / stores / pending lists
+   and return what the legacy expects.
+
+What the register serves:
+
+* **Lifecycle** — new/change/drop of connection, page and user, plus refresh.
+  Folded into the worker's registries; the read side answers from them.
+* **Datachanges** — the events pushed to a browser (a record changed, a store
+  key updated). They live on the page's **own** worker (see the switch model
+  below).
+* **Stores** — page/user/connection stores; each item's ``data`` is a real
+  in-process GenroPy ``Bag``, locked per item and read/written in place.
+* **Global store** — one stable in-process ``Bag``, written by reference.
+
+The register is wired in through the ``gnr.web:daemon`` entry point: the legacy
+``gnr.web.daemon`` switcher imports the module named by that entry point and
+installs it as ``gnr.web.daemon``, so the legacy imports resolve here — with no
+daemon behind them. This is what **replaces genro-nodaemon**.
+
+The commander and the workers
+-----------------------------
+
+With ``--workers N`` (or a pool config), the front server is a **commander**
+(``SpaMultiWorkerApplication`` from genro-asgi) that:
+
+* spawns and supervises N **worker** subprocesses, each hosting a
+  ``GenropyWorkerApplication`` on the same site;
+* forwards every request to the right worker — it is an application-level
+  reverse proxy, transparent to cookies and headers;
+* holds the **affinity registries** and routes by a sticky cookie so a user
+  always returns to the same worker.
+
+Sticky routing
+~~~~~~~~~~~~~~~
+
+Routing reads an opaque cookie, ``sticky_cid``, that the commander mints on the
+first connection (cleartext, ``HttpOnly; SameSite=Lax``). The registries map
+``cid -> user`` and ``user -> {connections, worker}``; a request is forwarded to
+the worker that holds its user. The GenroPy session cookie is never decoded for
+routing — the ``sticky_cid`` cookie is the only routing key.
+
+One worker never sees another worker's in-process register. That is the point:
+each worker's site state is local, and load scales with the number of workers.
+
+The switch model (datachanges)
+------------------------------
+
+GenroPy pushes **datachanges** to a browser: a record edited by one user must
+reach every page subscribed to that table, possibly on a different worker.
+
+genropy-asgi uses the **switch model**: a datachange queue lives **locally** on
+the worker that owns the page. A page drains its own pending list on its own
+worker; there is no pull RPC back to a central daemon. When a change must cross
+to a page on another worker, the commander forwards it to that worker's
+``/datachange_in`` endpoint, where it lands on the local queue like any other.
+
+The commit gate that decides whether a change is worth notifying differs by
+role: the single filters against its own local subscriptions; a pool child
+passes the change through and the commander fans it out to the workers that
+actually subscribe. Over-notifying a worker that does not subscribe is harmless
+— it is dropped at the fan-out.
+
+Request flow, end to end
+------------------------
+
+**Single**
+
+#. uvicorn hands the ASGI request to ``GenropySpaApplication``.
+#. The app converts it to a WSGI environ and runs the ``GnrWsgiSite`` in the
+   thread executor.
+#. The site calls its register — served in-process by ``GenropyRegisterClient``.
+#. The response (with any ``sticky_cid`` birth cookie) goes back through uvicorn.
+
+**Pool**
+
+#. uvicorn hands the request to the commander (``SpaMultiWorkerApplication``).
+#. The commander reads ``sticky_cid``, looks up the user's worker, and forwards
+   the request there. No cookie? The welcome worker mints one.
+#. The worker runs the site exactly as in the single case; its register is
+   in-process and local.
+#. The response is relayed back untouched. Lifecycle events the worker produced
+   ride the pool channel up to the commander to keep the affinity registries in
+   sync.
