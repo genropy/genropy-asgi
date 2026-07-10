@@ -30,7 +30,14 @@ Who serves what (FIXED):
   drains the LOCAL pending list.
 - Stores — each item's ``data`` is a real in-process legacy Bag; ``ServerStore`` locks
   the item (reentrant per reason) and reads/writes it in-process.
-- Global store — one stable legacy Bag (``global_bag``), write-by-reference.
+- Global store — one stable legacy Bag (``global_bag``), write-by-reference, wired to
+  the framework's global-store rail: every LEAF write ships up as ``store_set``/
+  ``store_del`` with a FULL-PATH key and a TYTX-encoded SCALAR value (the global
+  register carries flags and timestamps — full-path keys keep concurrent sibling
+  writes from clobbering each other); commander pushes (``/update_global``,
+  ``/store_snapshot``) materialize back into the Bag, so reads stay local and
+  write-by-reference survives. On the single the same dispatch folds in-process
+  (master and replica coincide). Coherence is EVENTUAL (one channel round-trip).
 
 NOT served (explicit, PROVISIONAL): dump/load (future Service Store),
 sendProcessCommand/pendingProcessCommands (inter-process bus, will move to the
@@ -205,12 +212,27 @@ class GenropyRegisterClient:
 
         ``get_item(register_name='global')`` hands it back on every call so a ``setItem``
         on it persists (write-by-reference), exactly as the daemon-backed store did.
+        The Bag is subscribed to the global-store RAIL: every local leaf write ships
+        up as a full-path scalar (``_on_global_change``), and commander pushes
+        materialize back into it (``apply_global_write`` / ``load_global_snapshot``).
         """
         bag = self.__dict__.get("_global_bag")
         if bag is None:
             bag = Bag()
             self.__dict__["_global_bag"] = bag
+            bag.subscribe("global_rail", any=self._on_global_change)
         return bag
+
+    @property
+    def _global_rail_state(self) -> threading.local:
+        """Thread-local rail state: ``applying`` is True only on the thread that is
+        materializing a commander push, so its Bag writes do not re-dispatch while
+        legacy writes on other threads keep shipping."""
+        state = self.__dict__.get("_global_rail_local")
+        if state is None:
+            state = threading.local()
+            self.__dict__["_global_rail_local"] = state
+        return state
 
     @property
     def catalog(self) -> GnrClassCatalog:
@@ -499,6 +521,136 @@ class GenropyRegisterClient:
             if held["count"] <= 0:
                 del self.item_locks[key]
             return True
+
+    # ==================================================================
+    # Global-store rail: local leaf writes ship up, pushes materialize back
+    # ==================================================================
+
+    def _on_global_change(
+        self,
+        node: Any = None,
+        pathlist: Any = None,
+        evt: str | None = None,
+        oldvalue: Any = None,
+        ind: Any = None,
+        reason: Any = None,
+    ) -> None:
+        """Bag trigger on ``global_bag``: ship each LEAF write on the store rail.
+
+        Full path: for ``ins``/``del`` it is ``pathlist + [node.label]``; for the
+        update events the trigger's pathlist already ends with the node's label. A Bag
+        value is walked to its leaves (one write per key), so a wholesale subtree
+        set/delete becomes per-key writes — an autocreated parent (empty Bag) ships
+        nothing, and a subtree REPLACE also drops the old leaves that are gone. Inert
+        while this thread is materializing a commander push (the echo must not bounce).
+        """
+        if getattr(self._global_rail_state, "applying", False):
+            return
+        if evt in ("ins", "del"):
+            path = ".".join(list(pathlist or []) + [node.label])
+        else:
+            path = ".".join(list(pathlist or []))
+        op = "store_del" if evt == "del" else "store_set"
+        value = node.value
+        if isinstance(value, Bag):
+            new_leaves = self._global_leaves(value, path)
+            for leaf_path, leaf_value in new_leaves:
+                self._ship_global(op, leaf_path, leaf_value)
+            if isinstance(oldvalue, Bag):
+                kept = {leaf_path for leaf_path, _ in new_leaves}
+                for leaf_path, _ in self._global_leaves(oldvalue, path):
+                    if leaf_path not in kept:
+                        self._ship_global("store_del", leaf_path, None)
+            return
+        if isinstance(oldvalue, Bag):
+            for leaf_path, _ in self._global_leaves(oldvalue, path):
+                self._ship_global("store_del", leaf_path, None)
+        self._ship_global(op, path, value)
+
+    def _global_leaves(self, bag: Any, prefix: str) -> list[tuple[str, Any]]:
+        """The ``(full_path, scalar)`` leaves under *bag*, prefixed; resolvers skipped."""
+        leaves: list[tuple[str, Any]] = []
+
+        def collect(node: Any, _pathlist: Any = None) -> None:
+            if getattr(node, "resolver", None) is not None:
+                logger.debug("global-store rail: resolver at %r not replicated", node.label)
+                return
+            if not isinstance(node.value, Bag):
+                full = ".".join([prefix] + list(_pathlist or []) + [node.label])
+                leaves.append((full, node.value))
+
+        bag.walk(collect, _pathlist=[])
+        return leaves
+
+    def _ship_global(self, op: str, path: str, value: Any) -> None:
+        """One rail write: ``store_set`` ships the TYTX-encoded scalar, ``store_del``
+        the key alone. Best-effort through ``_fold`` — a missing worker never breaks
+        the legacy write (and the single folds in-process, master == replica)."""
+        if op == "store_del":
+            self._fold("store_del", (path,))
+            return
+        if callable(value):
+            logger.debug("global-store rail: callable at %r not replicated", path)
+            return
+        self._fold("store_set", (path, self._encode_global(value)))
+
+    def _encode_global(self, value: Any) -> str:
+        """Scalar -> TYTX wire text, ALWAYS suffixed.
+
+        A bare ``asTypedText`` leaves plain strings unsuffixed, so a string that
+        LOOKS typed (``'42::L'``) would decode as an int on the other side.
+        """
+        text, cls = self.catalog.asTextAndType(value)
+        return f"{text}::{cls}"
+
+    def _decode_global(self, wire: Any) -> Any:
+        """TYTX wire text -> scalar; an aware datetime is normalized back to naive.
+
+        The legacy writes ``datetime.now()`` (naive) into ``CACHE_TS.*`` and compares
+        with ``<``: an aware value coming back would raise ``TypeError`` in the cache
+        read path. The workers share the host (and its timezone), so local-time
+        normalization restores the original value exactly.
+        """
+        if wire is None:
+            return None
+        value = self.catalog.fromTypedText(wire)
+        if isinstance(value, datetime.datetime) and value.tzinfo is not None:
+            value = value.astimezone().replace(tzinfo=None)
+        return value
+
+    def apply_global_write(self, op: str | None, key: str | None, value: Any = None) -> None:
+        """Materialize one commander push (``/update_global``) into the Bag.
+
+        Runs under the thread-local ``applying`` flag so the Bag triggers do not
+        bounce the echo back on the rail. A missing key on delete is silent.
+        """
+        if not key:
+            return
+        state = self._global_rail_state
+        state.applying = True
+        try:
+            if op == "store_del":
+                self.global_bag.delItem(key)
+            else:
+                self.global_bag.setItem(key, self._decode_global(value))
+        finally:
+            state.applying = False
+
+    def load_global_snapshot(self, content: dict) -> None:
+        """Replace the whole Bag from a ``/store_snapshot`` push (the late-worker seed).
+
+        The channel is FIFO: later ``/update_global`` writes apply on top, no partial
+        window. Under the ``applying`` flag — the rebuild never re-ships.
+        """
+        state = self._global_rail_state
+        state.applying = True
+        try:
+            bag = self.global_bag
+            bag.clear()
+            for key in sorted(content):
+                bag.setItem(key, self._decode_global(content[key]))
+        finally:
+            state.applying = False
 
     # ==================================================================
     # Datachange writes (used by ServerStore and setInClientData): POST ops.
