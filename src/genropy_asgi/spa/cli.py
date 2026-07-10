@@ -66,8 +66,16 @@ def cmd_serve(argv: list[str]) -> int:
         default=0,
         help="serve through a commander with N worker subprocesses (0 = single process)",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="server config.py (a ServerConfiguration) instead of the built-in recipe; "
+        "the config carries the shape (pool, caps) while the CLI instance still wins",
+    )
     opts = parser.parse_args(argv)
 
+    # The CLI instance always wins: it is written to the environment BEFORE the server is
+    # built, so a --config that reads GNR_ASGI_PATH serves the instance named on the CLI.
     path = resolve_instance_path(opts.instance)
     os.environ["GNR_ASGI_PATH"] = path
     if opts.host:
@@ -76,10 +84,13 @@ def cmd_serve(argv: list[str]) -> int:
         os.environ["GNR_ASGI_PORT"] = str(opts.port)
     if opts.nodebug:
         os.environ["GNR_ASGI_DEBUG"] = ""
-    if opts.workers:
+    # With --config the config owns the pool shape (workers + caps): the CLI leaves
+    # GNR_ASGI_WORKERS untouched. Without it, --workers selects single vs pool.
+    if opts.config is None and opts.workers:
         os.environ["GNR_ASGI_WORKERS"] = str(opts.workers)
 
-    server = AsgiServer(CONFIG, host=opts.host, port=opts.port, reload=opts.reload)
+    config_path = opts.config or CONFIG
+    server = AsgiServer(config_path, host=opts.host, port=opts.port, reload=opts.reload)
     server.run()
     return 0
 

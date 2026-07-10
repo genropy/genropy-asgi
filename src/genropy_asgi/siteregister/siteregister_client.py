@@ -384,14 +384,17 @@ class GenropyRegisterClient:
         """True if an item exists. Called by selections before operating on a page."""
         return self.local_item(register_item_id, register_name or "page") is not None
 
-    def pages(self, connection_id: Any = None, user: Any = None, filters: Any = None, **kwargs: Any) -> list:
-        """List pages, optionally by connection and/or user, with the ad-hoc filter grammar.
+    def pages(self, connection_id: Any = None, user: Any = None, filters: Any = None, **kwargs: Any) -> dict:
+        """Pages by connection and/or user, keyed by page_id (the ad-hoc filter grammar).
 
-        Called for the ``setInClientData`` broadcast (with filters) and by monitoring.
+        Returns ``{register_item_id: item}`` — the daemon-client contract (``adaptListToDict``):
+        the legacy does ``page_id in register.pages(...)`` (Connection.validate_page_id), so
+        the keys must be the page ids. Called for the ``setInClientData`` broadcast (with
+        filters) and by monitoring.
         """
         register = self._page_register()
         if register is None:
-            return []
+            return {}
         if connection_id:
             items = [register[k] for k in register.keys_by("connection_id", connection_id)]
             if user:
@@ -400,24 +403,29 @@ class GenropyRegisterClient:
             items = [register[k] for k in register.keys_by("user", user)]
         else:
             items = [item for _, item in register.items()]
-        return self._filter_items(items, filters)
+        return {item["register_item_id"]: item for item in self._filter_items(items, filters)}
 
-    def connections(self, user: Any = None, **kwargs: Any) -> list:
-        """List connections, optionally by user (``connected_users_bag``, cleanup)."""
+    def connections(self, user: Any = None, **kwargs: Any) -> dict:
+        """Connections optionally by user, keyed by connection_id (``adaptListToDict``).
+
+        Called by ``connected_users_bag`` and cleanup.
+        """
         registry = self._registers()
         if registry is None:
-            return []
+            return {}
         register = registry.connections
         if user:
-            return [register[k] for k in register.keys_by("user", user)]
-        return [item for _, item in register.items()]
+            items = [register[k] for k in register.keys_by("user", user)]
+        else:
+            items = [item for _, item in register.items()]
+        return {item["register_item_id"]: item for item in items}
 
-    def users(self, **kwargs: Any) -> list:
-        """List active users (the RPC that lists connected users)."""
+    def users(self, **kwargs: Any) -> dict:
+        """Active users keyed by user id (``adaptListToDict``): lists connected users."""
         registry = self._registers()
         if registry is None:
-            return []
-        return [item for _, item in registry.users.items()]
+            return {}
+        return {item["register_item_id"]: item for _, item in registry.users.items()}
 
     def get_dbenv(self, register_item_id: Any, **kwargs: Any) -> Bag:
         """Build a page's database-environment Bag from its data (= the daemon's walk).
@@ -558,14 +566,14 @@ class GenropyRegisterClient:
             dict(register_name=register_name, origin_page_id=origin_page_id, dbevent_reason=dbevent_reason, **kwargs),
         )
 
-    def setInClientData(self, path: Any, value: Any = None, attributes: Any = None, page_id: Any = None, filters: Any = None, fired: bool = False, reason: Any = None, public: bool = False, replace: bool = False) -> None:
+    def setInClientData(self, path: Any, value: Any = None, attributes: Any = None, page_id: Any = None, filters: Any = None, fired: bool = False, reason: Any = None, public: bool = False, replace: bool = False, register_name: Any = None, **kwargs: Any) -> None:
         """Push data to one page or broadcast to a filtered set (legacy/polling mode).
 
         Called by ``WebPage.setInClientData_legacy``. Resolves the target pages (a single
         page_id, or every page matching ``filters``) and queues the change(s) on each.
         """
         if filters:
-            page_ids = [p["register_item_id"] for p in self.pages(filters=filters)]
+            page_ids = list(self.pages(filters=filters).keys())
         else:
             page_ids = [page_id]
         for pid in page_ids:
