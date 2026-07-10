@@ -46,7 +46,7 @@ def app():
     except Exception as exc:  # daemon down or site broken: skip, don't fail
         pytest.skip(f"cannot build the {_SITE} site: {exc}")
     yield application
-    application.on_shutdown()
+    asyncio.run(application.on_shutdown())
 
 
 @pytest.fixture()
@@ -162,6 +162,10 @@ def test_real_db_commit_notifies_subscribed_page(app, register):
 
 
 def test_user_store_change_delivered_then_deduped(app, register):
+    # Switch model: the user-store write is smeared at DEPOSIT onto the user's
+    # subscribed pages (each gets its own copy); the collect is destructive, so the
+    # dedup is structural — no offsets, no ``_new_datachange`` bookkeeping (the old
+    # daemon flag had no reader anywhere in the legacy).
     page_id, cookie = open_page(app)
     user = register.page(page_id)["user"]
     register.setStoreSubscription(page_id, "user", "chat", True)
@@ -169,12 +173,11 @@ def test_user_store_change_delivered_then_deduped(app, register):
         store.set_datachange("chat.msg", "hello")
     changes = datachanges(ping(app, page_id, cookie))
     assert [(path, value) for path, value, _ in changes] == [("chat.msg", "hello")]
-    assert changes[0][2]["change_attr"]["_new_datachange"] is True
-    # per-page offset: the same change never comes back on later pulls
+    # destructive drain: the same change never comes back on later pulls
     assert datachanges(ping(app, page_id, cookie)) == []
 
 
-def test_user_store_change_reaches_second_tab_without_new_flag(app, register):
+def test_user_store_change_reaches_both_tabs_once_each(app, register):
     page1, cookie = open_page(app)
     page2, cookie = open_page(app, cookies=cookie)  # same connection, same user
     user = register.page(page1)["user"]
@@ -187,9 +190,9 @@ def test_user_store_change_reaches_second_tab_without_new_flag(app, register):
     second = datachanges(ping(app, page2, cookie))
     assert [(p, v) for p, v, _ in first] == [("news.flash", "ready")]
     assert [(p, v) for p, v, _ in second] == [("news.flash", "ready")]
-    # the global per-user offset marks only the first consumer as "new"
-    assert first[0][2]["change_attr"]["_new_datachange"] is True
-    assert "_new_datachange" not in (second[0][2]["change_attr"] or {})
+    # each tab drained its own copy: nothing comes back to either
+    assert datachanges(ping(app, page1, cookie)) == []
+    assert datachanges(ping(app, page2, cookie)) == []
 
 
 def test_page_store_set_datachange_delivered_like_batch_thermo(app, register):

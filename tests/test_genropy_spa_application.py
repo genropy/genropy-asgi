@@ -10,6 +10,7 @@ stack (GenroAsgiWorker -> SpaApplication.serve_app -> WSGI) and checks a 200 res
 The structural tests (subclassing, source classification) need no GenroPy.
 """
 
+import asyncio
 import importlib.util
 
 import pytest
@@ -51,7 +52,7 @@ def test_creates_real_gnr_site_and_serves_200():
     received = _fire_get(worker, "/")
     assert received["status"] == 200
     assert len(received["body"]) > 0
-    app.on_shutdown()
+    asyncio.run(app.on_shutdown())
 
 
 @pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
@@ -66,7 +67,7 @@ def test_global_store_is_served_in_process_with_the_legacy_api():
     with register.globalStore() as gs:
         gs.setItem("CACHE_TS.orders", 99)
     assert register.globalStore().getItem("CACHE_TS.orders") == 99
-    app.on_shutdown()
+    asyncio.run(app.on_shutdown())
 
 
 def _fire_get(app, path):

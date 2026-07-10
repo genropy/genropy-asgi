@@ -16,8 +16,8 @@ The site-hosting behaviour is a MIXIN (``GnrSiteHostingMixin``) shared by the tw
 - ``GenropySpaApplication`` (this module) — the SINGLE: hosts the site AND is commander
   of itself (surface + mailbox + global store master).
 - ``GenropyWorkerApplication`` (genropy_worker_application.py) — the POOL CHILD: hosts
-  the same site inside a multi's pool; its register commands ride the piggyback up to
-  the commander, and its pulls call the commander back at ``GENRO_COMMANDER_URL``.
+  the same site inside a multi's pool; its register commands ride the pool CHANNEL up
+  to the commander, and its datachange queues live LOCAL (switch model, no pull RPC).
 
 It is the ONLY part that imports ``gnr.*``: everything generic is inherited from genro_asgi.applications.spa_application.
 
@@ -34,6 +34,7 @@ or a site name resolved to a path. Two construction modes:
 from __future__ import annotations
 
 import atexit
+import inspect
 import io
 import logging
 import os
@@ -133,9 +134,9 @@ class GnrSiteHostingMixin:
         """Run the GnrWsgiSite for a non-service request (the legacy serve_app hook).
 
         Converts ASGI to WSGI, runs the WSGI site in the worker's thread executor, then
-        sends the response. The per-request event sink (when the role seeds one — the
-        pool child's synchronous rail) rides into the environ, so the register client
-        can attach the request's lifecycle events to the response piggyback.
+        sends the response. The per-request event sink (when the role seeds one) rides
+        into the environ, so the role can observe the request's lifecycle events for
+        the response headers (gnr_cid birth cookie, the login sync header).
         """
         body = await _read_body(receive)
         environ = _build_environ(scope, body, self.mount_name)
@@ -158,11 +159,17 @@ class GnrSiteHostingMixin:
             }
         )
 
-    def on_shutdown(self) -> None:
-        """Cleanup GnrWsgiSite on server stop, then the base (the executor)."""
+    async def on_shutdown(self) -> None:
+        """Cleanup GnrWsgiSite on server stop, then the base (executor/channel tasks).
+
+        The base hook is sync on the single and ASYNC on the pool child (it cancels
+        the channel sender/occupancy tasks), so the base result is awaited when needed.
+        """
         if hasattr(self, "_gnr_site") and self._gnr_site is not None:
             self._gnr_site.on_site_stop()
-        super().on_shutdown()
+        result = super().on_shutdown()
+        if inspect.isawaitable(result):
+            await result
 
     def _create_site(self, site_name: str, debug: bool, noclean: bool) -> Any:
         """Create GnrWsgiSite from a site name (config-driven mode).

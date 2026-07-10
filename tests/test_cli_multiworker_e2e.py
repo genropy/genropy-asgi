@@ -7,9 +7,9 @@ The real deliverable, driven from the outside: the CLI boots the commander (a
 ``SpaMultiWorkerApplication`` from the recipe), which spawns a worker subprocess
 hosting the GenroPy site; the test talks HTTP only. No register daemon anywhere.
 
-Covers: the recipe's pool shape, the spawn with ``GENRO_COMMANDER_URL``, the sticky
-forward (page served by the child through the commander), the child's synchronous
-pull of the ping envelope, and the commander's own back-channel endpoints.
+Covers: the recipe's pool shape, the worker spawn, the sticky forward (page served by
+the child through the commander), the child's LOCAL drain of the ping envelope (switch
+model — no pull RPC), and the commander's own back-channel smoke endpoint.
 """
 
 import importlib.util
@@ -83,12 +83,12 @@ def test_page_served_by_the_pool_through_the_commander(pool_server):
         page_id = match.group(1)
         # the commander minted its sticky cookie on the connection's birth
         assert "gnr_cid" in response.cookies
-        # the ping crosses the whole rail: commander forward -> child handle_ping ->
-        # synchronous pull back to the commander -> envelope
+        # the ping crosses the rail: commander forward -> child handle_ping ->
+        # LOCAL pending-list drain on the child (switch model) -> envelope
         answer = client.get("/_ping", params={"page_id": page_id})
         assert answer.status_code == 200
         assert "<GenRoBag>" in answer.text
         # the commander's back-channel answers directly (not forwarded)
-        pull = client.post("/_commander/datachanges", params={"page_id": page_id})
-        assert pull.status_code == 200
-        assert pull.json() == {"datachanges": []}
+        pong = client.get("/_commander/ping")
+        assert pong.status_code == 200
+        assert pong.json() == {"commander": True}

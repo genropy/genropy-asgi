@@ -8,11 +8,14 @@ The same GnrWsgiSite hosting as ``GenropySpaApplication`` (the shared
 this application IS a worker in a multi's pool. What changes with the role, all
 inherited — nothing legacy-specific to add:
 
-- lifecycle/POST commands PRODUCED here ride up to the commander on the synchronous
-  rail (the piggyback sink the role seeds in the scope, carried into the WSGI environ
-  by the hosting mixin) or on the outbox drained by the ping;
-- the pulls (``subscription_storechanges``, the ping envelope) call the commander back
-  at ``GENRO_COMMANDER_URL`` — the synchronous RPC that replaces the daemon's;
+- lifecycle/POST commands PRODUCED here ride up to the commander on the pool CHANNEL;
+  the per-request sink the role seeds in the scope (carried into the WSGI environ by
+  the hosting mixin) is an observer for the response headers (gnr_cid birth cookie,
+  the login sync header);
+- the datachange queues live LOCAL on this worker (switch model): the pulls
+  (``subscription_storechanges``, the ping envelope) drain the page's own pending
+  list — a cross-worker change was already deposited here by the commander's
+  ``/datachange_in`` forward. No synchronous RPC to the commander;
 - the global store is a replica the commander pushes (NB: the legacy ``globalStore()``
   Bag is still process-local here — the replica bridge is an open follow-up, so
   cross-worker global reads are NOT coherent yet, PROVISIONAL).

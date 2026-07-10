@@ -15,17 +15,19 @@ per-string dispatch table: what the register serves is exactly the set of method
 Two things a mutating command does, both explicit in the method:
 1. ``_fold(op, args, kwargs)`` — hand the command to the SPA worker so the local
    registries update and (on a pool child) the lifecycle/POST event rides up to the
-   commander (piggyback on the response, or the outbox). Reads do NOT fold.
-2. its own in-process body — read the local registries / surface / mailbox and return
-   what the legacy expects.
+   commander on the pool CHANNEL. Reads do NOT fold.
+2. its own in-process body — read the local registries / surface / pending lists and
+   return what the legacy expects.
 
 Who serves what (FIXED):
 - Lifecycle (new/change/drop of connection/page/user, refresh) — folded into the
   worker's registries; the read side (page/connection/pages/…/get_item/exists) answers
   from those registries.
 - Datachanges — channel C (subscribeTable/notifyDbEvents) and channel D
-  (setStoreSubscription + userStore writes) fold into the commander's surface/mailbox;
-  the pull (subscription_storechanges / handle_ping) collects from there.
+  (setStoreSubscription + userStore writes) fold; the deposit lands on the page's OWN
+  worker (switch model — a cross-worker change arrives via the commander's
+  ``/datachange_in`` forward), so the pull (subscription_storechanges / handle_ping)
+  drains the LOCAL pending list.
 - Stores — each item's ``data`` is a real in-process legacy Bag; ``ServerStore`` locks
   the item (reentrant per reason) and reads/writes it in-process.
 - Global store — one stable legacy Bag (``global_bag``), write-by-reference.
@@ -45,13 +47,10 @@ application has attached itself via ``site.spa_application``).
 from __future__ import annotations
 
 import datetime
-import os
 import re
 import threading
 import time
 from typing import Any
-
-import httpx
 
 from gnr.core.gnrbag import Bag
 from gnr.core.gnrclasses import GnrClassCatalog
@@ -633,13 +632,13 @@ class GenropyRegisterClient:
     # ==================================================================
 
     def subscription_storechanges(self, user: Any, page_id: Any) -> list:
-        """The page's pull, served in-process: channel C + channel D, no daemon.
+        """The page's pull, served in-process: the local pending list, no daemon.
 
         Called by ``WebPage.collectClientDatachanges`` at the end of every RPC. The
-        single asks its own commander-of-itself (page queue destructive + user-store
-        offset scan); a pool child asks the commander over the synchronous RPC.
+        page's queue lives on its own worker (switch model): channel D was already
+        applied at the deposit, so *user* plays no part in the read.
         """
-        return self._collect_local_datachanges(page_id, user=user)
+        return self._collect_local_datachanges(page_id)
 
     def handle_ping(self, page_id: Any = None, reason: Any = None, **kwargs: Any) -> Any:
         """The page's periodic ping, served in-process (= the daemon's ``handle_ping``).
@@ -670,12 +669,11 @@ class GenropyRegisterClient:
                 last_rpc_ts=self._parse_typed(child_rpc),
             )
         envelope = Bag(dict(result=None))
-        user = user_item.get("user")
-        changes = self._changes_to_bag(self._collect_local_datachanges(page_id, user))
+        changes = self._changes_to_bag(self._collect_local_datachanges(page_id))
         if changes is not None:
             envelope.setItem("dataChanges", changes)
         for child_id in children_info:
-            child_bag = self._changes_to_bag(self._collect_local_datachanges(child_id, user))
+            child_bag = self._changes_to_bag(self._collect_local_datachanges(child_id))
             if child_bag is not None:
                 envelope.setItem(f"childDataChanges.{child_id}", child_bag)
         self._flag_running_batch(envelope, user_item)
@@ -932,42 +930,18 @@ class GenropyRegisterClient:
                 expired.append(key)
         return expired
 
-    def _collect_local_datachanges(self, page_id: Any, user: Any = None) -> list:
-        """The in-process pull: the single asks itself, a pool child asks the commander.
+    def _collect_local_datachanges(self, page_id: Any) -> list:
+        """Drain the page's pending list from its OWN worker (the switch model).
 
-        Channel C (page queue, destructive) plus, when *user* is known, channel D (the
-        user-store offset scan). Returns legacy ``ClientDataChange`` objects.
+        Every worker holds its pages' datachange queues locally; a cross-worker change
+        was already deposited here by the commander's ``/datachange_in`` forward. One
+        local read for the single and the pool child alike — no RPC, no mailbox.
+        Returns legacy ``ClientDataChange`` objects.
         """
         app = self.spa_application
         if app is None:
             return []
-        worker = getattr(app, "worker", None)
-        if worker is not None and worker.name is not None:
-            raw_changes = self._pull_commander_datachanges(page_id, user)
-        else:
-            raw_changes = app.collect_datachanges(page_id, user or None)
-        return [ClientDataChange(**raw) for raw in raw_changes]
-
-    def _pull_commander_datachanges(self, page_id: Any, user: Any = None) -> list:
-        """Synchronous blocking pull from the commander (the legacy WSGI thread waits).
-
-        A pool child holds no mailbox: the queues live in the commander, reached with a
-        plain synchronous ``httpx`` call (like the daemon call it replaces). The commander
-        address comes from ``GENRO_COMMANDER_URL``, injected at spawn.
-        """
-        url = os.environ.get("GENRO_COMMANDER_URL")
-        if not url:
-            return []
-        client = self.__dict__.get("_commander_client")
-        if client is None:
-            client = httpx.Client(base_url=url, timeout=10.0)
-            self.__dict__["_commander_client"] = client
-        params = {"page_id": page_id}
-        if user:
-            params["user"] = user
-        response = client.post("/_commander/datachanges", params=params)
-        response.raise_for_status()
-        return response.json().get("datachanges", [])
+        return [ClientDataChange(**raw) for raw in app.collect_datachanges(page_id)]
 
     def _changes_to_bag(self, changes: list) -> Bag | None:
         """Number the changes ``sc_%i`` into the envelope Bag (the daemon's shape)."""
