@@ -57,6 +57,13 @@ Does it need GenroPy at build time?
    The package imports ``gnr.*`` only at runtime. Its only Python build
    dependency is ``genro-asgi``.
 
+Can I add other apps beside the site?
+   Yes. The server is multi-app: mount a REST/OpenAPI surface, an MCP endpoint,
+   or a native async app beside the site, each on its own path prefix, all on
+   the same origin and the same GenroPy database. Because it is one origin, a
+   legacy page can reach a new endpoint directly (shared cookies, no CORS). See
+   :doc:`composition`.
+
 Where do I see what the pool is doing?
    ``GET /_server/monitor_state`` returns a JSON snapshot: the workers, their
    status, their user counts, and the commander's surface totals.

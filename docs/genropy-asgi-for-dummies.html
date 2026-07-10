@@ -259,6 +259,7 @@
   <button class="tab-btn" data-tab="modes">Single vs Pool</button>
   <button class="tab-btn" data-tab="scaling">Scaling</button>
   <button class="tab-btn" data-tab="groups">Groups</button>
+  <button class="tab-btn" data-tab="compose">Compose</button>
   <button class="tab-btn" data-tab="nodaemon">No Daemon</button>
   <button class="tab-btn" data-tab="config">Config &amp; CLI</button>
   <button class="tab-btn" data-tab="cheat">Cheat Sheet</button>
@@ -572,6 +573,78 @@ gnrasgiserve mysite --nodebug            <span class="cmt"># debug off</span></c
 </div>
 </div>
 
+<!-- ═══════════════════════ COMPOSE ═══════════════════════ -->
+<div class="tab-panel" id="tab-compose">
+<div class="content">
+
+<h2>One Server, Many Apps</h2>
+
+<p>The legacy site is not the only thing the server can host. It is a <strong>multi-app ASGI server</strong>: you mount the site on the root and any number of other apps beside it, each on its own path prefix. One process, one port, <strong>one origin</strong> &mdash; and every app can talk to the <em>same GenroPy database</em>.</p>
+
+<div class="callout">
+<p><strong>The use case:</strong> your legacy site serves the UI on <code class="il">/</code>. Alongside it you expose a modern REST API on <code class="il">/api/</code>, an MCP endpoint on <code class="il">/mcp/</code> for AI agents, and a native async WebSocket on <code class="il">/live/</code> &mdash; all backed by the same database the site already uses, all under the same host and port.</p>
+</div>
+
+<div class="diagram">
+<svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+  <rect x="250" y="14" width="220" height="42" rx="9" fill="#232733" stroke="#22d3ee" stroke-width="1.3"/>
+  <text x="360" y="33" text-anchor="middle" fill="#22d3ee" font-size="10.5" font-weight="600">AsgiServer — one origin</text>
+  <text x="360" y="48" text-anchor="middle" fill="#8b90a0" font-size="9">host:port, cookies shared</text>
+  <rect x="30" y="104" width="150" height="58" rx="10" fill="#232733" stroke="#6c9eff" stroke-width="1.4"/>
+  <text x="105" y="126" text-anchor="middle" fill="#6c9eff" font-size="10" font-weight="600">/ (legacy site)</text>
+  <text x="105" y="142" text-anchor="middle" fill="#8b90a0" font-size="8.5">GnrWsgiSite</text>
+  <text x="105" y="154" text-anchor="middle" fill="#8b90a0" font-size="8.5">UI + pages</text>
+  <rect x="196" y="104" width="150" height="58" rx="10" fill="#232733" stroke="#4ade80" stroke-width="1.2"/>
+  <text x="271" y="126" text-anchor="middle" fill="#4ade80" font-size="10" font-weight="600">/api/</text>
+  <text x="271" y="142" text-anchor="middle" fill="#8b90a0" font-size="8.5">OpenApiApplication</text>
+  <text x="271" y="154" text-anchor="middle" fill="#8b90a0" font-size="8.5">REST + Swagger</text>
+  <rect x="362" y="104" width="150" height="58" rx="10" fill="#232733" stroke="#a78bfa" stroke-width="1.2"/>
+  <text x="437" y="126" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">/mcp/</text>
+  <text x="437" y="142" text-anchor="middle" fill="#8b90a0" font-size="8.5">McpOpenApiApplication</text>
+  <text x="437" y="154" text-anchor="middle" fill="#8b90a0" font-size="8.5">AI agents</text>
+  <rect x="528" y="104" width="160" height="58" rx="10" fill="#232733" stroke="#fb923c" stroke-width="1.2"/>
+  <text x="608" y="126" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">/live/</text>
+  <text x="608" y="142" text-anchor="middle" fill="#8b90a0" font-size="8.5">async app</text>
+  <text x="608" y="154" text-anchor="middle" fill="#8b90a0" font-size="8.5">WebSocket</text>
+  <text x="360" y="190" text-anchor="middle" fill="#8b90a0" font-size="9">↑ same GenroPy database</text>
+  <line x1="330" y1="56" x2="105" y2="104" stroke="#8b90a0" stroke-width="1" marker-end="url(#arc)"/>
+  <line x1="345" y1="56" x2="271" y2="104" stroke="#8b90a0" stroke-width="1" marker-end="url(#arc)"/>
+  <line x1="375" y1="56" x2="437" y2="104" stroke="#8b90a0" stroke-width="1" marker-end="url(#arc)"/>
+  <line x1="390" y1="56" x2="608" y2="104" stroke="#8b90a0" stroke-width="1" marker-end="url(#arc)"/>
+  <defs><marker id="arc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8b90a0"/></marker></defs>
+</svg>
+</div>
+
+<h3>A REST / OpenAPI endpoint on the same database</h3>
+<p><code class="il">GenropyProxyOpenApiApplication</code> hosts a <code class="il">GnrApp</code> behind an <code class="il">OpenApiApplication</code>: your routing class exposes plain methods as REST, and the mixin closes the db connection on the right (executor) thread after each call. Point it at the same instance the site serves &mdash; same database, different surface.</p>
+
+<pre><code><span class="kw">from</span> genropy_asgi.proxy <span class="kw">import</span> <span class="cls">GenropyProxyOpenApiApplication</span>
+
+<span class="cmt"># mounted on /api/ — REST + Swagger UI, backed by the "mysite" GnrApp</span>
+api = <span class="cls">GenropyProxyOpenApiApplication</span>(
+    instance=<span class="str">"mysite"</span>,               <span class="cmt"># same GenroPy instance as the site</span>
+    routing_class=<span class="cls">MyApi</span>(),          <span class="cmt"># your @route-decorated methods</span>
+    docs=<span class="str">"swagger"</span>,               <span class="cmt"># swagger | redoc | off</span>
+)
+server.<span class="fn">mount</span>(<span class="str">"api"</span>, api)</code></pre>
+
+<h3>The same class as MCP, for AI agents</h3>
+<p>The same routing class can be exposed as an <strong>MCP</strong> endpoint with <code class="il">McpOpenApiApplication</code>: the MCP engine points at the same router, so one set of methods serves both a REST client and an AI agent &mdash; no second implementation.</p>
+
+<pre><code><span class="kw">from</span> genro_asgi.applications.openapi_application <span class="kw">import</span> <span class="cls">McpOpenApiApplication</span>
+
+server.<span class="fn">mount</span>(<span class="str">"mcp"</span>, <span class="cls">McpOpenApiApplication</span>(routing_class=<span class="cls">MyApi</span>(), api_name=<span class="str">"tools"</span>))</code></pre>
+
+<h3>Why "same origin" is the whole point</h3>
+<p>Because every app lives under one host and port, the browser sees <strong>one origin</strong>: no CORS to configure, and the legacy session cookie is sent to every path. A legacy GenroPy page can therefore reach a new ASGI endpoint directly &mdash; a <code class="il">fetch("/api/…")</code> from page code, or an <code class="il">&lt;iframe src="/live/…"&gt;</code> embedding a modern async view inside the classic UI &mdash; with the user's session already authenticated. New surfaces grow next to the old pages without a second deployment, a second domain, or a token dance.</p>
+
+<div class="callout warn">
+<p><strong>Honest scope:</strong> "same origin" is what makes embedding <em>easy</em> (shared cookies, no CORS) &mdash; the framework does not inject ASGI markup into legacy pages for you. You embed from the legacy side (a <code class="il">fetch</code>, an <code class="il">iframe</code>, a script) pointing at the mounted path. In a pool, mount the extra apps on the same server as the commander; the commander forwards only the site's own traffic to the workers and serves its neighbours locally.</p>
+</div>
+
+</div>
+</div>
+
 <!-- ═══════════════════════ NO DAEMON ═══════════════════════ -->
 <div class="tab-panel" id="tab-nodaemon">
 <div class="content">
@@ -704,6 +777,9 @@ python -m genro_asgi serve pool_config.py            <span class="cmt"># via the
   <tr><td>Install the latest from GitHub</td><td><code class="il">pip install git+https://github.com/genropy/genropy-asgi.git</code></td></tr>
   <tr><td>Free a stuck port</td><td><code class="il">lsof -tiTCP:8080 -sTCP:LISTEN | xargs kill</code></td></tr>
   <tr><td>Build the docs</td><td><code class="il">pip install -e .[docs] &amp;&amp; cd docs &amp;&amp; make html</code></td></tr>
+  <tr><td>Add a REST/OpenAPI endpoint on the site's db</td><td><code class="il">server.mount("api", GenropyProxyOpenApiApplication(instance="mysite", routing_class=MyApi()))</code></td></tr>
+  <tr><td>Expose the same methods to AI agents (MCP)</td><td><code class="il">server.mount("mcp", McpOpenApiApplication(routing_class=MyApi()))</code></td></tr>
+  <tr><td>Embed a new ASGI view in a legacy page</td><td>Same origin: <code class="il">fetch("/api/…")</code> or <code class="il">&lt;iframe src="/live/…"&gt;</code> — cookies shared, no CORS</td></tr>
 </table>
 
 <h3>The moving parts</h3>
@@ -714,6 +790,7 @@ python -m genro_asgi serve pool_config.py            <span class="cmt"># via the
   <tr><td><code class="il">GenropyWorkerApplication</code></td><td>A pool child: hosts the site as one worker in a commander's pool.</td></tr>
   <tr><td><code class="il">SpaMultiWorkerApplication</code></td><td>The commander (from genro-asgi core): supervises the workers, routes by sticky cookie.</td></tr>
   <tr><td><code class="il">GenropyRegisterClient</code></td><td>The in-process, daemonless register the legacy talks to via <code class="il">site.register</code>.</td></tr>
+  <tr><td><code class="il">GenropyProxyOpenApiApplication</code></td><td>A GnrApp behind an OpenAPI app — mount a REST/MCP surface on the same database, beside the site.</td></tr>
   <tr><td><code class="il">sticky_cid</code></td><td>The opaque cookie the commander mints; the routing key that pins a user to a worker.</td></tr>
 </table>
 
