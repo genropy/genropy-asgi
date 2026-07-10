@@ -82,7 +82,7 @@ def test_page_served_by_the_pool_through_the_commander(pool_server):
         assert match, "no page bootstrap in the forwarded response"
         page_id = match.group(1)
         # the commander minted its sticky cookie on the connection's birth
-        assert "gnr_cid" in response.cookies
+        assert "sticky_cid" in response.cookies
         # the ping crosses the rail: commander forward -> child handle_ping ->
         # LOCAL pending-list drain on the child (switch model) -> envelope
         answer = client.get("/_ping", params={"page_id": page_id})

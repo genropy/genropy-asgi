@@ -7,7 +7,7 @@ A real GnrWsgiSite hosted by the pool-child role: the register commands produced
 serving ride OUT on the pool channel — every shaped event queues in the worker's outbox
 (the channel sender drains it onto ``/events``), never folding into a local surface —
 the child has none. No commander runs here, so the outbox is observed directly and the
-response is checked for the client-facing header the child now mints (the ``gnr_cid``
+response is checked for the client-facing header the child now mints (the ``sticky_cid``
 birth cookie). The datachange read is LOCAL (switch model): with nothing deposited the
 ping envelope carries no changes.
 """
@@ -48,7 +48,7 @@ def test_is_a_pool_child_hosting_the_site(worker_app):
 
 
 def test_lifecycle_events_queue_on_the_channel_outbox(worker_app):
-    from genro_asgi.applications.spa_application import GNR_CID_COOKIE
+    from genro_asgi.applications.spa_application import STICKY_CID_COOKIE
 
     response = fire(worker_app, "GET", "/")
     assert response["status"] == 200
@@ -63,7 +63,7 @@ def test_lifecycle_events_queue_on_the_channel_outbox(worker_app):
     # the child mints the client-facing birth cookie for the connection born here
     cookies = [value for name, value in response["headers"] if name == b"set-cookie"]
     assert any(
-        value.decode("latin-1").startswith(f"{GNR_CID_COOKIE}=") for value in cookies
+        value.decode("latin-1").startswith(f"{STICKY_CID_COOKIE}=") for value in cookies
     )
 
 

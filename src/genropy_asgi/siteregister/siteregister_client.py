@@ -246,11 +246,6 @@ class GenropyRegisterClient:
         """The SPA worker that holds the local registries and the executor."""
         return getattr(self.spa_application, "worker", None)
 
-    @property
-    def _app_registry(self) -> Any:
-        """The SpaApplication's surface (subscriptions), reached through the site."""
-        return getattr(self.spa_application, "app_registry", None)
-
     # ------------------------------------------------------------------
     # The one shared step: fold a mutating command into the SPA worker
     # ------------------------------------------------------------------
@@ -359,16 +354,16 @@ class GenropyRegisterClient:
         return item
 
     def page(self, page_id: Any, include_data: Any = None) -> Any:
-        """The local page item, enriched with the surface's ``subscribed_tables``.
+        """The local page item, enriched with its ``subscribed_tables``.
 
         Called on every RPC to validate the page and by the commit path (a hidden
-        transaction reads ``page(page_id)['subscribed_tables']``); the subscriptions
-        live in the channel-C surface, so they are attached here.
+        transaction reads ``page(page_id)['subscribed_tables']``). Switch model: the
+        subscriptions live worker-LOCAL on the page item itself (``table_subscriptions``,
+        the local fan-out surface) — the commander surface is only the cross-worker view.
         """
         item = self.get_item(page_id, include_data=include_data, register_name="page")
-        registry = self._app_registry
-        if item is not None and registry is not None:
-            item["subscribed_tables"] = set(registry.page_tables.get(page_id, ()))
+        if item is not None:
+            item["subscribed_tables"] = set(item.get("table_subscriptions") or ())
         return item
 
     def connection(self, connection_id: Any, include_data: Any = None) -> Any:
@@ -684,15 +679,25 @@ class GenropyRegisterClient:
     # ==================================================================
 
     def filter_subscribed_tables(self, table_list: Any, **kwargs: Any) -> list:
-        """The subset of ``table_list`` with at least one subscribed page, from the surface.
+        """The commit gate: which tables of ``table_list`` deserve db events.
 
         Called by ``site.getSubscribedTables`` on every db commit to decide whether to
-        build and send the db events.
+        build and send the db events. Switch model: the SINGLE knows every subscription
+        (all pages are its own) and filters on its local surface; a POOL CHILD only
+        knows its own pages — a page on ANOTHER worker may subscribe the table — so it
+        passes the whole list through and lets the fan-out target the real subscribers
+        (immediate local deposit + the commander for the other workers). Over-notifying
+        on the child is innocuous: an event nobody subscribes is dropped at the fan-out.
         """
-        registry = self._app_registry
+        registry = self._registers()
         if registry is None:
             return []
-        return [table for table in (table_list or []) if registry.pages_subscribing(table)]
+        worker = self.spa_worker
+        if worker is not None and worker.name is not None:
+            return list(table_list or [])
+        return [
+            table for table in (table_list or []) if registry.pages_subscribing_local(table)
+        ]
 
     # ==================================================================
     # Maintenance / cleanup (in-process, single node)

@@ -136,7 +136,7 @@ class GnrSiteHostingMixin:
         Converts ASGI to WSGI, runs the WSGI site in the worker's thread executor, then
         sends the response. The per-request event sink (when the role seeds one) rides
         into the environ, so the role can observe the request's lifecycle events for
-        the response headers (gnr_cid birth cookie, the login sync header).
+        the response headers (sticky_cid birth cookie, the login sync header).
         """
         body = await _read_body(receive)
         environ = _build_environ(scope, body, self.mount_name)
