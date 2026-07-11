@@ -114,6 +114,22 @@ class GnrSiteHostingMixin:
         """
         self._gnr_site.spa_application = self
 
+    def warm_up(self) -> None:
+        """Settle the site's lazy per-process state before the worker is announced.
+
+        Overrides the base worker hook (called by the pool runner after the HTTP
+        server is up and before ``/announce_http``). ``resources_dirs`` is published
+        to the attribute and only then reversed in place, and the service factory scan
+        it drives is uncached: the first concurrent ``GET /`` could otherwise iterate a
+        torn list, find no implementation and call ``None`` (genropy#984). Touching
+        both here, single-threaded, closes that window. Public site API only; the
+        legacy site is untouched. ``storage('gnr')`` is exactly what the first ``GET /``
+        resolves in ``build_arg_dict``.
+        """
+        site = self._gnr_site
+        site.resources_dirs
+        site.storage("gnr")
+
     @AsgiApplication.mount_name.setter  # type: ignore[attr-defined]
     def mount_name(self, value: str) -> None:
         """Override setter to sync default_uri on the GnrWsgiSite.
