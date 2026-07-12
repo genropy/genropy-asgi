@@ -159,31 +159,25 @@ For a live view rather than raw JSON, open ``/_server/monitor`` in a browser: a
 dashboard — provided natively by genro-asgi, not added here — that polls this
 same state and renders one panel per mounted app, including the pool's per-worker
 occupancy and its population of users. For Prometheus, the commander also serves
-site-wide counters at ``/metrics`` (see :doc:`architecture`).
+site-wide counters at ``/metrics``.
 
 The global store across workers
 -------------------------------
 
-The legacy ``globalStore()`` is coherent across the pool. Each leaf write rides
-the framework's global-store rail: the worker ships it to the commander (the
-single writer of the master), which pushes it down to every worker's replica; a
-worker spawned late is seeded with the whole store at announce. Coherence is
-**eventual** — a write on one worker becomes visible on another after one
-channel round-trip, not synchronously. This suits the real uses (cache-
-invalidation timestamps, flags). Per-user and per-page state is pinned to one
-worker and is immediately coherent there.
+The legacy ``globalStore()`` is coherent across the pool: a write on one worker
+becomes visible on the others after a short delay (eventual coherence), while
+per-user and per-page state is pinned to one worker and immediately coherent
+there. Rely on it for cache-invalidation timestamps and flags, not for values
+that must be read back synchronously from another worker.
 
 Limitations (current)
 ----------------------
 
 The pool is Alpha. A couple of things to know before relying on it:
 
-* **Occupancy is cpu + executor first.** The memory component of occupancy is
-  active only where the worker can read its RSS (Linux ``/proc``) and a
-  ``memory_limit_mb`` is set; on macOS it is off, so occupancy there is driven by
-  cpu and executor saturation alone. This is the intended behaviour, not a gap —
-  cpu is the true limit under the GIL — but worth knowing when reading the numbers.
-* **Compaction moves live users.** Scale-down drains a worker by migrating its
-  users to the survivors (a quiesce–snapshot–switch handshake). It is designed to
-  be safe, but it is the newest part of the pool; watch the monitor when a group
-  compacts under real load.
+* **Occupancy reflects cpu and executor load.** On macOS the memory component is
+  off (there is no ``/proc`` RSS to read), so the pool grows on cpu and executor
+  saturation alone — the true limit under the GIL.
+* **Scale-down migrates live users.** Compacting a group drains a worker by moving
+  its users to the survivors; it is safe by design but the newest part of the
+  pool, so watch the monitor when a group compacts under real load.

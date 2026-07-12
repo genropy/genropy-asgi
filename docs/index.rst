@@ -26,7 +26,6 @@ stable worker (sticky per user). Same site, same code, unmodified.
 
    getting-started
    single-vs-multi
-   architecture
    composition
    cli-reference
    configuration

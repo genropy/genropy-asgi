@@ -91,7 +91,6 @@ Next steps
 ----------
 
 * :doc:`single-vs-multi` — pick a mode and understand how the pool grows.
-* :doc:`architecture` — how a request flows and why there is no daemon.
 * :doc:`cli-reference` — every ``gnrasgiserve`` option.
 * :doc:`configuration` — tuning the occupancy thresholds and pool bounds with a
   config file.

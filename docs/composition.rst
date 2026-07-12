@@ -71,11 +71,11 @@ second deployment and no cut-over.
    working system at every step. Nothing in genropy-asgi forces you to do this —
    it is simply what the two-stage demux makes possible when you want it.
 
-It works because the host demultiplexes in two stages (see
-:doc:`architecture`): the first path segment selects an **internal root**, then the
-**full path** is resolved in the app's own router; a structural miss inside a
-claimed root falls through to the site. Claiming a root therefore does *not* claim
-its whole subtree — a single native ``@route`` shadows exactly its own path.
+It works because the host demultiplexes in two stages: the first path segment
+selects an **internal root**, then the **full path** is resolved in the app's own
+router; a structural miss inside a claimed root falls through to the site. Claiming
+a root therefore does *not* claim its whole subtree — a single native ``@route``
+shadows exactly its own path.
 
 Subclass the host application and add the route:
 
