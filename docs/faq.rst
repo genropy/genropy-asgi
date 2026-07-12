@@ -47,10 +47,13 @@ Can I set the per-worker user cap?
    ``max_users_other`` on the application). See :doc:`configuration`.
 
 Is shared global state consistent across workers?
-   Not yet. Per-user and per-page state is pinned to one worker and is coherent.
-   The legacy global store is currently process-local per worker; the
-   cross-worker replica is an open follow-up. Do not rely on a shared global
-   store across users on different workers in this Alpha.
+   Yes, eventually. The legacy ``globalStore()`` rides the framework's
+   global-store rail: a write on one worker reaches the others after one channel
+   round-trip (the commander is the single writer of the master and pushes to
+   every replica; a late worker is seeded at announce). It is eventual, not
+   synchronous — which suits the real uses (cache-invalidation timestamps,
+   flags). Per-user and per-page state is pinned to one worker and immediately
+   coherent there.
 
 Does it need GenroPy at build time?
    No. GenroPy is a **runtime** requirement (the worker runs a ``GnrWsgiSite``).

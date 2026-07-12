@@ -112,7 +112,7 @@ and an optional ``python`` — the interpreter path for that group's workers:
 
    app = apps.application(
        code="site",
-       app_class=SpaMultiWorkerApplication,
+       app_class=GenropyCommanderApplication,
        worker_app_class="genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication",
        app_args={"source": "mysite", "debug": ""},
        commander_url="http://127.0.0.1:8080",
@@ -153,15 +153,22 @@ the direct way to watch the pool grow:
 
    $ curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
 
+The global store across workers
+-------------------------------
+
+The legacy ``globalStore()`` is coherent across the pool. Each leaf write rides
+the framework's global-store rail: the worker ships it to the commander (the
+single writer of the master), which pushes it down to every worker's replica; a
+worker spawned late is seeded with the whole store at announce. Coherence is
+**eventual** — a write on one worker becomes visible on another after one
+channel round-trip, not synchronously. This suits the real uses (cache-
+invalidation timestamps, flags). Per-user and per-page state is pinned to one
+worker and is immediately coherent there.
+
 Limitations (current)
 ----------------------
 
-The pool is Alpha. Two things to know before relying on it:
+The pool is Alpha. One thing to know before relying on it:
 
-* **Global store across workers is not coherent yet.** Each worker's legacy
-  ``globalStore()`` Bag is process-local; the cross-worker replica bridge is an
-  open follow-up. A site that depends on a shared global store across users on
-  different workers will not see a consistent value. Per-user and per-page state
-  is fine (it is pinned to one worker).
 * **Load metric is provisional.** Placement uses the user count as a stand-in
   for load; a real pressure metric (executor queue, CPU) is in progress.

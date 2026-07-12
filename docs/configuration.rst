@@ -57,7 +57,7 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
    import os
 
    from genro_asgi.config import AsgiConfigBuilder
-   from genro_asgi.applications.multi_worker_application import SpaMultiWorkerApplication
+   from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
 
    # The CLI writes these to the environment before loading the config, so the
    # CLI instance and port win; run directly they fall back to the defaults.
@@ -72,7 +72,7 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
            apps = root.applications(default="site")
            apps.application(
                code="site",
-               app_class=SpaMultiWorkerApplication,
+               app_class=GenropyCommanderApplication,
                worker_app_class=(
                    "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
                ),
@@ -95,7 +95,9 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
    * - ``code``
      - The application code (``"site"``); it is mounted on the root.
    * - ``app_class``
-     - The commander class, ``SpaMultiWorkerApplication`` (from genro-asgi core).
+     - The commander class, ``GenropyCommanderApplication`` (a subclass of
+       genro-asgi core's ``SpaMultiWorkerApplication``, adding the ``/metrics``
+       endpoint).
    * - ``worker_app_class``
      - Import path of the class each worker hosts —
        ``genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication``.
@@ -136,7 +138,7 @@ own interpreter, so each can serve a different version:
 
    app = apps.application(
        code="site",
-       app_class=SpaMultiWorkerApplication,
+       app_class=GenropyCommanderApplication,
        worker_app_class="genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication",
        app_args={"source": "mysite", "debug": ""},
        commander_url="http://127.0.0.1:8080",

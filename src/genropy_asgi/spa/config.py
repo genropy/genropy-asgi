@@ -12,9 +12,10 @@ Two shapes, chosen by ``GNR_ASGI_WORKERS``:
 
 - ``0`` (default) — the SINGLE: one ``GenropySpaApplication`` serves the site in this
   process (commander of itself).
-- ``N > 0`` — the POOL: a ``SpaMultiWorkerApplication`` (the commander) spawns N worker
-  subprocesses, each hosting a ``GenropyWorkerApplication`` on the same site path; the
-  commander forwards by sticky affinity and serves the ``/_commander/*`` back-channel
+- ``N > 0`` — the POOL: a ``GenropyCommanderApplication`` (the commander, a
+  ``SpaMultiWorkerApplication`` subclass adding the site-wide ``/metrics`` endpoint) spawns
+  N worker subprocesses, each hosting a ``GenropyWorkerApplication`` on the same site path;
+  the commander forwards by sticky affinity and serves the ``/_commander/*`` back-channel
   (datachange pull) at its own public URL.
 """
 
@@ -23,9 +24,9 @@ from typing import Any
 
 from genro_bag.resolvers import EnvResolver
 
-from genro_asgi.applications.multi_worker_application import SpaMultiWorkerApplication
 from genro_asgi.config import AsgiConfigBuilder
 
+from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 
 
@@ -49,7 +50,7 @@ class ServerConfiguration(AsgiConfigBuilder):
             port = int(os.environ.get("GNR_ASGI_PORT") or "8000")
             apps.application(
                 code="site",
-                app_class=SpaMultiWorkerApplication,
+                app_class=GenropyCommanderApplication,
                 worker_app_class=(
                     "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
                 ),

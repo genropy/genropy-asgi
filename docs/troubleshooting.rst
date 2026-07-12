@@ -50,9 +50,10 @@ The pool
    each time and may land on the welcome worker instead of the worker holding
    the session. Make sure the client keeps cookies across requests.
 
-**Shared global values differ between users**
-   Expected in this Alpha: the legacy global store is process-local per worker
-   and is not yet replicated across the pool. See the limitations in
+**A shared global value lags on another worker**
+   Expected: the global store is eventually coherent. A write on one worker
+   reaches the others after one channel round-trip (commander master → replica
+   push), not synchronously. See the global-store section of
    :doc:`single-vs-multi`.
 
 Serving a stale build

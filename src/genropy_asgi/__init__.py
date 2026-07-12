@@ -16,4 +16,4 @@ GenroPy-specific bridge on top of it. Three submodules, the only ``gnr.*``-aware
   ``gnr.web.daemon`` (entry-point ``gnr.web:daemon``), replacing the register daemon.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -98,7 +98,8 @@ The commander and the workers
 -----------------------------
 
 With ``--workers N`` (or a pool config), the front server is a **commander**
-(``SpaMultiWorkerApplication`` from genro-asgi) that:
+(``GenropyCommanderApplication``, a subclass of the generic
+``SpaMultiWorkerApplication`` from genro-asgi core) that:
 
 * spawns and supervises N **worker** subprocesses, each hosting a
   ``GenropyWorkerApplication`` on the same site;
@@ -106,6 +107,25 @@ With ``--workers N`` (or a pool config), the front server is a **commander**
   reverse proxy, transparent to cookies and headers;
 * holds the **affinity registries** and routes by a sticky cookie so a user
   always returns to the same worker.
+
+The commander is ``GenropyCommanderApplication``, a subclass of the generic
+``SpaMultiWorkerApplication`` that adds one GenroPy-specific route: the
+``/metrics`` endpoint.
+
+The ``/metrics`` endpoint
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``GenropyCommanderApplication`` exposes a Prometheus ``/metrics`` endpoint. Being
+an ``@route`` on the commander, it is a **service segment served locally** by the
+commander — not forwarded to a single worker — so the numbers are the whole
+pool's. It reports the site-wide counters as the exact ``len()`` of the
+commander's aggregated registries: ``users`` (``user_registry``), ``pages``
+(``pages_index``) and ``connections`` (``cid_to_user``), under the metric
+``genropy_site_counters{counter="..."}``. This emulates the legacy webtool
+(``genropy/webtools/prometheus.py``), which read the daemon-central siteregister.
+One counter the legacy exposed, ``stale_connections_5min``, is **not** available
+here: it needs a per-connection ``last_refresh_ts`` the commander does not keep
+(its surface is keys and locations only).
 
 Sticky routing
 ~~~~~~~~~~~~~~~
@@ -150,7 +170,7 @@ Request flow, end to end
 
 **Pool**
 
-#. uvicorn hands the request to the commander (``SpaMultiWorkerApplication``).
+#. uvicorn hands the request to the commander (``GenropyCommanderApplication``).
 #. The commander reads ``sticky_cid``, looks up the user's worker, and forwards
    the request there. No cookie? The welcome worker mints one.
 #. The worker runs the site exactly as in the single case; its register is

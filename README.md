@@ -68,11 +68,21 @@ stores — is served **in-process**, not by a daemon.
 
 - **Single** (`GenropySpaApplication`): one process hosts the site and is the
   commander of itself.
-- **Pool**: a commander (`SpaMultiWorkerApplication`, from genro-asgi) supervises
-  N workers (`GenropyWorkerApplication`), forwards every request to the right
-  worker by an opaque `sticky_cid` cookie, and grows the pool when every worker
-  crosses 80% of its user cap. Datachanges live locally on the page's own worker
-  (the *switch model*); cross-worker changes arrive via the commander.
+- **Pool**: a commander (`GenropyCommanderApplication`, the genro-asgi core
+  commander plus the site-wide `/metrics` endpoint) supervises N workers
+  (`GenropyWorkerApplication`), forwards every request to the right worker by an
+  opaque `sticky_cid` cookie, and grows the pool when every worker crosses 80% of
+  its user cap. Datachanges live locally on the page's own worker (the *switch
+  model*); cross-worker changes arrive via the commander. The legacy
+  `globalStore()` is eventually coherent via the framework's global-store rail —
+  a write on one worker reaches the others after one channel round-trip.
+
+The commander serves a Prometheus `/metrics` endpoint exposing the pool's
+site-wide counters (users, pages, connections). Watch the pool with:
+
+```bash
+curl -s http://127.0.0.1:8080/metrics
+```
 
 See [`docs/`](docs/) for the full architecture, single-vs-multi guide,
 configuration, CLI reference, FAQ and troubleshooting.

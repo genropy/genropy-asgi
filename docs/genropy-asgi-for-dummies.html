@@ -421,8 +421,8 @@ gnrasgiserve mysite --nodebug            <span class="cmt"># debug off</span></c
 </div>
 <p class="dim">No <code class="il">sticky_cid</code> cookie yet (a fresh visitor)? The commander sends them to the welcome worker, which mints the cookie on first connection. From then on every request from that user lands on the same worker.</p>
 
-<div class="callout warn">
-<p><strong>Alpha limitation:</strong> the legacy global store is process-local per worker &mdash; a value shared across users on different workers is not coherent yet (the cross-worker replica is an open follow-up). Per-user and per-page state is fine: it is pinned to one worker.</p>
+<div class="callout">
+<p><strong>Global state is coherent across the pool</strong> &mdash; eventually. The legacy <code class="il">globalStore()</code> rides the framework's store rail: a write on one worker reaches the others after one channel round-trip (the commander is the single writer, it pushes to every replica; a late worker is seeded at announce). Eventual, not synchronous, which suits the real uses (cache-invalidation timestamps, flags). Per-user and per-page state is pinned to one worker and immediately coherent there.</p>
 </div>
 
 </div>
@@ -537,7 +537,7 @@ gnrasgiserve mysite --nodebug            <span class="cmt"># debug off</span></c
         apps = root.<span class="fn">applications</span>(default=<span class="str">"site"</span>)
         app = apps.<span class="fn">application</span>(
             code=<span class="str">"site"</span>,
-            app_class=<span class="cls">SpaMultiWorkerApplication</span>,
+            app_class=<span class="cls">GenropyCommanderApplication</span>,
             worker_app_class=<span class="str">"genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"</span>,
             app_args={<span class="str">"source"</span>: <span class="str">"mysite"</span>, <span class="str">"debug"</span>: <span class="str">""</span>},
             commander_url=<span class="str">"http://127.0.0.1:8080"</span>,
@@ -721,7 +721,7 @@ daemon = <span class="str">"genropy_asgi.siteregister"</span></code></pre>
 
 <pre><code><span class="kw">import</span> os
 <span class="kw">from</span> genro_asgi.config <span class="kw">import</span> <span class="cls">AsgiConfigBuilder</span>
-<span class="kw">from</span> genro_asgi.applications.multi_worker_application <span class="kw">import</span> <span class="cls">SpaMultiWorkerApplication</span>
+<span class="kw">from</span> genropy_asgi.spa.genropy_commander_application <span class="kw">import</span> <span class="cls">GenropyCommanderApplication</span>
 
 SITE = os.environ.get(<span class="str">"GNR_ASGI_PATH"</span>) <span class="kw">or</span> <span class="str">"mysite"</span>
 PORT = <span class="cls">int</span>(os.environ.get(<span class="str">"GNR_ASGI_PORT"</span>) <span class="kw">or</span> <span class="num">8081</span>)
@@ -733,7 +733,7 @@ PORT = <span class="cls">int</span>(os.environ.get(<span class="str">"GNR_ASGI_P
         apps = root.<span class="fn">applications</span>(default=<span class="str">"site"</span>)
         apps.<span class="fn">application</span>(
             code=<span class="str">"site"</span>,
-            app_class=<span class="cls">SpaMultiWorkerApplication</span>,
+            app_class=<span class="cls">GenropyCommanderApplication</span>,
             worker_app_class=<span class="str">"genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"</span>,
             app_args={<span class="str">"source"</span>: SITE, <span class="str">"debug"</span>: <span class="str">""</span>},
             workers=<span class="num">1</span>,               <span class="cmt"># start with one; the pool grows under load</span>
@@ -774,6 +774,7 @@ python -m genro_asgi serve pool_config.py            <span class="cmt"># via the
   <tr><td>Run a pool of 3 workers</td><td><code class="il">gnrasgiserve mysite --workers 3</code></td></tr>
   <tr><td>Set per-worker user caps</td><td>Write a config file, launch with <code class="il">--config</code></td></tr>
   <tr><td>Watch the pool grow</td><td><code class="il">curl .../_server/monitor_state</code></td></tr>
+  <tr><td>Scrape Prometheus metrics</td><td><code class="il">curl .../metrics</code></td></tr>
   <tr><td>Install the latest from GitHub</td><td><code class="il">pip install git+https://github.com/genropy/genropy-asgi.git</code></td></tr>
   <tr><td>Free a stuck port</td><td><code class="il">lsof -tiTCP:8080 -sTCP:LISTEN | xargs kill</code></td></tr>
   <tr><td>Build the docs</td><td><code class="il">pip install -e .[docs] &amp;&amp; cd docs &amp;&amp; make html</code></td></tr>
@@ -788,7 +789,7 @@ python -m genro_asgi serve pool_config.py            <span class="cmt"># via the
   <tr><td><code class="il">gnrasgiserve</code></td><td>The CLI. Resolves the site, starts the server. Single, or a pool with <code class="il">--workers</code>.</td></tr>
   <tr><td><code class="il">GenropySpaApplication</code></td><td>The single: one process hosts the site and is its own commander.</td></tr>
   <tr><td><code class="il">GenropyWorkerApplication</code></td><td>A pool child: hosts the site as one worker in a commander's pool.</td></tr>
-  <tr><td><code class="il">SpaMultiWorkerApplication</code></td><td>The commander (from genro-asgi core): supervises the workers, routes by sticky cookie.</td></tr>
+  <tr><td><code class="il">GenropyCommanderApplication</code></td><td>The commander (a subclass of genro-asgi core's <code class="il">SpaMultiWorkerApplication</code>): supervises the workers, routes by sticky cookie, and serves the site-wide <code class="il">/metrics</code> endpoint.</td></tr>
   <tr><td><code class="il">GenropyRegisterClient</code></td><td>The in-process, daemonless register the legacy talks to via <code class="il">site.register</code>.</td></tr>
   <tr><td><code class="il">GenropyProxyOpenApiApplication</code></td><td>A GnrApp behind an OpenAPI app — mount a REST/MCP surface on the same database, beside the site.</td></tr>
   <tr><td><code class="il">sticky_cid</code></td><td>The opaque cookie the commander mints; the routing key that pins a user to a worker.</td></tr>
@@ -800,7 +801,7 @@ python -m genro_asgi serve pool_config.py            <span class="cmt"># via the
   <tr><td>Pool never grows</td><td>Not every worker is over 80% of its cap yet &mdash; expected, one worker is enough.</td></tr>
   <tr><td>Too many workers under a load test</td><td>Logins arriving faster than a worker boots; pace them so each spawn announces first.</td></tr>
   <tr><td>Session resets between requests</td><td>Client dropping cookies &mdash; routing needs <code class="il">sticky_cid</code> to persist.</td></tr>
-  <tr><td>Shared global value differs per user</td><td>Alpha: global store is process-local per worker, not yet replicated.</td></tr>
+  <tr><td>Shared global value lags on another worker</td><td>Expected: the global store is eventually coherent — a write propagates after one channel round-trip, not synchronously.</td></tr>
   <tr><td>Serving old code</td><td>A pool from an earlier launch is still listening &mdash; kill the port and relaunch.</td></tr>
 </table>
 
