@@ -31,7 +31,8 @@ through a commander with an elastic pool, no register daemon.
 import os
 
 from genro_asgi.config import AsgiConfigBuilder
-from genro_asgi.applications.multi_worker_application import SpaMultiWorkerApplication
+
+from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
 
 # The CLI writes these to the environment before loading the config, so the CLI instance
 # and port win; run directly (python -m genro_asgi serve) they fall back to the defaults.
@@ -66,7 +67,7 @@ class ServerConfiguration(AsgiConfigBuilder):
         apps = root.applications(default="site")
         apps.application(
             code="site",
-            app_class=SpaMultiWorkerApplication,
+            app_class=GenropyCommanderApplication,
             worker_app_class=(
                 "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
             ),
