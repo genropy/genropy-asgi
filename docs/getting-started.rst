@@ -72,11 +72,20 @@ Verifying it runs
 Open ``http://<host>:<port>/index`` in a browser — the site should behave
 exactly as it does under ``gnrwsgiserve``.
 
-For the pool, watch the workers and their user counts:
+For the pool, the server ships a live monitor (provided by genro-asgi). Open it
+in a browser for a per-worker view — occupancy, users, pages:
+
+.. code-block:: text
+
+   http://127.0.0.1:8080/_server/monitor
+
+Or read the same state as JSON, e.g. from a script:
 
 .. code-block:: console
 
    $ curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
+
+Prometheus metrics for the whole pool are on the commander at ``/metrics``.
 
 Next steps
 ----------
@@ -84,4 +93,5 @@ Next steps
 * :doc:`single-vs-multi` — pick a mode and understand how the pool grows.
 * :doc:`architecture` — how a request flows and why there is no daemon.
 * :doc:`cli-reference` — every ``gnrasgiserve`` option.
-* :doc:`configuration` — tuning caps and pool shape with a config file.
+* :doc:`configuration` — tuning the occupancy thresholds and pool bounds with a
+  config file.

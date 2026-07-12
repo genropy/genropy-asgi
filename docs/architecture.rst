@@ -218,7 +218,7 @@ Request flow, end to end
 
 #. uvicorn hands the request to the commander (``GenropyCommanderApplication``).
 #. The commander reads ``sticky_cid``, looks up the user's worker, and forwards
-   the request there. No cookie? The welcome worker mints one.
+   the request there. No cookie? The reception worker mints one.
 #. The worker runs the site exactly as in the single case; its register is
    in-process and local.
 #. The response is relayed back untouched. Lifecycle events the worker produced

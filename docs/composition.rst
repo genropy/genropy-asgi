@@ -60,9 +60,16 @@ In place — replacing site paths one at a time
 
 The *beside* apps above live under their own prefixes. The **in-place** pattern is
 different: it adds native routes to the host application itself, on paths the site
-already owns, and lets them shadow the legacy handler **one path at a time**. This
-is the strangler-fig migration — the native surface grows while the site keeps
-serving everything not yet moved, with no second deployment and no cut-over.
+already owns, and lets them shadow the legacy handler **one path at a time** — the
+native surface grows while the site keeps serving everything not yet moved, with no
+second deployment and no cut-over.
+
+.. note::
+
+   As an aside, this is the shape of the classic *strangler fig* migration (Martin
+   Fowler): the new system grows around the old and replaces it gradually, with a
+   working system at every step. Nothing in genropy-asgi forces you to do this —
+   it is simply what the two-stage demux makes possible when you want it.
 
 It works because the host demultiplexes in two stages (see
 :doc:`architecture`): the first path segment selects an **internal root**, then the

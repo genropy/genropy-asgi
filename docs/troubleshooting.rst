@@ -49,7 +49,7 @@ The pool
 **A user's session seems to reset between requests**
    Routing depends on the ``sticky_cid`` cookie. A client that drops cookies, or
    opens a fresh connection without carrying them, is treated as a new visitor
-   each time and may land on the welcome worker instead of the worker holding
+   each time and may land on the reception worker instead of the worker holding
    the session. Make sure the client keeps cookies across requests.
 
 **A shared global value lags on another worker**

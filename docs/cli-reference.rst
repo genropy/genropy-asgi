@@ -50,7 +50,7 @@ Options
      - *(built-in)*
      - Path to a server ``config.py`` (a ``ServerConfiguration``) to use instead
        of the built-in recipe. The config carries the pool shape (worker count
-       and caps); the CLI ``instance`` still wins.
+       and occupancy thresholds); the CLI ``instance`` still wins.
 
 .. note::
 

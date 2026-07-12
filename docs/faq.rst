@@ -72,5 +72,8 @@ Can I add other apps beside the site?
    :doc:`composition`.
 
 Where do I see what the pool is doing?
-   ``GET /_server/monitor_state`` returns a JSON snapshot: the workers, their
-   status, their user counts, and the commander's surface totals.
+   ``GET /_server/monitor_state`` returns a JSON snapshot: per worker its status
+   and occupancy (the metric the pool decides on), its user/connection/page counts
+   for context, and the commander's site-wide surface totals. For a live view open
+   ``/_server/monitor`` in a browser (a dashboard genro-asgi provides natively);
+   for Prometheus, scrape ``/metrics`` on the commander.

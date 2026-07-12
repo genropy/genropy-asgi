@@ -145,13 +145,21 @@ commander only reads the value.
 Observing the pool
 ------------------
 
-The server exposes a JSON snapshot at ``/_server/monitor_state`` — the workers,
-their status and their user counts, plus the commander's surface totals. It is
-the direct way to watch the pool grow:
+The server exposes a JSON snapshot at ``/_server/monitor_state`` — per worker its
+status and **occupancy** (the number that drives placement and scaling), plus its
+user/connection/page counts for context and the commander's site-wide surface
+totals. Occupancy is what the pool decides on; the counts are there to read, not
+to decide by. It is the direct way to watch the pool grow:
 
 .. code-block:: console
 
    $ curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
+
+For a live view rather than raw JSON, open ``/_server/monitor`` in a browser: a
+dashboard — provided natively by genro-asgi, not added here — that polls this
+same state and renders one panel per mounted app, including the pool's per-worker
+occupancy and its population of users. For Prometheus, the commander also serves
+site-wide counters at ``/metrics`` (see :doc:`architecture`).
 
 The global store across workers
 -------------------------------
@@ -168,7 +176,14 @@ worker and is immediately coherent there.
 Limitations (current)
 ----------------------
 
-The pool is Alpha. One thing to know before relying on it:
+The pool is Alpha. A couple of things to know before relying on it:
 
-* **Load metric is provisional.** Placement uses the user count as a stand-in
-  for load; a real pressure metric (executor queue, CPU) is in progress.
+* **Occupancy is cpu + executor first.** The memory component of occupancy is
+  active only where the worker can read its RSS (Linux ``/proc``) and a
+  ``memory_limit_mb`` is set; on macOS it is off, so occupancy there is driven by
+  cpu and executor saturation alone. This is the intended behaviour, not a gap —
+  cpu is the true limit under the GIL — but worth knowing when reading the numbers.
+* **Compaction moves live users.** Scale-down drains a worker by migrating its
+  users to the survivors (a quiesce–snapshot–switch handshake). It is designed to
+  be safe, but it is the newest part of the pool; watch the monitor when a group
+  compacts under real load.

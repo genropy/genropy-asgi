@@ -119,6 +119,11 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
    * - ``admission_threshold``
      - Occupancy over which a non-reception worker stops accepting logins;
        reaching it on every worker triggers a scale-up. Default 0.8.
+   * - ``compaction_margin``
+     - Scale-down trigger: the group is compacted (its least-occupied
+       non-reception worker drained and retired) when its spare occupancy exceeds
+       this many workers' worth of ``admission_threshold``. Default 1.5 — the
+       margin gives hysteresis, so scale-up and scale-down never chase each other.
    * - ``commander_url``
      - The commander's own public base URL, passed to each worker so it can
        reach the commander back-channel.

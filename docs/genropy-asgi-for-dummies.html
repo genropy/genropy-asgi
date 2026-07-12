@@ -419,7 +419,7 @@ gnrasgiserve mysite --nodebug            <span class="cmt"># debug off</span></c
   <defs><marker id="ar2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8b90a0"/></marker></defs>
 </svg>
 </div>
-<p class="dim">No <code class="il">sticky_cid</code> cookie yet (a fresh visitor)? The commander sends them to the welcome worker, which mints the cookie on first connection. From then on every request from that user lands on the same worker.</p>
+<p class="dim">No <code class="il">sticky_cid</code> cookie yet (a fresh visitor)? The commander sends them to the reception worker, which mints the cookie on first connection. From then on every request from that user lands on the same worker.</p>
 
 <div class="callout">
 <p><strong>Global state is coherent across the pool</strong> &mdash; eventually. The legacy <code class="il">globalStore()</code> rides the framework's store rail: a write on one worker reaches the others after one channel round-trip (the commander is the single writer, it pushes to every replica; a late worker is seeded at announce). Eventual, not synchronous, which suits the real uses (cache-invalidation timestamps, flags). Per-user and per-page state is pinned to one worker and immediately coherent there.</p>
@@ -653,7 +653,7 @@ server.<span class="fn">mount</span>(<span class="str">"api"</span>, api)</code>
 server.<span class="fn">mount</span>(<span class="str">"mcp"</span>, <span class="cls">McpOpenApiApplication</span>(routing_class=<span class="cls">MyApi</span>(), api_name=<span class="str">"tools"</span>))</code></pre>
 
 <h3>In place: replace one site path at a time</h3>
-<p>The apps above live under their own prefixes. The <strong>in-place</strong> pattern instead adds native routes to the host app itself, on paths the site already owns, and lets each one shadow the legacy handler <strong>one path at a time</strong> &mdash; the strangler-fig migration. The native surface grows while the site keeps serving everything not yet moved: no second deployment, no cut-over.</p>
+<p>The apps above live under their own prefixes. The <strong>in-place</strong> pattern instead adds native routes to the host app itself, on paths the site already owns, and lets each one shadow the legacy handler <strong>one path at a time</strong>. The native surface grows while the site keeps serving everything not yet moved: no second deployment, no cut-over. <em>(As an aside, this is the classic "strangler fig" migration &mdash; the new grows around the old and replaces it gradually. Nothing forces it; it's just what the two-stage demux makes possible.)</em></p>
 
 <p>It works because the host demultiplexes in <strong>two stages</strong>: the first path segment picks an <strong>internal root</strong> (the roots of the routes the app defines itself), then the <em>full path</em> is resolved in the app's own router. A structural miss inside a claimed root falls through to the site &mdash; so claiming a root does <em>not</em> claim its whole subtree. A single native <code class="il">@route</code> shadows exactly its own path; every sibling stays legacy.</p>
 
