@@ -116,9 +116,9 @@ The ``/metrics`` endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``GenropyCommanderApplication`` exposes a Prometheus ``/metrics`` endpoint. Being
-an ``@route`` on the commander, it is a **service segment served locally** by the
-commander — not forwarded to a single worker — so the numbers are the whole
-pool's. It reports the site-wide counters as the exact ``len()`` of the
+an ``@route`` on the commander, ``/metrics`` roots one of the app's **internal
+roots** and is served locally by the commander — not forwarded to a single worker
+— so the numbers are the whole pool's. It reports the site-wide counters as the exact ``len()`` of the
 commander's aggregated registries: ``users`` (``user_registry``), ``pages``
 (``pages_index``) and ``connections`` (``cid_to_user``), under the metric
 ``genropy_site_counters{counter="..."}``. This emulates the legacy webtool
@@ -126,6 +126,52 @@ commander's aggregated registries: ``users`` (``user_registry``), ``pages``
 One counter the legacy exposed, ``stale_connections_5min``, is **not** available
 here: it needs a per-connection ``last_refresh_ts`` the commander does not keep
 (its surface is keys and locations only).
+
+Native routes: replacing site paths one at a time
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``/metrics`` is one instance of a general capability. A host application (the
+single, a worker, or the commander) demultiplexes every request in **two stages**
+(``SpaApplication.handle_request`` in genro-asgi ≥ 0.13):
+
+#. **First segment.** The first path segment is matched against the app's
+   ``internal_roots`` — the roots of the subtrees the app routes natively (every
+   ``@route`` method it defines, plus attached routing classes). A segment that is
+   *not* an internal root belongs to the hosted GenroPy site: it goes straight to
+   ``serve_app`` (ASGI → WSGI, the legacy page).
+#. **Full path.** When the first segment *is* an internal root, the demux resolves
+   the **full path** in the app's own router. If a native node exists, it is served
+   natively. If it does **not** (a structural miss inside a claimed root), the path
+   falls through to the hosted site after all.
+
+The consequence is the useful part: **claiming a root does not claim its whole
+subtree.** A native ``@route`` can shadow a single legacy path while every sibling
+path under the same root keeps flowing to the site. This is how a legacy surface is
+migrated *incrementally* — one path at a time, no big-bang rewrite:
+
+.. code-block:: python
+
+   from genro_asgi import route
+   from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
+
+   class MyCommander(GenropyCommanderApplication):
+       @route(media_type="application/json")
+       def sys_health(self):            # serves /sys/health natively…
+           return {"status": "ok"}
+       # …every other /sys/* path still resolves to the legacy site.
+
+Point ``app_class`` at the subclass in the config recipe. The site is never touched;
+the native route simply wins for the exact path it defines, and the fallback keeps
+serving everything else. Two notes on correctness:
+
+* The structural check (``resolves_natively``) runs **without** auth/channel
+  filters — so a native route that *exists* but the request is not allowed to use
+  answers with its own 401/403 and does **not** silently fall through to the site.
+  Fallback happens on non-existence only.
+* A native route must reproduce whatever contract clients expected from the legacy
+  path it replaces (``/metrics`` keeps the ``genropy_site_counters`` shape). Paths
+  that depend on the legacy page context (session, avatar, rendered page state) are
+  the last to migrate; stateless service endpoints are the natural first movers.
 
 Sticky routing
 ~~~~~~~~~~~~~~~

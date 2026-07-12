@@ -37,14 +37,18 @@ Does a user always land on the same worker?
    The pin is per user, so their in-process session state stays coherent.
 
 How does the pool decide to grow?
-   It grows only when the pool *as a whole* is out of room — every worker is at
-   or over 80% of its user cap. Idle workers fill before a new one is spawned,
-   and a spawn already in flight is waited for rather than duplicated. See
-   :doc:`single-vs-multi` for the worked example.
+   On **measured occupancy**, not user counts. Each worker reports its cpu,
+   executor saturation and (optionally) memory; the commander turns that into an
+   occupancy in 0..1. The pool grows when no non-reception worker is under the
+   admission threshold (0.8) — the group as a whole is under pressure. A spawn
+   already in flight is waited for rather than duplicated. See
+   :doc:`single-vs-multi` for the full walk-through.
 
-Can I set the per-worker user cap?
-   Yes, but not from the CLI — through a config file (``max_users_first`` /
-   ``max_users_other`` on the application). See :doc:`configuration`.
+Can I tune when the pool grows?
+   Yes, but not from the CLI — through a config file, by setting the occupancy
+   thresholds (``reception_threshold`` / ``admission_threshold``) and the
+   worker-count bounds (``min_workers`` / ``max_workers``) on the application.
+   There are no per-user caps. See :doc:`configuration`.
 
 Is shared global state consistent across workers?
    Yes, eventually. The legacy ``globalStore()`` rides the framework's

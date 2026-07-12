@@ -68,10 +68,10 @@ Without ``--config``, the mode is chosen by ``--workers``:
    $ gnrasgiserve mysite              # single process
    $ gnrasgiserve mysite --workers 3  # commander + 3 workers
 
-The built-in ``--workers`` recipe starts the pool but uses the framework's
-default per-worker caps. To set the caps (``max_users_first`` /
-``max_users_other``) or a ``max_workers`` ceiling, use a config file — see
-:doc:`configuration`.
+The built-in ``--workers`` recipe starts the pool with the framework's default
+occupancy thresholds. To tune them (``reception_threshold`` /
+``admission_threshold``) or set the worker-count bounds (``min_workers`` /
+``max_workers``), use a config file — see :doc:`configuration`.
 
 Running from a config file
 ---------------------------

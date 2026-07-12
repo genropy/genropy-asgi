@@ -3,8 +3,8 @@ Configuration
 
 For most uses ``gnrasgiserve`` needs no configuration file: the launch options
 and a few environment variables cover single-process and a basic pool. A config
-file is needed only to tune the pool — per-worker caps and the worker-count
-shape.
+file is needed only to tune the pool — the occupancy thresholds and the
+worker-count bounds.
 
 Environment variables
 ----------------------
@@ -47,7 +47,7 @@ The config file
 A config file is a ``ServerConfiguration`` — a subclass of genro-asgi's
 ``AsgiConfigBuilder``. You override ``main(self, root)`` to declare the server,
 the middleware and the application(s). This is the only place to set the pool's
-per-worker caps, which the CLI does not expose.
+occupancy thresholds and worker-count bounds, which the CLI does not expose.
 
 The pool recipe below is the shape used to run and benchmark the pool. Save it,
 then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
@@ -77,9 +77,11 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
                    "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
                ),
                app_args={"source": SITE, "debug": ""},
-               workers=1,               # start with one worker; the pool grows under load
-               max_users_first=6,       # the first worker also hosts guests
-               max_users_other=6,       # every other worker
+               workers=1,                    # initial pool size; grows under load
+               min_workers=1,                # compaction floor (the reception)
+               max_workers=None,             # scale-up ceiling; None = unbounded
+               reception_threshold=0.5,      # reception keeps logins under this occupancy
+               admission_threshold=0.8,      # other workers stop taking logins over this
                commander_url=f"http://127.0.0.1:{PORT}",
            )
 
@@ -105,27 +107,32 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
      - Constructor kwargs forwarded to each worker: ``source`` (the site),
        ``debug``.
    * - ``workers``
-     - Initial pool size. The pool grows from here under load.
-   * - ``max_users_first``
-     - Logged-user cap of the first worker (it also serves guests, so keep it
-       lower). Framework default: 20.
-   * - ``max_users_other``
-     - Logged-user cap of every other worker. Framework default: 30.
+     - Initial pool size. The pool grows from here on measured pressure.
+   * - ``min_workers``
+     - Compaction floor: the pool is never drained below this (default 1, the
+       reception).
    * - ``max_workers``
-     - Optional ceiling on the pool size (omit or ``None`` for unbounded).
+     - Scale-up ceiling (omit or ``None`` for unbounded).
+   * - ``reception_threshold``
+     - Occupancy under which the reception (first worker) keeps a login instead
+       of passing it on. Default 0.5.
+   * - ``admission_threshold``
+     - Occupancy over which a non-reception worker stops accepting logins;
+       reaching it on every worker triggers a scale-up. Default 0.8.
    * - ``commander_url``
      - The commander's own public base URL, passed to each worker so it can
        reach the commander back-channel.
 
-Tuning the caps
----------------
+Tuning the thresholds
+---------------------
 
-The caps decide both placement and the scale threshold (the pool grows when
-every worker is at or over 80% of its cap). Lower caps spread users over more
-workers sooner; higher caps pack more users per process before spawning. Match
-the cap to how many concurrent users one process serves acceptably for your site
-— for a synchronous GenroPy site that is typically a small number. See
-:doc:`single-vs-multi` for the scaling walk-through.
+Decisions are made on **occupancy** — a 0..1 measure of a worker's real pressure
+(cpu, executor saturation, optional memory), not on a user count. Lower
+thresholds spread users over more workers sooner (they pass and spawn at lighter
+load); higher thresholds pack more work per process before growing. There are no
+per-user caps: an idle session costs almost nothing, so the pool grows on
+measured work, not head count. See :doc:`single-vs-multi` for the full
+placement / scale-up / compaction walk-through.
 
 Groups (several versions at once)
 ---------------------------------

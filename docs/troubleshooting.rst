@@ -28,9 +28,11 @@ The pool
 --------
 
 **The pool never grows beyond the initial workers**
-   The pool grows only when *every* worker is at or over 80% of its cap. If you
-   log in fewer users than that threshold, one worker is enough — that is
-   correct behaviour, not a stall. Check the live state:
+   The pool grows on measured **occupancy**, not user count: it spawns only when
+   no non-reception worker is under the admission threshold (0.8). Idle or lightly
+   loaded users do not move the occupancy, so a pool holding many idle sessions on
+   one worker is behaving correctly — that is not a stall. It grows when the *work*
+   (cpu, executor) rises, not when the head count does. Check the live state:
 
    .. code-block:: console
 

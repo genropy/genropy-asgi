@@ -52,48 +52,48 @@ How the pool scales
 -------------------
 
 The commander starts with the configured number of workers and **grows the pool
-under load**. Placement and scaling follow two rules:
+on measured pressure**, not on head counts. There are no per-user caps: an idle
+user costs about a megabyte and no cpu, so counting users answers the wrong
+question. Instead every worker reports its **occupancy** — a number in 0..1
+derived from its cpu, executor saturation and (optionally) memory, smoothed over
+the last few readings — and the commander decides from that:
 
-* **Placement** — a just-logged user is placed on the first worker with room.
-  "Room" means strictly under the worker's user cap; a worker at cap is full.
-  Idle workers fill before the pool grows.
-* **Scaling** — the pool grows only when the group *as a whole* has no room:
-  every routable worker is at or above 80% of its cap. One hot worker with idle
-  capacity elsewhere never triggers a spawn. A spawn already in flight is waited
+* **Placement (reception-first)** — every user is born on the group's *reception*
+  (its first routable worker, where guests already live). On login the reception
+  **keeps** the user while its own occupancy is under ``reception_threshold``
+  (default 0.5); over that it **passes** the user to the least-occupied of the
+  other workers that is still under ``admission_threshold`` (default 0.8).
+* **Scale-up** — the pool spawns a worker when the group cannot place well: no
+  non-reception worker is under ``admission_threshold`` (or, in a group of one,
+  the reception itself goes over its keep-threshold). One hot worker with idle
+  capacity elsewhere never triggers a spawn; a spawn already in flight is waited
   for, not stacked.
+* **Scale-down (compaction)** — when the group has more than about one and a half
+  workers' worth of spare occupancy, the least-occupied non-reception worker is
+  drained onto the survivors and retired. ``min_workers`` is the floor (default
+  1, the reception); the reception is never compacted.
 
-Per-worker caps are configurable. The **first** worker also serves guests
-(not-yet-logged-in visitors), so it usually carries a lower logged-user cap
-(``max_users_first``) than the others (``max_users_other``).
+The knobs (``reception_threshold``, ``admission_threshold``, ``min_workers``,
+``max_workers``, ``compaction_margin``) are set on the pool through a config file
+— see :doc:`configuration`.
 
-.. rubric:: A worked example
+.. rubric:: Why occupancy and not counts
 
-With a cap of 6 users per worker (80% threshold = 4.8, so a worker has room to
-grow the pool while it holds 4 or fewer users), 15 users logging in one after
-another settle onto **three** workers:
+Because the site is CPU-bound under the GIL, the real limit is a worker's cpu and
+executor saturation, not how many users are pinned to it. A worker holding many
+idle sessions is not full; a worker with a few busy ones can be. Deciding on
+measured occupancy grows the pool exactly when the work — not the head count —
+demands it.
 
-.. code-block:: text
-
-   users 1..5   → worker 1 fills, crosses 80% at 5 → spawn worker 2
-   users 6..10  → worker 2 fills the idle slots (no new spawn)
-   users 11     → both at/over 80% → spawn worker 3
-   users 12..15 → worker 3 fills
-
-   result: 3 workers holding 5 / 6 / 4 users
-
-The spawn of a fresh worker takes a few seconds (it boots a full
-``GnrWsgiSite``). Under a genuine login burst — many users faster than a worker
-can boot — the extra logins pile onto the last full worker until the new one
-announces, then routing resumes normally. This is expected: the commander never
-stacks a second spawn while one is in flight.
-
-Guests and the welcome worker
------------------------------
+Guests and the reception worker
+-------------------------------
 
 Not-yet-logged-in visitors ("guests") are always served by the first worker of
-the default group — the welcome worker. It mints the ``sticky_cid`` cookie on a
-visitor's first connection. Because it also carries guests, its logged-user cap
-is set lower than the other workers'.
+the default group — the **reception**. It mints the ``sticky_cid`` cookie on a
+visitor's first connection, and a login happens where the guest already is. The
+reception is the one worker that is never compacted away, so guests always have a
+home; ``reception_threshold`` (lower than ``admission_threshold``) keeps it from
+filling with logged users before it starts passing them on.
 
 Groups — several versions behind one commander
 -----------------------------------------------
