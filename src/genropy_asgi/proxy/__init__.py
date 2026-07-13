@@ -1,7 +1,7 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""genropy-proxy — GenroPy legacy db behind an OpenApiApplication (collaudo).
+"""genropy-proxy — GenroPy legacy db behind an OpenApiApplication.
 
 ``GenropyProxyMixin`` hosts a ``GnrApp`` and closes its thread-local db
 connection via the ``route_cleanup`` hook (run in the executor thread by

@@ -14,16 +14,12 @@ The mixin instantiates a ``GnrApp`` and exposes it as ``self.gnr_app`` (the only
 channel the mounted RoutingClass reads, e.g. through its parent). It overrides
 only what it owns — ``route_cleanup`` (close the current thread's connection) —
 and never the ``OpenApiApplication`` machinery. Direction of dependency is
-contrib -> genro-asgi: this imports ``gnr.*``; genro-asgi never imports GenroPy.
+genropy-asgi -> genro-asgi: this imports ``gnr.*``; genro-asgi never imports GenroPy.
 
 Compose it with the base to get a mountable app::
 
     class GenropyProxyOpenApiApplication(GenropyProxyMixin, OpenApiApplication):
         ...
-
-NOTE (collaudo): this package currently lives in genro-asgi/contrib for
-end-to-end testing against the real GenroPy legacy. Once proven it will move to
-the genropy-asgi repository.
 """
 
 from __future__ import annotations

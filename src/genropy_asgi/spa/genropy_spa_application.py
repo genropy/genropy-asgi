@@ -21,10 +21,6 @@ The site-hosting behaviour is a MIXIN (``GnrSiteHostingMixin``) shared by the tw
 
 It is the ONLY part that imports ``gnr.*``: everything generic is inherited from genro_asgi.applications.spa_application.
 
-NOTE (collaudo): this package currently lives in genro-asgi/contrib for end-to-end testing
-of the SpaApplication against the real GenroPy legacy. Once proven it will move to the
-genropy-asgi repository.
-
 ``source`` (from SpaApplication, a path or OCI) is the GenroPy site: here it is a site path
 or a site name resolved to a path. Two construction modes:
     1. Pre-built site:  GenropySpaApplication(gnr_site=site)
