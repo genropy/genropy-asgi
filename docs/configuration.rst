@@ -1,56 +1,22 @@
 Configuration
 =============
 
-For most uses ``gnrasgiserve`` needs no configuration file: the launch options
-and a few environment variables cover single-process and a basic pool. A config
-file is needed only to tune the pool — the occupancy thresholds and the
-worker-count bounds.
+Reach for a config file when you need to tune the pool — the occupancy
+thresholds and the worker-count bounds the CLI does not expose — or to run more
+than one version of the site at once (groups). For everything else, the launch
+options and a few environment variables cover single-process and a basic pool
+with no config at all.
 
-Environment variables
-----------------------
-
-The CLI writes these before building the server; the built-in recipe reads
-them. You can also set them yourself when driving the server directly.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 16 58
-
-   * - Variable
-     - Default
-     - Controls
-   * - ``GNR_ASGI_PATH``
-     - *(required)*
-     - The GenroPy site path (the CLI sets this from the resolved instance).
-   * - ``GNR_ASGI_HOST``
-     - ``127.0.0.1``
-     - Bind host.
-   * - ``GNR_ASGI_PORT``
-     - ``8000``
-     - Listening port.
-   * - ``GNR_ASGI_DEBUG``
-     - ``true``
-     - Debug mode; empty string turns it off.
-   * - ``GNR_ASGI_WORKERS``
-     - ``0``
-     - ``0`` = single process; ``N > 0`` = a commander with N pool workers.
-
-.. note::
-
-   The built-in recipe's defaults (host ``127.0.0.1``, port ``8000``) apply when
-   nothing overrides them. The ``gnrasgiserve`` CLI passes its own defaults
-   (host ``0.0.0.0``, port ``8080``) when you do not specify them, and those win.
-
-The config file
----------------
+Write a pool config file
+------------------------
 
 A config file is a ``ServerConfiguration`` — a subclass of genro-asgi's
 ``AsgiConfigBuilder``. You override ``main(self, root)`` to declare the server,
 the middleware and the application(s). This is the only place to set the pool's
-occupancy thresholds and worker-count bounds, which the CLI does not expose.
+occupancy thresholds and worker-count bounds.
 
-The pool recipe below is the shape used to run and benchmark the pool. Save it,
-then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
+Save this recipe, then launch it with
+``gnrasgiserve <site> --config <file> -p 8081``:
 
 .. code-block:: python
 
@@ -128,23 +94,23 @@ then launch with ``gnrasgiserve <site> --config <file> -p 8081``:
      - The commander's own public base URL, passed to each worker so it can
        reach the commander back-channel.
 
-Tuning the thresholds
----------------------
+Tune the thresholds
+-------------------
 
 Decisions are made on **occupancy** — a 0..1 measure of a worker's real pressure
-(cpu, executor saturation, optional memory), not on a user count. Lower
-thresholds spread users over more workers sooner (they pass and spawn at lighter
-load); higher thresholds pack more work per process before growing. There are no
-per-user caps: an idle session costs almost nothing, so the pool grows on
-measured work, not head count. See :doc:`single-vs-multi` for the full
-placement / scale-up / compaction walk-through.
+(cpu, executor saturation, optional memory), not on a user count. Lower thresholds
+spread users over more workers sooner (they pass and spawn at lighter load);
+higher thresholds pack more work per process before growing. There are no per-user
+caps: an idle session costs almost nothing, so the pool grows on measured work,
+not head count. See :doc:`single-vs-multi` for the full placement / scale-up /
+compaction walk-through.
 
-Groups (several versions at once)
----------------------------------
+Run several versions at once (groups)
+-------------------------------------
 
-To run more than one version of the site behind the commander, declare
-``groups`` as a child of the application. Each ``group`` is a runtime with its
-own interpreter, so each can serve a different version:
+To run more than one version of the site behind the commander, declare ``groups``
+as a child of the application. Each ``group`` is a runtime with its own
+interpreter, so each can serve a different version:
 
 .. code-block:: python
 
@@ -177,6 +143,41 @@ own interpreter, so each can serve a different version:
      - The interpreter path for this group's worker processes. Point it at a
        virtualenv to run a different version. Omitted = the current interpreter.
 
-Users reach a group by the ``xgroup`` field of their avatar; see the Groups
+Users reach a group by the ``xgroup`` field of their avatar; see the groups
 section of :doc:`single-vs-multi` for routing, live migration, and how this maps
 onto virtualenv / Podman / Docker isolation.
+
+Set the environment variables
+-----------------------------
+
+The CLI writes these before building the server; the built-in recipe reads them.
+Set them yourself when driving the server directly.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 16 58
+
+   * - Variable
+     - Default
+     - Controls
+   * - ``GNR_ASGI_PATH``
+     - *(required)*
+     - The GenroPy site path (the CLI sets this from the resolved instance).
+   * - ``GNR_ASGI_HOST``
+     - ``127.0.0.1``
+     - Bind host.
+   * - ``GNR_ASGI_PORT``
+     - ``8000``
+     - Listening port.
+   * - ``GNR_ASGI_DEBUG``
+     - ``true``
+     - Debug mode; empty string turns it off.
+   * - ``GNR_ASGI_WORKERS``
+     - ``0``
+     - ``0`` = single process; ``N > 0`` = a commander with N pool workers.
+
+.. note::
+
+   The built-in recipe's defaults (host ``127.0.0.1``, port ``8000``) apply when
+   nothing overrides them. The ``gnrasgiserve`` CLI passes its own defaults (host
+   ``0.0.0.0``, port ``8080``) when you do not specify them, and those win.

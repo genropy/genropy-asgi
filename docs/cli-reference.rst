@@ -58,10 +58,11 @@ Options
    back to when the CLI does not pass them. ``--config`` recipes are free to
    choose their own defaults.
 
-Single vs. pool
----------------
+Recipes
+-------
 
-Without ``--config``, the mode is chosen by ``--workers``:
+**Serve single vs. pool** — without ``--config``, the mode is chosen by
+``--workers``:
 
 .. code-block:: console
 
@@ -73,10 +74,8 @@ occupancy thresholds. To tune them (``reception_threshold`` /
 ``admission_threshold``) or set the worker-count bounds (``min_workers`` /
 ``max_workers``), use a config file — see :doc:`configuration`.
 
-Running from a config file
----------------------------
-
-Two equivalent launches, both starting the same pool from a config:
+**Run from a config file** — two equivalent launches, both starting the same pool
+from a config:
 
 .. code-block:: console
 
@@ -86,17 +85,16 @@ Two equivalent launches, both starting the same pool from a config:
    # through the genro-asgi core CLI — the config supplies everything
    $ python -m genro_asgi serve path/to/pool_config.py
 
-How the instance wins
----------------------
+.. note::
 
-The CLI writes the resolved instance path (and any host/port/debug you pass)
-into the environment **before** building the server, so a ``--config`` recipe
-that reads ``GNR_ASGI_PATH`` serves the instance you named on the command line.
-With ``--config`` the CLI leaves ``GNR_ASGI_WORKERS`` untouched — the config
-owns the pool shape. See :doc:`configuration` for the environment variables.
+   The CLI writes the resolved instance path (and any host/port/debug you pass)
+   into the environment **before** building the server, so a ``--config`` recipe
+   that reads ``GNR_ASGI_PATH`` serves the instance you named on the command line.
+   With ``--config`` the CLI leaves ``GNR_ASGI_WORKERS`` untouched — the config
+   owns the pool shape. See :doc:`configuration` for the environment variables.
 
-Remote database, SSL, and the rest
------------------------------------
+Configure remote database, SSL, and the rest
+---------------------------------------------
 
 Site-level launch concerns handled by GenroPy itself (a remote database over an
 SSH tunnel, SSL certificates, data restore) are configured the same way as with
