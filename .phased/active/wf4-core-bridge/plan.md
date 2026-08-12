@@ -361,7 +361,15 @@ closed).
   - Done: `pytest tests/` passes (skips only the two declared pool modules);
     `ruff check src/ tests/` zero errors.
 
-- [ ] **Phase 7**: Coherence review and auto-fix (final, mandatory)
+- [x] **Phase 7**: Coherence review and auto-fix (final, mandatory)
+  > Done: review.md written with the three sections; convergence at cycle 2
+    (zero lint at cycle 1; one mechanical docstring fix in cli.py, then full
+    re-verification). Final state: ruff zero on the 19-file set, full suite
+    92 passed / 2 skipped (the declared pool modules only). Flags for human:
+    dead compat _add_data_to_register_item; proxy route_cleanup seam missing
+    in core 0.30; --reload no-op; pool bridge stage two.
+  > Files: src/genropy_asgi/spa/cli.py,
+    .phased/active/wf4-core-bridge/review.md
   - Pattern reference: same as Phases 1..6 (cross-check against them)
   - Files: only the files written by Phases 1..6 (collect them from their
     `Files:` fields). Never touch a pre-existing file they did not modify.

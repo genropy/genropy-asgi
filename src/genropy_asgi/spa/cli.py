@@ -16,9 +16,9 @@ No external register daemon is contacted, started or required.
 Name -> path resolution is the legacy GenroPy step and lives here (it uses ``gnr.*``); the
 generic SPA model only ever sees a path.
 
-With ``--workers N`` the same command serves the instance through a commander with a
-pool of N worker subprocesses (sticky routing per user; the workers reach the commander
-back-channel at its own address). Still no daemon.
+With ``--workers N`` the same command serves the instance through the front's
+user-sticky pool: N worker subprocesses, each hosting the same site, reached over
+the pool's own channel (sticky routing per user). Still no daemon.
 
 Usage:
     gnrasgiserve test_invoice_pg
