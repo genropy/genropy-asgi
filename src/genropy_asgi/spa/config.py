@@ -13,6 +13,14 @@ ONE shape, whatever ``GNR_ASGI_WORKERS`` says: a single ``GenropySpaApplication`
 owning the user-sticky pool. ``0`` (the default) is the SINGLE — the commander
 holds its one worker in this process (``local_worker``); ``N > 0`` spawns N
 worker subprocesses, each hosting the same site behind the core ``worker_entry``.
+
+The environment enters the tree as ``EnvResolver`` VALUES sitting in the element
+attributes — the shape the core's own recipes use (``BaseConfiguration``) and the
+one its grammar types declare (``port: int | BagResolver``). The read door
+resolves such a resolver transparently and AT READ TIME, so the recipe follows
+the environment the CLI writes just before the server is built. The builder
+datastore plus ``^name`` pointers is a different mechanism: the configuration read
+stack never dereferences those strings, and the grammar rejects them outright.
 """
 
 import os
@@ -26,24 +34,23 @@ from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 
 
 class ServerConfiguration(AsgiConfigBuilder):
-    def setup(self, data: Any) -> None:
-        # The only variable elements: the resolved instance path (or name) and the
-        # server address, set by the CLI through the environment.
-        data["path"] = EnvResolver("GNR_ASGI_PATH")
-        data["host"] = EnvResolver("GNR_ASGI_HOST", default="127.0.0.1")
-        data["port"] = EnvResolver("GNR_ASGI_PORT", default=8000, dtype="L")
-        data["debug"] = EnvResolver("GNR_ASGI_DEBUG", default=True, dtype="B")
-
     def main(self, root: Any) -> None:
-        root.server(host="^host", port="^port")
-        root.middleware()
-        apps = root.applications(default="site")
+        """The one document: the listener, the middleware and the site on the root."""
+        cfg = root.configuration()
+        cfg.server(
+            host=EnvResolver("GNR_ASGI_HOST", default="127.0.0.1"),
+            port=EnvResolver("GNR_ASGI_PORT", default=8000, dtype="L"),
+        )
+        cfg.middleware()
         workers = int(os.environ.get("GNR_ASGI_WORKERS") or "0")
-        apps.application(
+        # mount="" IS the site root: a GenroPy site owns its absolute URLs
+        # (/_rsrc, /sys, the dojo tree), so it cannot live under a /site prefix.
+        cfg.applications().application(
             code="site",
+            mount="",
             app_class=GenropySpaApplication,
-            source="^path",
-            debug="^debug",
+            source=EnvResolver("GNR_ASGI_PATH"),
+            debug=EnvResolver("GNR_ASGI_DEBUG", default=True, dtype="B"),
             workers=workers,
             local_worker=(workers == 0),
         )

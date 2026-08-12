@@ -79,6 +79,11 @@ RETRY_DELAY_MAX = 2.0
 # The 5-second window the daemon used for the runningBatch flag in the ping envelope.
 RUNNING_BATCH_WINDOW = 5.0
 
+# The row stamps the core keeps as epoch floats (``time.time()``) and the legacy
+# compares against ``datetime.now()``. Converted on the way out, never in place:
+# the core's expiry sweep reads these same fields as floats.
+EPOCH_STAMPS = ("last_refresh_ts", "last_user_ts", "last_rpc_ts")
+
 
 class ServerStore:
     """Context manager over one register item: lock on enter, unlock on exit.
@@ -307,10 +312,16 @@ class GenropyRegisterClient:
         is named (the naked sticky key). A connection the worker already holds is a
         re-registration (a browser re-presenting its cookie): the live row answers.
         Returns the local connection item with its data Bag attached.
+
+        The row is born with ``start_ts`` — the daemon's own birth stamp
+        (siteregister.py:322), which the core does not keep and the legacy reads
+        without a guard.
         """
         worker = self.spa_worker
         if worker.connection_items.get(connection_id) is None:
-            worker.new_connection(connection_id, **self._conn_kwargs(connection, kwargs))
+            fields = self._conn_kwargs(connection, kwargs)
+            fields["start_ts"] = datetime.datetime.now()
+            worker.new_connection(connection_id, **fields)
         return self._item_with_data(connection_id, "connection")
 
     def new_page(self, page_id: Any, page: Any = None, **kwargs: Any) -> dict | None:
@@ -323,6 +334,10 @@ class GenropyRegisterClient:
         Bag serves the dbenv walk, the channel-A writes and the capture, and a move
         would package exactly it. Returns the local page item with that Bag as
         ``data``.
+
+        The row is born with ``start_ts`` — the daemon's own birth stamp
+        (siteregister.py:387), read without a guard by the async user tree
+        (``gnrasync.registerPage``).
         """
         worker = self.spa_worker
         fields = self._page_kwargs(page, kwargs)
@@ -333,6 +348,7 @@ class GenropyRegisterClient:
         data = fields.pop("data", None)
         if data is not None:
             fields["store"] = data
+        fields["start_ts"] = datetime.datetime.now()
         worker.new_page(user, page_id=page_id, session_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
@@ -395,14 +411,15 @@ class GenropyRegisterClient:
 
         The read primitive the whole read side builds on. ``register_name='global'``
         returns the stable global Bag; ``include_data == 'lazy'`` attaches the item's
-        in-process Bag — the row's own live store.
+        in-process Bag — the row's own live store. What goes out is the LEGACY VIEW
+        of the row (``_legacy_row``): the live Bag, datetime stamps, daemon-era keys.
         """
         if register_name == "global":
             return {"register_item_id": "*", "register_name": "global", "data": self.global_bag}
         item = self.local_item(register_item_id, register_name)
         if item is not None and (include_data == "lazy" or include_data):
             self._ensure_item_data(item)
-        return item
+        return self._legacy_row(item)
 
     def page(self, page_id: Any, include_data: Any = None) -> Any:
         """The local page item, enriched with its ``subscribed_tables``.
@@ -436,6 +453,9 @@ class GenropyRegisterClient:
         the keys must be the page ids. ``connection_id`` reads the ``session_id`` index;
         ``user`` walks the ownership edges (user -> connections -> pages). Called for the
         ``setInClientData`` broadcast (with filters) and by monitoring.
+
+        Filtering happens on the live rows — a ``user`` clause needs the registry's own
+        ownership walk — and what goes out is the legacy view of each match.
         """
         worker = self.spa_worker
         if worker is None:
@@ -456,7 +476,10 @@ class GenropyRegisterClient:
                 items.extend(page_items.get(pid) for pid in connection["pages"])
         else:
             items = [page_items.get(k) for k in page_items.keys()]
-        return {item["register_item_id"]: item for item in self._filter_items(items, filters)}
+        return {
+            item["register_item_id"]: self._legacy_row(item)
+            for item in self._filter_items(items, filters)
+        }
 
     def connections(self, user: Any = None, **kwargs: Any) -> dict:
         """Connections optionally by user, keyed by connection_id (``adaptListToDict``).
@@ -472,14 +495,22 @@ class GenropyRegisterClient:
             items = [worker.connection_items.get(cid) for cid in (entry or {}).get("connections", ())]
         else:
             items = [worker.connection_items.get(k) for k in worker.connection_items.keys()]
-        return {item["register_item_id"]: item for item in items}
+        return {item["register_item_id"]: self._legacy_row(item) for item in items}
 
     def users(self, **kwargs: Any) -> dict:
-        """Active users keyed by user id (``adaptListToDict``): lists connected users."""
+        """Active users keyed by user id (``adaptListToDict``): lists connected users.
+
+        Polled every 2 seconds by the chat component's connected-users grid, through
+        ``Connection.connected_users_bag`` — the reader that does datetime arithmetic
+        on the stamps and captions with ``user_name``, so the rows go out dressed.
+        """
         worker = self.spa_worker
         if worker is None:
             return {}
-        return {key: worker.user_items.get(key) for key in worker.user_items.keys()}
+        return {
+            key: self._legacy_row(worker.user_items.get(key))
+            for key in worker.user_items.keys()
+        }
 
     def get_dbenv(self, register_item_id: Any, **kwargs: Any) -> Bag:
         """Build a page's database-environment Bag from its data (= the daemon's walk).
@@ -1157,6 +1188,47 @@ class GenropyRegisterClient:
         """The live row after a lifecycle op, with its data Bag attached."""
         return self._ensure_item_data(self.local_item(item_id, register_name))
 
+    def _legacy_row(self, item: dict | None) -> dict | None:
+        """The legacy view of a core register row — the read side's own surface.
+
+        The rows the core keeps and the rows the daemon handed out differ in two
+        ways the legacy reads WITHOUT a guard, so the bridge reconciles both here,
+        on a SHALLOW COPY: the live Bag and the live edge sets stay the same
+        objects, while the core's own fields on the row itself are left exactly as
+        the core wrote them — the expiry sweep reads the stamps as floats.
+
+        - **The stamps.** The core stamps with ``time.time()``; the legacy
+          subtracts them from ``datetime.now()`` (``Connection.connected_users_bag``
+          connection.py:197, ``datacollector.stale_connections``:54), so they go
+          out as naive local datetimes.
+        - **``start_ts``**, read unconditionally as the "no client clock reported
+          yet" fallback (connection.py:196) and as a page's birth instant
+          (gnrasync.py:379). The connection and page rows are born with it (the
+          lifecycle commands stamp it); a USER entry is created by the core itself,
+          implicitly, under a new connection, so it cannot be stamped from here and
+          falls back to the row's server stamp — the creation instant, until the
+          first refresh moves it forward. That is precisely the value the one
+          legacy reader of a user row's ``start_ts`` wants there.
+        - **``user_name``**, read unconditionally as the caption
+          (connection.py:209). A row that never logged in has none: the legacy
+          reads ``arguments['user_name'] or user`` and captions with the key.
+
+        Only the READ commands dress. The lifecycle commands keep answering the
+        live row — the object the legacy holds for the page's whole life as
+        ``page_item`` — which is why they stamp ``start_ts`` at birth.
+        """
+        if item is None:
+            return None
+        row = dict(item)
+        for field in EPOCH_STAMPS:
+            stamp = row.get(field)
+            if isinstance(stamp, (int, float)):
+                row[field] = datetime.datetime.fromtimestamp(stamp)
+        if row.get("start_ts") is None:
+            row["start_ts"] = row.get("last_refresh_ts")
+        row.setdefault("user_name", None)
+        return row
+
     def _ensure_item_data(self, item: dict | None) -> dict | None:
         """Alias the row's live store as ``data`` — the name the legacy reads.
 
@@ -1196,9 +1268,24 @@ class GenropyRegisterClient:
         return out
 
     def _filter_items(self, items: list, filters: Any) -> list:
-        """The daemon's ad-hoc page filter grammar: ``name:regex AND name:value``."""
+        """The daemon's ad-hoc page filter grammar: ``name:regex AND name:value``.
+
+        The grammar stays client-local (cemented): the single sees every page, so it
+        answers the whole question itself. Names read off the page row exactly as the
+        daemon read them (``pagename``, ``user_ip``, ``relative_url``, ...) — with ONE
+        exception:
+
+        ``user`` is resolved through ``registry.page_user``, the walk page ->
+        connection -> user. The daemon's page row carried a ``user`` field; the core's
+        does not, on purpose — ownership is derived so it cannot go stale, and the
+        bridge's ``new_page`` pops the field before the op. Reading ``item['user']``
+        here therefore matched nothing, and ``user:X`` broadcasts
+        (``gnr.chat.room_alert``, every filtered ``sendMessageToClient``) reached
+        nobody. The derived owner is the same answer, from the one place that holds it.
+        """
         if not filters or filters == "*":
             return items
+        registry = self.spa_worker.registry
         fltdict: dict[str, Any] = {}
         for flt in filters.split(" AND "):
             fltname, fltvalue = flt.split(":", 1)
@@ -1209,7 +1296,10 @@ class GenropyRegisterClient:
         filtered = []
         for item in items:
             for fltname, fltpat in fltdict.items():
-                value = item.get(fltname)
+                if fltname == "user":
+                    value = registry.page_user(item["register_item_id"])
+                else:
+                    value = item.get(fltname)
                 if not value:
                     continue
                 if not isinstance(value, (bytes, str)):

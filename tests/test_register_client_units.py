@@ -73,6 +73,27 @@ def open_page(client, worker, user=None, data=None, **page_fields):
     return cid, page_id
 
 
+def open_tab(client, worker, cid, **page_fields):
+    """A second tab: another page on a connection that already exists."""
+    page_id = f"p_{uuid.uuid4().hex[:8]}"
+    with call_sink(worker):
+        client.new_page(page_id, None, connection_id=cid, **page_fields)
+    return page_id
+
+
+def login(client, worker, cid, name, user_name=None):
+    """The login path: the avatar re-labels the live connection (login-stays).
+
+    The user id is made unique per call — the worker (and so the user register)
+    lives for the whole module, and a user entry is created only the first time
+    its id is seen: a shared name would reuse an entry another test dressed.
+    """
+    user = f"{name}_{uuid.uuid4().hex[:8]}"
+    with call_sink(worker):
+        client.change_connection_user(cid, user=user, user_name=user_name)
+    return user
+
+
 # ------------------------------------------------------------------
 # Lifecycle: reception, login-stays, demolition
 # ------------------------------------------------------------------
@@ -288,6 +309,134 @@ def test_pages_reads_and_the_filter_grammar(client, worker):
     assert client.exists(page_id, register_name="page")
     assert cid in client.connections()
     assert cid in client.users()  # the guest user is the cid itself
+
+
+# ------------------------------------------------------------------
+# The legacy row contract: what gnr.* reads off a row WITHOUT a guard
+# ------------------------------------------------------------------
+
+
+def connected_users_row(user, arguments):
+    """The per-row body of ``Connection.connected_users_bag``, transcribed.
+
+    ``gnr/web/gnrwebpage_proxy/connection.py:186-212``. That method is a
+    ``@public_method`` the chat component polls every 2 seconds
+    (``chat_component.py:118``, ``cacheTime=2``), so anything this expression
+    raises is a 500 on every poll and an empty user list in the browser. The
+    load-bearing lines are the two subtractions from ``datetime.now()`` and the
+    three keys read with no ``get``.
+    """
+    now = datetime.datetime.now()
+    last_refresh_ts = arguments.get("last_refresh_ts") or arguments["start_ts"]
+    last_user_ts = arguments.get("last_user_ts") or arguments["start_ts"]
+    return {
+        "_pkey": user.replace(".", "_").replace("@", "_"),
+        "last_refresh_age": (now - last_refresh_ts).seconds,
+        "last_event_age": (now - last_user_ts).seconds,
+        "caption": arguments["user_name"] or user,
+    }
+
+
+def test_connected_users_reads_a_refreshed_row(client, worker):
+    # the row whose server stamp the core moved: a float where a datetime is due
+    cid, page_id = open_page(client, worker)
+    user = login(client, worker, cid, "alice", user_name="Alice A")
+    client.refresh(page_id, ts=datetime.datetime.now())
+    row = connected_users_row(user, client.users()[user])
+    assert row["caption"] == "Alice A"
+    assert row["last_refresh_age"] == 0  # just stamped, so it reads as live
+    assert row["last_event_age"] == 0
+
+
+def test_connected_users_reads_a_freshly_created_row(client, worker):
+    # no ping yet: no last_user_ts, so the legacy falls back to start_ts
+    cid, _ = open_page(client, worker)
+    user = login(client, worker, cid, "bruno", user_name="Bruno B")
+    arguments = client.users()[user]
+    assert "last_user_ts" not in arguments
+    assert connected_users_row(user, arguments)["last_event_age"] == 0
+
+
+def test_connected_users_reads_a_guest_row(client, worker):
+    # a guest never logged in, so it has no user_name: the key is the caption
+    cid, _ = open_page(client, worker)
+    row = connected_users_row(cid, client.users()[cid])
+    assert row["caption"] == cid
+
+
+def test_stale_connections_reads_the_connection_rows(client, worker):
+    # ``datacollector.stale_connections``:54 — the same subtraction, unguarded
+    cid, _ = open_page(client, worker)
+    now = datetime.datetime.now()
+    assert (now - client.connections()[cid]["last_refresh_ts"]).seconds == 0
+
+
+def test_a_page_row_carries_its_own_birth_stamp(client, worker):
+    # ``gnrasync.registerPage`` reads page_item['start_ts'] with no guard
+    _, page_id = open_page(client, worker)
+    born = client.page(page_id)["start_ts"]
+    assert isinstance(born, datetime.datetime)
+    client.refresh(page_id, ts=datetime.datetime.now())
+    assert client.page(page_id)["start_ts"] == born  # a birth stamp never moves
+
+
+def test_the_core_rows_keep_the_stamps_the_sweep_reads(client, worker):
+    # the dressing is a view: the live row the expiry sweep reads stays float
+    _, page_id = open_page(client, worker)
+    assert isinstance(client.page(page_id)["last_refresh_ts"], datetime.datetime)
+    assert isinstance(worker.page_items.get(page_id)["last_refresh_ts"], float)
+
+
+# ------------------------------------------------------------------
+# The user filter: resolved through ownership, not off the page row
+# ------------------------------------------------------------------
+
+
+def test_a_user_filter_finds_every_page_of_that_user(client, worker):
+    cid, first_tab = open_page(client, worker)
+    second_tab = open_tab(client, worker, cid)
+    carla = login(client, worker, cid, "carla")
+    other_cid, other_tab = open_page(client, worker)
+    login(client, worker, other_cid, "dario")
+    matched = client.pages(filters=f"user:{carla}")
+    assert sorted(matched) == sorted([first_tab, second_tab])
+    assert other_tab not in matched
+
+
+def test_a_user_addressed_push_reaches_both_tabs_and_nobody_else(client, worker):
+    # ``gnr.chat.room_alert``: setInClientData(filters='user:X') — the push that
+    # reached nobody while the filter read a field the core does not store
+    cid, first_tab = open_page(client, worker)
+    second_tab = open_tab(client, worker, cid)
+    elena = login(client, worker, cid, "elena")
+    other_cid, other_tab = open_page(client, worker)
+    login(client, worker, other_cid, "fabio")
+    client.setInClientData(
+        "gnr.chat.room_alert", value="ring", filters=f"user:{elena}", fired=True
+    )
+    for page_id in (first_tab, second_tab):
+        changes = client.subscription_storechanges(None, page_id)
+        assert [(c.path, c.value) for c in changes] == [("gnr.chat.room_alert", "ring")]
+    assert client.subscription_storechanges(None, other_tab) == []
+
+
+def test_an_explicit_page_id_still_delivers(client, worker):
+    # no filters: the daemon's other branch, the addressed page and only it
+    _, page_id = open_page(client, worker)
+    _, bystander = open_page(client, worker)
+    client.setInClientData("gnr.msg", value="direct", page_id=page_id)
+    assert [c.value for c in client.subscription_storechanges(None, page_id)] == ["direct"]
+    assert client.subscription_storechanges(None, bystander) == []
+
+
+def test_a_non_user_filter_still_reads_the_page_row(client, worker):
+    # pagename/user_ip/relative_url keep answering off the row, as the daemon did
+    _, page_id = open_page(client, worker, pagename="chatroom", user_ip="10.0.0.9")
+    _, bystander = open_page(client, worker, pagename="elsewhere")
+    client.setInClientData("gnr.msg", value="by_name", filters="pagename:chatroom")
+    assert [c.value for c in client.subscription_storechanges(None, page_id)] == ["by_name"]
+    assert client.subscription_storechanges(None, bystander) == []
+    assert page_id in client.pages(filters="user_ip:10.0.0.9")
 
 
 def test_changes_to_bag_numbers_sc_i_with_the_envelope_attrs(client):

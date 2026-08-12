@@ -5,10 +5,14 @@
 
 The structural half (subclassing, pool defaults, the memory budget derivation)
 needs no GenroPy: the front builds its commander at construction and spawns
-nothing until startup. The end-to-end half drives a REAL single — the front
-started with its in-process GenropyWorker hosting ``test_invoice_pg`` — through
-the full ASGI stack: the demux serves ``/metrics`` natively and forwards the
-site paths, the sticky cookie is minted on the first answer.
+nothing until startup. The BOOT half builds the shipped ``config.py`` recipe —
+the one ``gnrasgiserve`` boots — all the way to an ``AsgiServer``, stopping short
+of ``serve()``: the recipe is what the CLI executes before anything else, so a
+recipe the grammar rejects is a server that never starts. The end-to-end half
+drives a REAL single — the front started with its in-process GenropyWorker
+hosting ``test_invoice_pg`` — through the full ASGI stack: the demux serves
+``/metrics`` natively and forwards the site paths, the sticky cookie is minted on
+the first answer.
 """
 
 import importlib.util
@@ -16,8 +20,10 @@ import os
 
 import pytest
 
+from genro_asgi import AsgiServer
 from genro_asgi.applications.spa_app import STICKY_CID_COOKIE, SpaApplication
 from genropy_asgi.spa import GenropySpaApplication
+from genropy_asgi.spa.cli import CONFIG
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
@@ -70,6 +76,59 @@ def test_the_single_passes_no_memory_limit():
     # the in-process worker is never recycled by construction
     app = GenropySpaApplication(source="some_site", workers=0, local_worker=True)
     assert app.commander.memory_limit_mb is None
+
+
+# ------------------------------------------------------------------
+# Boot: the shipped recipe, built to an AsgiServer (no serve())
+# ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def booted(monkeypatch):
+    """The shipped ``config.py`` built to a server, the environment the CLI writes.
+
+    ``gnrasgiserve`` writes the instance path, the address and the debug flag to
+    the environment and then hands ``config.py`` to ``AsgiServer``: this fixture
+    is that boot, minus the ``serve()`` call. No site is opened — the commander
+    spawns nothing until startup — so the path need not exist.
+    """
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_HOST", "0.0.0.0")
+    monkeypatch.setenv("GNR_ASGI_PORT", "8971")
+    monkeypatch.setenv("GNR_ASGI_DEBUG", "")
+    monkeypatch.delenv("GNR_ASGI_WORKERS", raising=False)
+    return AsgiServer(str(CONFIG))
+
+
+def test_the_recipe_builds_a_server_on_the_declared_address(booted):
+    # the whole point: the grammar accepts the recipe, so the boot path lives
+    assert booted.config_host == "0.0.0.0"
+    assert booted.config_port == 8971  # dtype="L" — a real int, not "8971"
+
+
+def test_the_recipe_mounts_the_front_on_the_site_root(booted):
+    front = booted.application_at("")
+    assert isinstance(front, GenropySpaApplication)
+    assert front.code == "site"
+    assert front.mount == ""  # a GenroPy site owns its absolute URLs
+
+
+def test_the_recipe_wires_the_commander_for_the_single(booted):
+    commander = booted.application_at("").commander
+    assert commander.worker_class == "genropy_asgi.spa.genropy_worker:GenropyWorker"
+    assert commander.worker_kwargs == {
+        "source": "/tmp/genropy_asgi_recipe_probe",  # the resolved instance path
+        "debug": False,  # --nodebug writes an empty GNR_ASGI_DEBUG
+    }
+    assert commander.local_worker is True  # workers == 0: the in-process single
+
+
+def test_the_recipe_wires_a_pool_when_workers_are_asked_for(monkeypatch):
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_WORKERS", "2")
+    commander = AsgiServer(str(CONFIG)).application_at("").commander
+    assert commander.local_worker is False
+    assert commander.target == 2  # the boot target of the pool
 
 
 # ------------------------------------------------------------------
