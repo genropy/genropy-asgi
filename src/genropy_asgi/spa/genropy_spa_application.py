@@ -8,6 +8,10 @@ The core front owns the whole serving machinery: the user-sticky pool
 site), the ``sticky_cid`` cookie mint and the ``http`` CALL forward. This
 subclass adds exactly the GenroPy fit:
 
+- the ROOT mount, declared as the class attribute the core reads
+  (``mount = ""``): a GenroPy site builds absolute URLs, so a prefix would
+  serve the first page and 404 every path that page asks for. A non-empty
+  ``mount`` kwarg is refused at construction rather than silently obeyed;
 - the pool defaults: ``worker_class`` is the dotted path of
   :class:`~genropy_asgi.spa.genropy_worker.GenropyWorker` and
   ``worker_kwargs`` carries ``source``/``debug`` — every worker of the pool
@@ -58,7 +62,15 @@ def _as_bool(value: Any) -> bool:
 
 
 class GenropySpaApplication(SpaApplication):
-    """The GenroPy legacy front: a ``SpaApplication`` whose workers host a site."""
+    """The GenroPy legacy front: a ``SpaApplication`` whose workers host a site.
+
+    Mounted at the ROOT by design (``mount = ""``): a GenroPy site builds its own
+    absolute URLs — ``/_ping``, ``/_rpc``, every static and resource path — so a
+    prefix in front of them would answer the first page and 404 everything it asks
+    for next.
+    """
+
+    mount = ""
 
     def __init__(self, *, source: str | None = None, debug: Any = False, **kwargs: Any) -> None:
         """Args:
@@ -66,10 +78,18 @@ class GenropySpaApplication(SpaApplication):
         debug: True wraps each worker's site in the Werkzeug debugger.
         kwargs: the base peel — the commander's own kwargs (``workers``,
             ``local_worker``, ``max_workers``, ...) go to the pool, the rest
-            up the application chain.
+            up the application chain. A ``mount`` can only ever confirm the
+            root: an empty one is dropped, a non-empty one is refused.
         """
         if not source:
             raise ValueError("GenropySpaApplication requires a source (site name or path)")
+        mount = kwargs.pop("mount", None)
+        if mount:
+            raise ValueError(
+                "GenropySpaApplication is mounted at the root: a GenroPy site owns its "
+                f"absolute URLs, so mount={mount!r} would break every path it builds. "
+                "Serve it on its own host or port instead."
+            )
         kwargs.setdefault("worker_class", "genropy_asgi.spa.genropy_worker:GenropyWorker")
         kwargs.setdefault("worker_kwargs", {"source": source, "debug": _as_bool(debug)})
         workers = int(kwargs.get("workers") or 0)

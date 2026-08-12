@@ -304,3 +304,25 @@ def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
     assert worker.gnr_site.spa_worker is worker
     assert isinstance(worker.registry, GenropyRegistry)
     assert worker.gnr_site._local_mode is True
+
+
+def test_the_sites_cleanup_ages_become_the_sweeps(worker):
+    # no age was named at construction: the site's own <cleanup> config decides,
+    # so a site asking for the legacy 2-hour connection retention gets it
+    site = worker.gnr_site
+    assert worker.page_max_age == site.page_max_age
+    assert worker.connection_max_age == site.connection_max_age
+
+
+def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
+    # ``handle_frame`` runs on the event loop and materializes the global pushes
+    # into the register: it must never be the one to BUILD it. The site's
+    # ``register`` property is lazy, unlocked and reaches db work, so the client
+    # is taken here, on the init thread — and it is the site's own.
+    assert worker._register_client is worker.gnr_site.register
+
+
+def test_the_single_is_not_a_pool_member(worker):
+    # no channel yet (and a LocalChannel when the single starts): the orphan
+    # folder pass is allowed to read "unknown row" as "nobody's row"
+    assert worker.pool_member is False

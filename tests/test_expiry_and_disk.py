@@ -104,7 +104,8 @@ def test_knob_defaults_are_the_ratified_values():
 
 
 def test_the_sweep_is_armed_by_default_with_the_knobs(worker):
-    # the fixture's explicit ages land on the worker; the cadence is the default
+    # the fixture's explicit ages land on the worker — a named age always wins
+    # over the site's own <cleanup> values; the cadence is the default
     assert worker.sweep_interval == 60
     assert worker.guest_max_age == TINY
     assert worker.page_max_age == 3600
@@ -133,13 +134,31 @@ def test_a_page_folder_disappears_at_drop_page(client, worker):
         second_page = fresh_ids()[1]
         client.new_page(second_page, None, connection_id=cid, user=f"bob_{cid}")
     page_dir = make_dirs(worker, cid, page_id)
+    second_dir = make_dirs(worker, cid, second_page)
     try:
         with call_sink(worker):
             client.drop_page(page_id)
         assert not os.path.isdir(page_dir)  # the page folder went with the row
         assert os.path.isdir(connection_dir(worker, cid))  # the connection lives on
         with call_sink(worker):
-            client.drop_page(second_page)  # the LAST page: the cascade takes the chain
+            client.drop_page(second_page)  # the LAST page, and still no cascade
+        assert not os.path.isdir(second_dir)
+        assert client.connection(cid) is not None  # the browser is still there...
+        assert os.path.isdir(connection_dir(worker, cid))  # ...and so is its folder
+        with call_sink(worker):
+            client.drop_connection(cid)  # the logout is what takes the chain
+        assert not os.path.isdir(connection_dir(worker, cid))
+    finally:
+        shutil.rmtree(connection_dir(worker, cid), ignore_errors=True)
+
+
+def test_an_explicit_cascade_takes_the_connection_folder_too(client, worker):
+    cid, page_id = open_page(client, worker)
+    make_dirs(worker, cid, page_id)
+    try:
+        with call_sink(worker):
+            client.drop_page(page_id, cascade=True)
+        assert client.connection(cid) is None
         assert not os.path.isdir(connection_dir(worker, cid))
     finally:
         shutil.rmtree(connection_dir(worker, cid), ignore_errors=True)
@@ -166,6 +185,33 @@ def test_an_orphan_folder_disappears_at_the_sweep_pass(client, worker):
         assert not os.path.isdir(path)
     finally:
         shutil.rmtree(path, ignore_errors=True)
+
+
+def test_a_pool_child_leaves_the_shared_folder_alone(client, worker):
+    """The orphan pass reads "no row of mine explains it" as "nobody's".
+
+    True in the single, which holds every connection of the site; false in a
+    pool, where the children share one ``data/_connections`` and each holds its
+    own share — there the same question would answer with a sibling's live
+    folders.
+    """
+    from genro_asgi.channel import ChannelClient
+
+    orphan = f"sibling_{uuid.uuid4().hex[:8]}"
+    path = make_dirs(worker, orphan)
+    stale = time.time() - worker.connection_max_age - 10
+    os.utime(path, (stale, stale))
+    assert worker.pool_member is False  # the fixture's worker IS the single
+    # what a spawned child does at boot: a real channel toward the commander
+    worker.attach_channel(ChannelClient("tcp:127.0.0.1:1", "W:child"))
+    try:
+        assert worker.pool_member is True
+        worker.sweep_expired()
+        assert os.path.isdir(path)  # a sibling's folder, left alone
+    finally:
+        worker.channel = None  # back to the single the other tests expect
+        shutil.rmtree(path, ignore_errors=True)
+    assert worker.pool_member is False
 
 
 def test_a_fresh_unknown_folder_survives_the_sweep_pass(client, worker):

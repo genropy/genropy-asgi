@@ -15,14 +15,15 @@ The classes that host a GenroPy ``GnrWsgiSite``.
 
 .. autoclass:: genropy_asgi.spa.genropy_spa_application.GenropySpaApplication
 
-.. autoclass:: genropy_asgi.spa.genropy_worker_application.GenropyWorkerApplication
+.. autoclass:: genropy_asgi.spa.genropy_worker.GenropyWorker
 
-.. autoclass:: genropy_asgi.spa.genropy_commander_application.GenropyCommanderApplication
+.. autoclass:: genropy_asgi.spa.genropy_worker.GenropyRegistry
 
-The commander that supervises a pool of ``GenropyWorkerApplication`` workers is
-``GenropyCommanderApplication`` — a subclass that adds the site-wide ``/metrics``
-endpoint. Its generic base, ``SpaMultiWorkerApplication``, lives in genro-asgi
-core (``genro_asgi.applications.multi_worker_application``).
+``GenropySpaApplication`` is the single front for both shapes: it is the core
+``SpaApplication`` (whose commander owns the user-sticky pool and the site-wide
+``/metrics`` endpoint), and its ``worker_class`` points at ``GenropyWorker`` —
+the worker that hosts the site, in this process for the single and in each
+spawned child for a pool.
 
 The OpenAPI bridge
 ------------------

@@ -74,16 +74,16 @@ Subclass the host application and add the route:
 .. code-block:: python
 
    from genro_asgi import route
-   from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
+   from genropy_asgi.spa import GenropySpaApplication
 
-   class MyCommander(GenropyCommanderApplication):
+   class MySite(GenropySpaApplication):
        @route(media_type="application/json")
        def sys_health(self):        # /sys/health is now native…
            return {"status": "ok"}
        # …/sys/customer, /sys/order, … still render on the legacy site.
 
-Then point ``app_class`` at ``MyCommander`` in the config recipe (the same seam the
-built-in ``GenropyCommanderApplication`` uses for ``/metrics``). Migrate the
+Then point ``app_class`` at ``MySite`` in the config recipe (the same seam the
+built-in ``GenropySpaApplication`` uses for ``/metrics``). Migrate the
 stateless service paths first (health, metrics, small JSON APIs); paths that need
 the legacy page context — session, avatar, rendered state — are the last to move.
 
@@ -122,8 +122,8 @@ domain, or a token exchange.
 Mount the extra apps in a pool
 ------------------------------
 
-In a pool, mount the extra apps on the **same server as the commander**. The
-commander forwards only the site's own traffic to the workers (every path whose
-first segment is not one of its own **internal roots**); apps mounted beside it are
-served locally, on the commander's process. Each keeps its own ``GnrApp`` and closes
+In a pool, mount the extra apps on the **same server as the front**. The front
+forwards only the site's own traffic to the workers (every path whose first
+segment is not one of its own **internal roots**); apps mounted beside it are
+served locally, in the front's process. Each keeps its own ``GnrApp`` and closes
 its db connection on the right thread — independent of the workers hosting the site.

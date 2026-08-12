@@ -140,49 +140,15 @@ with logged users before it starts passing them on.
 Run several versions at once (groups)
 -------------------------------------
 
-A pool need not be one uniform set of workers. The commander can run several
-**groups**, and *a group is a runtime*: each group declares its own Python
-interpreter, so different groups run different versions of the same site side by
-side, on one address. This is the mechanism behind a canary rollout, a
-blue/green deploy, or pinning a set of users to a specific build.
+Not in this model. A pool is one **group**: the front owns one pool, every worker
+of it belongs to the same group, and the recipe has no group collection to
+declare — so there is no per-group interpreter, no ``xgroup`` routing key read off
+the avatar, and no live migration between groups. Running two versions of the site
+side by side means two servers, each with its own front, port and interpreter,
+behind whatever routes between them.
 
-Declare ``groups`` as a child of the application in a config file
-(:doc:`configuration`); each ``group`` has a ``code``, a ``workers`` count, and an
-optional ``python`` — the interpreter path for that group's workers:
-
-.. code-block:: python
-
-   app = apps.application(
-       code="site",
-       app_class=GenropyCommanderApplication,
-       worker_app_class="genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication",
-       app_args={"source": "mysite", "debug": ""},
-       commander_url="http://127.0.0.1:8080",
-   )
-   groups = app.groups(default="green")   # the welcome/base group
-   groups.group(code="green",  workers=2, python="/venvs/stable/bin/python")
-   groups.group(code="canary", workers=1, python="/venvs/next/bin/python")
-
-A user is routed to a group by the ``xgroup`` field of their **avatar**, read by
-the commander at login. An avatar with no ``xgroup``, or one naming an undeclared
-group, falls back to the ``default`` group. When a user's ``xgroup`` differs from
-the worker holding them, the commander migrates the session to the right group's
-worker, live.
-
-.. rubric:: virtualenv, Podman, Docker
-
-The lever is one interpreter path per group (``python=``):
-
-* **virtualenv** — native. Point ``python=`` at each venv's ``bin/python``; every
-  group installs its own version of the site in its own venv. No extra tooling.
-* **Podman / Docker** — a pattern, not a built-in. ``python=`` launches a local
-  interpreter, not a container; the framework has no container spawner. To
-  containerize, run the commander in one container and each group's workers in
-  others, wired over the commander's HTTP back-channel — a worker only needs to
-  reach ``commander_url``.
-
-The avatar → ``xgroup`` mapping is the GenroPy site's responsibility; the
-commander only reads the value.
+Group-per-runtime — the canary, the blue/green deploy, the virtualenv or container
+per version — belongs to the pool bridge, which is stage two.
 
 Rely on the global store carefully
 ----------------------------------

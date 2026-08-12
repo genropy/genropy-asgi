@@ -37,10 +37,10 @@ __all__ = ["GenropyProxyMixin", "GenropyProxyOpenApiApplication"]
 class GenropyProxyMixin:
     """Owns a ``GnrApp`` and closes its db connection in the executor thread.
 
-    Mixed before an ``OpenApiApplication``: it builds the GnrApp in ``on_init``
-    (before delegating to the base, which mounts the RoutingClass), exposes it as
-    ``gnr_app``, and fills ``route_cleanup`` to release the thread-local db
-    connection after each handler — where it is thread-correct.
+    Mixed before an ``OpenApiApplication``: it builds the GnrApp in its own
+    ``__init__`` (before delegating to the base, which mounts the RoutingClass),
+    exposes it as ``gnr_app``, and fills ``route_cleanup`` to release the
+    thread-local db connection after each handler — where it is thread-correct.
     """
 
     def __init__(self, *, instance: str | None = None, debug: bool = False, **kwargs: Any) -> None:
@@ -70,10 +70,11 @@ class GenropyProxyMixin:
         """Close the current thread's db connection after the handler.
 
         The GnrApp opens its connection thread-local, so it must be closed on
-        the executor thread that ran the handler. NOTE: the core seam that
-        called this after every dispatch (0.2x ``make_callable``) is gone in
-        0.30 — the method stays as the cleanup the future seam (or a caller)
-        invokes, and the per-request wiring is a flagged follow-up.
+        the executor thread that ran the handler. That is exactly when the core
+        calls this: ``RoutedApplication`` wraps every SYNC dispatch in a
+        ``try/finally`` that runs it on the pool thread the handler just used
+        (``routed_application.py``), after the handler returned or raised. An
+        async handler never reaches here — it owns its own awaits.
         """
         db = getattr(self._gnr_app, "db", None)
         if db is not None:
@@ -90,7 +91,7 @@ class GenropyProxyMixin:
 class GenropyProxyOpenApiApplication(GenropyProxyMixin, OpenApiApplication):
     """OpenApiApplication hosting a GnrApp, mountable on an AsgiServer.
 
-    MRO: the mixin owns ``on_init``/``route_cleanup``/``on_shutdown``; the base
+    MRO: the mixin owns ``__init__``/``route_cleanup``/``on_shutdown``; the base
     owns the REST + OpenAPI machinery. Mount it like any OpenApiApplication and
     give it an ``instance`` plus a ``routing_class`` (or ``module``).
     """

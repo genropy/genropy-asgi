@@ -17,8 +17,16 @@ exactly the legacy site:
   single-threaded (``site.resources_dirs``; ``site.storage("gnr")`` —
   genropy#984): the first concurrent request must not race the resource
   scan;
+- the site's own ``<cleanup>`` ages (``page_max_age``,
+  ``connection_max_age``) become the sweep's, unless the caller named them;
 - ``site.spa_worker = self`` (the ratified name) is how the in-process
-  register client reaches the worker's op methods;
+  register client reaches the worker's op methods, and the client itself is
+  captured at construction (``handle_frame`` runs on the loop and must not
+  trigger the site's lazy, db-touching ``register`` property);
+- ``drop_page`` gains the legacy ``cascade`` flag: a closed tab must not take
+  its browser's connection row with it;
+- the orphan-folder pass of the sweep runs in the SINGLE only — the pool
+  shares one site folder;
 - ``build_registry()`` returns :class:`GenropyRegistry`, whose stores are
   legacy Bags under :class:`~genropy_asgi.spa.legacy_bag.LegacyBagCollector`
   capture;
@@ -48,8 +56,10 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from genro_bag import Bag as CoreBag
+from genro_routes import route
 from genro_tytx import from_tytx
 
+from genro_asgi.channel import LocalChannel
 from genro_asgi.channel.hub import EVENT_METHOD
 from genro_asgi.spa import RegisterRegistry, UserStickyWorker
 from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH, GLOBAL_SNAPSHOT_PATH
@@ -65,9 +75,17 @@ __all__ = ["GenropyRegistry", "GenropyWorker"]
 # idle past PAGE_MAX_AGE is swept, an anonymous page or connection past
 # GUEST_MAX_AGE, a logged connection past CONNECTION_MAX_AGE. The ping stamps
 # ``refresh_chain``, so an idle-but-alive page is refreshed by its own polling.
+# The two the LEGACY SITE also declares — page and connection — are only what
+# the worker starts with: the site's own ``<cleanup>`` section (siteconfig.xml,
+# read into ``site.page_max_age``/``site.connection_max_age``, legacy defaults
+# 600 and 7200) takes over as soon as the site is built, unless the caller named
+# the knob explicitly. GUEST_MAX_AGE has no legacy config key: it stays ours.
 PAGE_MAX_AGE = 600
 GUEST_MAX_AGE = 1800
 CONNECTION_MAX_AGE = 86400
+
+# The expiry knobs the site's <cleanup> config owns (the legacy names, identical).
+SITE_EXPIRY_KNOBS = ("page_max_age", "connection_max_age")
 
 # The sweep cadence: ARMED by default on the bridge (the browser rail is the
 # legacy polling, which already stamps the chain).
@@ -104,14 +122,29 @@ class GenropyWorker(UserStickyWorker):
         kwargs: forwarded to ``UserStickyWorker``; the expiry knobs and the
             sweep cadence default to the bridge's ratified values (the sweep
             is ARMED here — the legacy polling stamps the chain, so an
-            idle-but-alive page refreshes itself).
+            idle-but-alive page refreshes itself). The two ages the site's
+            ``<cleanup>`` config also declares come FROM THE SITE unless
+            named here: a caller's value always wins over the site's.
         """
+        site_ages_wanted = [knob for knob in SITE_EXPIRY_KNOBS if knob not in kwargs]
         kwargs.setdefault("sweep_interval", SWEEP_INTERVAL)
         kwargs.setdefault("page_max_age", PAGE_MAX_AGE)
         kwargs.setdefault("guest_max_age", GUEST_MAX_AGE)
         kwargs.setdefault("connection_max_age", CONNECTION_MAX_AGE)
         super().__init__(name, **kwargs)
         self._gnr_site = self._create_site(source, debug)
+        # The site read its own <cleanup> ages at construction: an unconfigured
+        # site asks for the legacy 600/7200, a configured one for its values, and
+        # either way the sweep must honour what the site declares.
+        if "page_max_age" in site_ages_wanted:
+            self.page_max_age = self._gnr_site.page_max_age
+        if "connection_max_age" in site_ages_wanted:
+            self.connection_max_age = self._gnr_site.connection_max_age
+        # The register client, materialized HERE on the init thread: the legacy
+        # ``site.register`` property builds it lazily, unlocked, down to db work
+        # (``checkPendingConnection``), which must not happen on the event loop
+        # while the first request is already running on a pool thread.
+        self._register_client = self._gnr_site.register
         self.wsgi_app = self._gnr_site
         if debug:
             # Deferred import, transcribed from the pre-rebase host: importing
@@ -171,14 +204,18 @@ class GenropyWorker(UserStickyWorker):
         the master collector's own dicts, translated to the write/delete pair
         the register materializes (``applying`` flag, aware->naive decode —
         all of it the register's, unchanged).
+
+        The register is the client captured at construction, never the site's
+        lazy property: this runs on the event loop, and that property builds
+        the client — down to db work — the first time it is read.
         """
         await super().handle_frame(frame)
         if frame.method != EVENT_METHOD:
             return
         if frame.path == GLOBAL_SNAPSHOT_PATH:
-            self._gnr_site.register._materialize_global_snapshot(self._replica_global_leaves())
+            self._register_client._materialize_global_snapshot(self._replica_global_leaves())
         elif frame.path == GLOBAL_CHANGES_PATH:
-            register = self._gnr_site.register
+            register = self._register_client
             for change in from_tytx(frame.data, "json"):
                 if not change["delete"] and isinstance(change["value"], CoreBag):
                     # an autocreated parent on the master: structure, not a
@@ -207,14 +244,42 @@ class GenropyWorker(UserStickyWorker):
         """The site's per-connection disk root (``data/_connections``)."""
         return self._gnr_site.allConnectionsFolder
 
-    def demolish_page(self, page_id: str, announce: Callable[..., Any]) -> dict[str, Any]:
+    @route()
+    def drop_page(self, identity: str, page_id: str, cascade: bool = True) -> dict[str, Any]:
+        """Drop a page row and announce it on the REPLY of this CALL.
+
+        The core op always climbs; the LEGACY page close never does — the tab
+        is gone, the browser is not — so the flag reaches the demolition and
+        the bridge's register client passes the legacy default (False).
+        """
+        with self.dispatch_lock:
+            return self.wire_entry(
+                self.demolish_page(page_id, self.offer_event, cascade=cascade)
+            )
+
+    def demolish_page(
+        self, page_id: str, announce: Callable[..., Any], cascade: bool = True
+    ) -> dict[str, Any]:
         """The core demolition, then the page's disk folder goes with the row.
 
         Expiry, logout and cascades all pass here, so they all clean the same
         way. When the drop took the connection with it (the last page of it),
         the whole connection folder goes too.
+
+        ``cascade=False`` drops the page ALONE, leaving an emptied connection
+        row (and its folder) alive. The core demolition has no such form — its
+        cascade is unconditional — so this composes it from the same pieces in
+        the same order; the two announcements the core adds after the page are
+        for rows the cascade took, and there are none here.
         """
-        entry = super().demolish_page(page_id, announce)
+        if cascade:
+            entry = super().demolish_page(page_id, announce)
+        else:
+            user = self.registry.page_user(page_id)
+            self.subscriptions.drop_page(page_id)
+            self.drop_page_cache(page_id)
+            entry = self.registry.drop_page(page_id, cascade=False)
+            announce("drop_page", user=user, page_id=page_id)
         connection_id = entry["connection_id"]
         if connection_id in self.connection_items:
             shutil.rmtree(
@@ -238,16 +303,29 @@ class GenropyWorker(UserStickyWorker):
         shutil.rmtree(os.path.join(self.connections_folder, connection_id), ignore_errors=True)
         return entry
 
+    @property
+    def pool_member(self) -> bool:
+        """Whether this worker serves in a POOL — a spawned child on a real channel.
+
+        The single's worker sits on a ``LocalChannel`` (or on none yet): it is
+        in-process, commander of itself, and so it holds every connection of the
+        site. A pool child holds only its own share of them.
+        """
+        return self.channel is not None and not isinstance(self.channel, LocalChannel)
+
     def sweep_expired(self) -> dict[str, list[str]]:
-        """The core sweep, then the ORPHAN disk pass.
+        """The core sweep, then the ORPHAN disk pass — in the single only.
 
         A folder under ``data/_connections`` whose connection this worker does
         not hold — a previous run's leftovers — and older than
-        ``connection_max_age`` by mtime is removed. Sufficient in the single,
-        where the worker sees every connection.
+        ``connection_max_age`` by mtime is removed. That reading of "nobody's
+        row explains it" only holds where the worker sees every connection: the
+        whole pool shares one site folder, so a child asking the same question
+        would answer it with its siblings' live folders.
         """
         dropped = super().sweep_expired()
-        self.sweep_orphan_folders()
+        if not self.pool_member:
+            self.sweep_orphan_folders()
         return dropped
 
     def sweep_orphan_folders(self) -> None:

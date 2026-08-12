@@ -5,16 +5,18 @@
 
 Two layers, matching the rail's own two halves:
 
-- SHIP/MATERIALIZE units on a bare client wired to a stub worker: leaf writes
-  ship full-path TYTX scalars on ``store_set``/``store_del``, pushes
-  materialize back without re-dispatch. No site needed.
+- SHIP units on a bare client wired to a stub worker: leaf writes ship
+  full-path TYTX scalars on ``store_set``/``store_del``, and a lease that
+  fails — on the grant or on the write-back — is always released. No site
+  needed.
 - The REAL SINGLE — ``UserStickyCommander(workers=0, local_worker=True)``
   holding a GenropyWorker on a ``LocalChannel`` — for the write-through in
-  both directions and the LEASE (D4): the ``with globalStore()`` block holds
-  the commander's master, its writes travel once on the release,
-  all-or-nothing. The lease's sync form blocks its thread on the worker's
-  loop, so the with-blocks run in ``asyncio.to_thread`` — exactly the WSGI
-  thread they run on in production.
+  both directions (the DESCENT included: the pushes materialize through the
+  worker's own frame handler, which is where the live entries are) and for
+  the LEASE (D4): the ``with globalStore()`` block holds the commander's
+  master, its writes travel once on the release, all-or-nothing. The lease's
+  sync form blocks its thread on the worker's loop, so the with-blocks run in
+  ``asyncio.to_thread`` — exactly the WSGI thread they run on in production.
 
 The whole module skips when GenroPy (or, for the single, the site) is missing.
 """
@@ -162,29 +164,13 @@ def test_subtree_replace_dels_the_leaves_that_are_gone():
     assert ("store_del", ("sub.b",)) in worker.calls
 
 
-def test_string_with_typed_text_marker_survives_the_wire():
+def test_a_typed_looking_string_ships_suffixed():
+    # A bare asTypedText would leave '42::L' unsuffixed, and the one decoding hop
+    # of the descent would hand the int 42 to the legacy reader.
     worker = RailWorker()
-    client_a = make_client(worker)
-    client_a.global_bag.setItem("tricky", "42::L")
-    op, (key, wire) = worker.calls[0]
-    client_b = make_client(RailWorker())
-    client_b.apply_global_write("store_set", key, wire)
-    assert client_b.global_bag.getItem("tricky") == "42::L"
-
-
-def test_naive_datetime_survives_the_wire_and_stays_naive():
-    # gnrwebapp writes datetime.now() (naive) in CACHE_TS.* and compares with <:
-    # an aware value coming back would raise TypeError in the legacy cache read.
-    worker = RailWorker()
-    client_a = make_client(worker)
-    stamp = datetime.datetime(2026, 7, 10, 8, 30, 0)
-    client_a.global_bag.setItem("CACHE_TS.k", stamp)
-    op, (key, wire) = worker.calls[0]
-    client_b = make_client(RailWorker())
-    client_b.apply_global_write("store_set", key, wire)
-    back = client_b.global_bag.getItem("CACHE_TS.k")
-    assert back == stamp
-    assert back.tzinfo is None
+    client = make_client(worker)
+    client.global_bag.setItem("tricky", "42::L")
+    assert worker.calls == [("store_set", ("tricky", "42::L::T"))]
 
 
 def test_missing_worker_never_breaks_the_legacy_write():
@@ -205,39 +191,77 @@ def test_unacquirable_lease_maps_to_gnr_daemon_locked():
         client.globalStore().__enter__()
 
 
-# ------------------------------------------------------------------
-# Read path: pushes materialize into the Bag without re-dispatch
-# ------------------------------------------------------------------
+def test_a_failed_grant_materialization_releases_the_lease():
+    # The grant is already in force when the master content is poured into the
+    # legacy Bag: a raise there must not keep the master — the core lock has no
+    # TTL and its waiters park with no timeout, so the next block would never run.
+    class BrokenMaster:
+        def walk(self):
+            raise RuntimeError("corrupt master")
 
+    class Lease:
+        def __init__(self):
+            self.exits = []
 
-def test_apply_global_write_materializes_without_redispatch():
-    worker = RailWorker()
+        def __enter__(self):
+            return BrokenMaster()
+
+        def __exit__(self, exc_type, exc, tb):
+            self.exits.append(exc_type)
+
+    class LeaseWorker(RailWorker):
+        def __init__(self):
+            super().__init__()
+            self.lease = Lease()
+
+        def global_store_lock(self):
+            return self.lease
+
+    worker = LeaseWorker()
     client = make_client(worker)
-    client.apply_global_write("store_set", "CACHE_TS.x", "3.5::R")
-    assert client.global_bag.getItem("CACHE_TS.x") == 3.5
-    assert worker.calls == []
+    with pytest.raises(RuntimeError):
+        client.globalStore().__enter__()
+    assert worker.lease.exits == [RuntimeError]  # released, and applying nothing
 
 
-def test_apply_store_del_removes_the_leaf_and_missing_key_is_silent():
-    worker = RailWorker()
+def test_a_write_the_working_copy_rejects_releases_the_lease():
+    # Same rule at the other end: the collected writes are applied to the lease's
+    # working copy on the way out, and one the copy refuses must not leave the
+    # master locked — nor half the block applied.
+    class RejectingCopy:
+        def set(self, path, value):
+            raise ValueError(f"the working copy rejects {path!r}")
+
+        def delete(self, path):
+            raise ValueError(f"the working copy rejects {path!r}")
+
+    class Lease:
+        def __init__(self):
+            self.copy = RejectingCopy()
+            self.exits = []
+
+        def __enter__(self):
+            from genro_bag import Bag as CoreBag
+
+            return CoreBag()
+
+        def __exit__(self, exc_type, exc, tb):
+            self.exits.append(exc_type)
+
+    class LeaseWorker(RailWorker):
+        def __init__(self):
+            super().__init__()
+            self.lease = Lease()
+
+        def global_store_lock(self):
+            return self.lease
+
+    worker = LeaseWorker()
     client = make_client(worker)
-    client.apply_global_write("store_set", "CACHE_TS.x", "1::L")
-    client.apply_global_write("store_del", "CACHE_TS.x")
-    assert client.global_bag.getItem("CACHE_TS.x") is None
-    client.apply_global_write("store_del", "never.there")  # no raise
-    assert worker.calls == []
-
-
-def test_snapshot_replaces_the_bag_without_redispatch():
-    worker = RailWorker()
-    client = make_client(worker)
-    client.global_bag.setItem("stale", "old")
-    worker.calls.clear()
-    client.load_global_snapshot({"CACHE_TS.a": "1.5::R", "flag": "True::B"})
-    assert client.global_bag.getItem("stale") is None
-    assert client.global_bag.getItem("CACHE_TS.a") == 1.5
-    assert client.global_bag.getItem("flag") is True
-    assert worker.calls == []
+    with pytest.raises(ValueError):
+        with client.globalStore() as store:
+            store.setItem("gnr.rejected", 1)
+    assert worker.lease.exits == [ValueError]  # released with nothing applied
 
 
 # ------------------------------------------------------------------
@@ -283,6 +307,53 @@ async def test_descending_change_materializes_into_the_legacy_bag(single):
     # a write born elsewhere: straight on the worker's store op, not on the Bag
     single.worker.store_set(None, "gnr.remote", value="9::L")
     await until(lambda: register.global_bag.getItem("gnr.remote") == 9)
+    # the site's own register client is the one the frame path materializes into:
+    # the worker captured it at construction and never re-reads the lazy property
+    assert register is single.worker.gnr_site.register
+
+
+async def test_a_descending_change_never_bounces_back_up(single):
+    register = single.worker.gnr_site.register
+    # the value travels UNSUFFIXED, so an echo would be visible on the master:
+    # a re-shipped 'plain' would land there as 'plain::T'
+    single.worker.store_set(None, "gnr.echo", value="plain")
+    await until(lambda: register.global_bag.getItem("gnr.echo") == "plain")
+    await asyncio.sleep(0.1)
+    assert single.global_master.bag["gnr.echo"] == "plain"
+
+
+async def test_a_descending_delete_removes_the_leaf(single):
+    register = single.worker.gnr_site.register
+    single.worker.store_set(None, "gnr.transient", value="1::L")
+    await until(lambda: register.global_bag.getItem("gnr.transient") == 1)
+    single.worker.store_del(None, "gnr.transient")
+    await until(lambda: register.global_bag.getItem("gnr.transient") is None)
+
+
+async def test_a_snapshot_rebuilds_the_legacy_bag_from_the_master(single):
+    # the frame a worker gets when its replica is seeded: the whole store at once
+    register = single.worker.gnr_site.register
+    register.global_bag.setItem("gnr.kept", 3)
+    register.global_bag.setItem("gnr.gone", 1)
+    await until(lambda: single.global_master.bag["gnr.gone"] == "1::L")
+    single.global_master.delete("gnr.gone")  # the master moves on without it
+    await single.bootstrap_replica(single.worker.name)
+    await until(lambda: register.global_bag.getItem("gnr.gone") is None)
+    assert register.global_bag.getItem("gnr.kept") == 3
+
+
+async def test_a_naive_datetime_survives_the_rail_and_stays_naive(single):
+    # gnrwebapp writes datetime.now() (naive) in CACHE_TS.* and compares with <:
+    # an aware value coming back would raise TypeError in the legacy cache read.
+    register = single.worker.gnr_site.register
+    stamp = datetime.datetime(2026, 7, 10, 8, 30, 0)
+    register.global_bag.setItem("CACHE_TS.stamp", stamp)
+    # the replica landing is the round trip: the legacy materialization runs in
+    # the same frame handler, right after it
+    await until(lambda: single.worker.global_store["CACHE_TS.stamp"] is not None)
+    back = register.global_bag.getItem("CACHE_TS.stamp")
+    assert back == stamp
+    assert back.tzinfo is None
 
 
 async def test_two_sequential_lease_blocks_see_each_others_writes(single):
@@ -297,12 +368,45 @@ async def test_two_sequential_lease_blocks_see_each_others_writes(single):
             return store.getItem("gnr.leased")
 
     await asyncio.to_thread(first_block)
-    # the release crossed a tytx hop, so the master holds the decoded value
-    await until(lambda: single.global_master.bag["gnr.leased"] == 5)
+    # the release crosses a tytx hop of its own, which the collected text already
+    # pays for: the master ends holding the same wire text a lock-less write
+    # leaves there, never one decode ahead of it
+    await until(lambda: single.global_master.bag["gnr.leased"] == "5::L")
     assert await asyncio.to_thread(second_block) == 5
 
 
-async def test_a_raising_lease_body_applies_nothing(single):
+async def test_a_typed_looking_string_survives_the_lease_rail(single):
+    register = single.worker.gnr_site.register
+
+    def block():
+        with register.globalStore() as store:
+            store.setItem("gnr.leased_tricky", "42::L")
+
+    await asyncio.to_thread(block)
+    await until(lambda: single.global_master.bag["gnr.leased_tricky"] == "42::L::T")
+    # and the value comes back the string that was written, not the int 42
+    await until(lambda: single.worker.global_store["gnr.leased_tricky"] == "42::L")
+    assert register.global_bag.getItem("gnr.leased_tricky") == "42::L"
+
+
+async def test_a_leased_delete_reaches_the_master(single):
+    register = single.worker.gnr_site.register
+
+    def write_block():
+        with register.globalStore() as store:
+            store.setItem("gnr.leased_doomed", 1)
+
+    def delete_block():
+        with register.globalStore() as store:
+            store.delItem("gnr.leased_doomed")
+
+    await asyncio.to_thread(write_block)
+    await until(lambda: single.global_master.bag["gnr.leased_doomed"] == "1::L")
+    await asyncio.to_thread(delete_block)
+    await until(lambda: single.global_master.bag["gnr.leased_doomed"] is None)
+
+
+async def test_a_raising_lease_body_applies_nothing_and_frees_the_master(single):
     register = single.worker.gnr_site.register
 
     def failing_block():
@@ -320,7 +424,10 @@ async def test_a_raising_lease_body_applies_nothing(single):
         with register.globalStore() as store:
             return store.getItem("gnr.doomed")
 
-    assert await asyncio.to_thread(peek_block) is None
+    # the lock has no TTL and its waiters no timeout: had the failure kept the
+    # grant, this thread would park on it forever
+    peeked = await asyncio.wait_for(asyncio.to_thread(peek_block), timeout=SETTLE_TIMEOUT)
+    assert peeked is None
 
 
 async def test_a_plain_write_outside_the_lease_still_propagates(single):

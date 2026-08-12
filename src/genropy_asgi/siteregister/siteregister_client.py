@@ -40,8 +40,9 @@ Who serves what (FIXED):
   page's store, so channel-A writes, the dbenv walk and the capture all see one Bag.
 - Global store — one stable legacy Bag (``global_bag``), write-by-reference: every LEAF
   write ships up as ``store_set``/``store_del`` with a FULL-PATH key and a TYTX-encoded
-  SCALAR value; commander pushes materialize back into the Bag (Phase 3 rewires the
-  descent onto ``handle_frame``). Coherence is EVENTUAL (one channel round-trip).
+  SCALAR value. The descent is the worker's: ``GenropyWorker.handle_frame`` hands the
+  already-decoded values to ``_materialize_global`` and ``_materialize_global_snapshot``.
+  Coherence is EVENTUAL (one channel round-trip).
 
 NOT served (explicit, PROVISIONAL): dump/load (future Service Store),
 sendProcessCommand/pendingProcessCommands (inter-process bus, will move to the
@@ -251,7 +252,9 @@ class GenropyRegisterClient:
         on it persists (write-by-reference), exactly as the daemon-backed store did.
         The Bag is subscribed to the global-store RAIL: every local leaf write ships
         up as a full-path scalar (``_on_global_change``), and commander pushes
-        materialize back into it (``apply_global_write`` / ``load_global_snapshot``).
+        materialize back into it — ``GenropyWorker.handle_frame`` feeds the already
+        decoded values to ``_materialize_global`` (one change) and
+        ``_materialize_global_snapshot`` (the whole store).
         """
         bag = self.__dict__.get("_global_bag")
         if bag is None:
@@ -370,20 +373,22 @@ class GenropyRegisterClient:
         worker.change_connection_user(connection_id, user=user, **kwargs)
         return self._item_with_data(connection_id, "connection")
 
-    def drop_page(self, page_id: Any, **kwargs: Any) -> None:
+    def drop_page(self, page_id: Any, cascade: bool = False, **kwargs: Any) -> None:
         """A page closes (client onClosePage, or a page flagged closed at end of RPC).
 
-        Called by ``WebPage`` at RPC end when closed and by ``onClosedPage``
-        (gnrwsgisite.py). The core demolition cascades to an emptied connection by
-        design (the legacy ``cascade`` kwarg is absorbed: the cascade discipline is
-        the core's, cemented). A page already gone — expired, or reported closed
-        twice — is a legitimate no-op.
+        Called by ``WebPage`` at RPC end when closed (gnrwebpage.py:624, with
+        ``cascade=False``) and by ``onClosedPage`` (gnrwsgisite.py:1429, fired by
+        the browser's pagehide beacon, passing nothing). A page close NEVER
+        climbs to the connection — the tab is gone, the browser is still there
+        with its cookie — so ``cascade`` defaults to the legacy False and is
+        forwarded to the worker op. A page already gone — expired, or reported
+        closed twice — is a legitimate no-op.
         """
         worker = self.spa_worker
         if worker.page_items.get(page_id) is None:
             return
         user = worker.registry.page_user(page_id)
-        worker.drop_page(user, page_id=page_id)
+        worker.drop_page(user, page_id=page_id, cascade=cascade)
 
     def drop_connection(self, connection_id: Any, **kwargs: Any) -> None:
         """A connection ends — LOGOUT / browser gone.
@@ -468,7 +473,7 @@ class GenropyRegisterClient:
             return {}
         page_items = worker.page_items
         if connection_id:
-            items = [page_items.get(k) for k in page_items.keys_by("session_id", connection_id)]
+            items = self._live_rows(page_items, page_items.keys_by("session_id", connection_id))
             if user:
                 items = [
                     p for p in items
@@ -479,9 +484,11 @@ class GenropyRegisterClient:
             entry = worker.user_items.get(user)
             for cid in (entry or {}).get("connections", ()):
                 connection = worker.connection_items.get(cid)
-                items.extend(page_items.get(pid) for pid in connection["pages"])
+                if connection is None:
+                    continue
+                items.extend(self._live_rows(page_items, list(connection["pages"])))
         else:
-            items = [page_items.get(k) for k in page_items.keys()]
+            items = self._live_rows(page_items, page_items.keys())
         return {
             item["register_item_id"]: self._legacy_row(item)
             for item in self._filter_items(items, filters)
@@ -496,11 +503,12 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker is None:
             return {}
+        connection_items = worker.connection_items
         if user:
             entry = worker.user_items.get(user)
-            items = [worker.connection_items.get(cid) for cid in (entry or {}).get("connections", ())]
+            items = self._live_rows(connection_items, (entry or {}).get("connections", ()))
         else:
-            items = [worker.connection_items.get(k) for k in worker.connection_items.keys()]
+            items = self._live_rows(connection_items, connection_items.keys())
         return {item["register_item_id"]: self._legacy_row(item) for item in items}
 
     def users(self, **kwargs: Any) -> dict:
@@ -514,8 +522,8 @@ class GenropyRegisterClient:
         if worker is None:
             return {}
         return {
-            key: self._legacy_row(worker.user_items.get(key))
-            for key in worker.user_items.keys()
+            item["register_item_id"]: self._legacy_row(item)
+            for item in self._live_rows(worker.user_items, worker.user_items.keys())
         }
 
     def get_dbenv(self, register_item_id: Any, **kwargs: Any) -> Bag:
@@ -671,7 +679,7 @@ class GenropyRegisterClient:
         state = self._global_rail_state
         if getattr(state, "lease_writes", None) is not None:
             state.lease_writes.append(
-                (op, path, None if op == "store_del" else self._encode_global(value))
+                (op, path, None if op == "store_del" else self._encode_leased(value))
             )
             return
         worker = self.spa_worker
@@ -687,24 +695,29 @@ class GenropyRegisterClient:
 
         A bare ``asTypedText`` leaves plain strings unsuffixed, so a string that
         LOOKS typed (``'42::L'``) would decode as an int on the other side.
+
+        This is the text the MASTER holds: the ascending store op carries it
+        untouched (the commander is a blind courier and writes what arrived),
+        and the descending push decodes it exactly once — so what every replica
+        and every legacy Bag reads back is the value that was written.
         """
         text, cls = self.catalog.asTextAndType(value)
         return f"{text}::{cls}"
 
-    def _decode_global(self, wire: Any) -> Any:
-        """TYTX wire text -> scalar; an aware datetime is normalized back to naive.
+    def _encode_leased(self, value: Any) -> str:
+        """The same wire text, encoded ONCE MORE for the lease's extra hop.
 
-        The legacy writes ``datetime.now()`` (naive) into ``CACHE_TS.*`` and compares
-        with ``<``: an aware value coming back would raise ``TypeError`` in the cache
-        read path. The workers share the host (and its timezone), so local-time
-        normalization restores the original value exactly.
+        A lease write does not ascend on a store op: it is applied to the lease's
+        working copy and the release carries the drained changes through a
+        ``to_tytx``/``from_tytx`` hop of its own (core ``release_global_lock`` ->
+        ``apply_changes``) before reaching the master. That hop decodes the typed
+        text, so a value encoded once would land on the master DECODED —
+        ``'42::L'`` as the int 42 on the way out, one decode ahead of the
+        immediate rail. Encoding twice spends the extra hop and leaves the master
+        holding the same text a lock-less write leaves there, which is what makes
+        the two rails agree on what a replica reads.
         """
-        if wire is None:
-            return None
-        value = self.catalog.fromTypedText(wire)
-        if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-            value = value.astimezone().replace(tzinfo=None)
-        return value
+        return self._encode_global(self._encode_global(value))
 
     def _open_global_lease(self) -> Any:
         """Acquire the REAL global-store lock and hand back the lease (D4, ratified).
@@ -728,15 +741,22 @@ class GenropyRegisterClient:
             master = lease.__enter__()
         except Exception as exc:
             raise GnrDaemonLocked(f"global store lease not acquired: {exc}") from exc
-        # The grant crossed a tytx hop, so its leaves arrive DECODED.
-        self._materialize_global_snapshot(
-            {
-                path: node.value
-                for path, node in master.walk()
-                if not isinstance(node.value, CoreBag)
-            }
-        )
-        self._global_rail_state.lease_writes = []
+        try:
+            # The grant crossed a tytx hop, so its leaves arrive DECODED.
+            self._materialize_global_snapshot(
+                {
+                    path: node.value
+                    for path, node in master.walk()
+                    if not isinstance(node.value, CoreBag)
+                }
+            )
+            self._global_rail_state.lease_writes = []
+        except Exception as exc:
+            # The grant is already in force here, and the core lock has neither a
+            # TTL nor a wait timeout: anything raised on the way out would hold
+            # the master forever, parking the WSGI thread of every later block.
+            lease.__exit__(type(exc), exc, exc.__traceback__)
+            raise
         return lease
 
     def _close_global_lease(self, lease: Any, exc_type: Any) -> None:
@@ -746,27 +766,27 @@ class GenropyRegisterClient:
         raised releases with nothing applied (the core's own apply-on-success
         rule), and the collecting state ends with the block either way. Lock-less
         writes on other threads kept shipping immediately throughout.
+
+        A path the working copy REJECTS (the core Bag raises on ``'#3'`` and the
+        other index forms) fails the same way: the lease is released applying
+        nothing, so the master never sees half a block — and it IS released,
+        which is what keeps the next block from parking forever on a lock that
+        has no timeout.
         """
         state = self._global_rail_state
         writes = getattr(state, "lease_writes", None) or []
         state.lease_writes = None
-        if exc_type is None:
-            for op, path, value in writes:
-                if op == "store_del":
-                    lease.copy.delete(path)
-                else:
-                    lease.copy.set(path, value)
+        try:
+            if exc_type is None:
+                for op, path, value in writes:
+                    if op == "store_del":
+                        lease.copy.delete(path)
+                    else:
+                        lease.copy.set(path, value)
+        except Exception as exc:
+            lease.__exit__(type(exc), exc, exc.__traceback__)
+            raise
         lease.__exit__(exc_type, None, None)
-
-    def apply_global_write(self, op: str | None, key: str | None, value: Any = None) -> None:
-        """Materialize one push carried as TYTX wire TEXT (the ascent's own encoding).
-
-        Decodes the text, then materializes. The frames that crossed a
-        ``to_tytx``/``from_tytx`` hop arrive already decoded and go through
-        ``_materialize_global`` directly — decoding twice would corrupt a
-        legacy string that LOOKS typed.
-        """
-        self._materialize_global(op, key, self._decode_global(value))
 
     def _materialize_global(self, op: str | None, key: str | None, value: Any = None) -> None:
         """Materialize one DECODED write into the Bag.
@@ -789,12 +809,6 @@ class GenropyRegisterClient:
                 self.global_bag.setItem(key, value)
         finally:
             state.applying = False
-
-    def load_global_snapshot(self, content: dict) -> None:
-        """Replace the whole Bag from a snapshot carried as TYTX wire TEXT values."""
-        self._materialize_global_snapshot(
-            {key: self._decode_global(value) for key, value in content.items()}
-        )
 
     def _materialize_global_snapshot(self, leaves: dict) -> None:
         """Replace the whole Bag from DECODED ``{full_path: value}`` leaves.
@@ -1068,22 +1082,11 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker is None:
             return []
-        if self._pool_member(worker):
+        if worker.pool_member:
             return list(table_list or [])
         return [
             table for table in (table_list or []) if worker.subscriptions.pages_for(table)
         ]
-
-    def _pool_member(self, worker: Any) -> bool:
-        """Whether the worker serves in a pool (a spawned child on a socket channel).
-
-        The single's worker sits on a ``LocalChannel`` (or none yet): in-process,
-        commander of itself.
-        """
-        from genro_asgi.channel import LocalChannel
-
-        channel = getattr(worker, "channel", None)
-        return channel is not None and not isinstance(channel, LocalChannel)
 
     # ==================================================================
     # Maintenance / cleanup (in-process, single node)
@@ -1189,6 +1192,21 @@ class GenropyRegisterClient:
             "user": worker.user_items,
         }
         return registers[register_name].get(register_item_id)
+
+    def _live_rows(self, register: Any, keys: Any) -> list:
+        """The rows of *keys* still in *register* — a read races the demolitions.
+
+        The read commands walk a key snapshot and re-fetch each row WITHOUT
+        ``dispatch_lock``: they are hot paths (the chat poll asks every two
+        seconds, every broadcast resolves its targets), and the lock belongs to
+        the writers. Meanwhile the sweep, a logout and a page close demolish rows
+        on other threads, so a key of the snapshot can have no row left by the
+        time it is read. A row that vanished mid-read is a legitimate state — the
+        item simply is not in the answer — and the alternative is what the legacy
+        saw: ``None`` handed out as a register item, subscripted on the spot by
+        the chat poll (connection.py:195).
+        """
+        return [row for row in (register.get(key) for key in keys) if row is not None]
 
     def _item_with_data(self, item_id: Any, register_name: str) -> dict | None:
         """The live row after a lifecycle op, with its data Bag attached."""
@@ -1374,7 +1392,7 @@ class GenropyRegisterClient:
         """One genro-bag change dict -> the legacy ClientDataChange.
 
         ``change_ts`` is normalized aware -> naive local at this boundary: the legacy
-        world compares naive clocks (same convention as ``_decode_global``).
+        world compares naive clocks (same convention as ``_materialize_global``).
         """
         key = change["key"]
         change_ts = change["change_ts"]

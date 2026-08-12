@@ -17,6 +17,8 @@ The whole module skips when GenroPy or the site is missing.
 import asyncio
 import datetime
 import importlib.util
+import sys
+import threading
 import uuid
 from contextlib import contextmanager
 
@@ -28,6 +30,9 @@ _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
 
 pytestmark = pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
+
+# The chains the reader/demolition race test churns through.
+CHURN_CHAINS = 150
 
 
 @contextmanager
@@ -144,12 +149,25 @@ def test_login_stays_pages_keep_their_worker(client, worker):
     assert client.connection(cid)["user_id"] == "U1"
 
 
-def test_drop_page_demolishes_the_emptied_chain(client, worker):
+def test_a_page_close_leaves_the_connection_alive(client, worker):
+    # The legacy contract: a closed tab never takes the browser with it —
+    # gnrwebpage.py:624 passes cascade=False and the onClosedPage beacon
+    # (gnrwsgisite.py:1429, fired on every pagehide) passes nothing at all.
     cid, page_id = open_page(client, worker)
     with call_sink(worker):
         client.drop_page(page_id)
     assert client.page(page_id) is None
-    # the core cascade: the connection went with its last page
+    assert client.connection(cid) is not None  # its cookie still routes
+    with call_sink(worker):
+        client.drop_connection(cid)  # leave the module worker clean
+
+
+def test_an_explicit_cascade_demolishes_the_emptied_chain(client, worker):
+    cid, page_id = open_page(client, worker)
+    with call_sink(worker):
+        client.drop_page(page_id, cascade=True)
+    assert client.page(page_id) is None
+    # asked for it: the connection went with its last page
     assert client.connection(cid) is None
 
 
@@ -441,6 +459,51 @@ def test_a_non_user_filter_still_reads_the_page_row(client, worker):
     assert [c.value for c in client.subscription_storechanges(None, page_id)] == ["by_name"]
     assert client.subscription_storechanges(None, bystander) == []
     assert page_id in client.pages(filters="user_ip:10.0.0.9")
+
+
+# ------------------------------------------------------------------
+# The readers against the demolitions: rows vanish mid-read
+# ------------------------------------------------------------------
+
+
+def test_the_readers_tolerate_rows_demolished_mid_read(client, worker):
+    """The race the sweep and every logout create against the read side.
+
+    The readers walk a KEY SNAPSHOT and re-fetch each row without
+    ``dispatch_lock`` — they are hot paths, and the lock belongs to the writers
+    — so a row demolished on another thread leaves its key behind. Handing that
+    ``None`` out is what ``Connection.connected_users_bag`` subscripts on the
+    next chat poll (connection.py:195), two seconds later, forever.
+    """
+    chains = []
+    for _ in range(CHURN_CHAINS):
+        cid, _ = open_page(client, worker)
+        open_tab(client, worker, cid)
+        chains.append(cid)
+    churn_failure = []
+
+    def churn():
+        try:
+            for cid in chains:
+                with call_sink(worker):
+                    client.drop_connection(cid)
+        except Exception as exc:  # noqa: BLE001 — reported to the main thread
+            churn_failure.append(exc)
+
+    # Force the interpreter to switch threads constantly: the window is between
+    # the key snapshot and the row read, a few instructions wide.
+    previous_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    churner = threading.Thread(target=churn)
+    churner.start()
+    try:
+        while churner.is_alive():
+            for rows in (client.users(), client.connections(), client.pages()):
+                assert None not in rows.values()
+    finally:
+        sys.setswitchinterval(previous_interval)
+        churner.join(timeout=30)
+    assert churn_failure == []
 
 
 def test_changes_to_bag_numbers_sc_i_with_the_envelope_attrs(client):

@@ -43,6 +43,22 @@ def test_requires_a_source():
         GenropySpaApplication()
 
 
+def test_a_direct_instantiation_lands_on_the_site_root():
+    # without a class-level mount the core would mount the app under its own
+    # code — a GenroPy site there answers the first page and 404s every path
+    # that page asks for
+    assert GenropySpaApplication(source="some_site").mount == ""
+    # an explicit empty mount (the shipped recipe writes one) only confirms it,
+    # and so does the None a generic caller may pass
+    assert GenropySpaApplication(source="some_site", mount="").mount == ""
+    assert GenropySpaApplication(source="some_site", mount=None).mount == ""
+
+
+def test_a_non_empty_mount_is_refused():
+    with pytest.raises(ValueError):
+        GenropySpaApplication(source="some_site", mount="admin")
+
+
 def test_pool_defaults_point_at_the_genropy_worker():
     app = GenropySpaApplication(source="some_site", debug=True)
     assert app.commander.worker_class == "genropy_asgi.spa.genropy_worker:GenropyWorker"
