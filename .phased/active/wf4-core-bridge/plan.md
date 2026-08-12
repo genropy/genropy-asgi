@@ -326,7 +326,21 @@ closed).
   - Done: `pytest tests/test_expiry_and_disk.py` passes; `ruff check src/
     tests/` zero errors.
 
-- [ ] **Phase 6**: single-process suite migrated
+- [x] **Phase 6**: single-process suite migrated
+  > Done: test_legacy_e2e.py on the new single (front + in-process
+    GenropyWorker, full protocol; 8 scenarios green — flagged rewrites in
+    notes.md: user-store envelope carries the autocreated parent, the
+    machinery guard reads the worker index, the cookie jar carries both
+    cookies); test_genropy_proxy.py green (import fix + D16 constructor
+    migration + AsgiServer mount — route_cleanup seam loss flagged); the two
+    pool modules skip as declared. FULL SUITE: 92 passed, 2 skipped (the
+    declared pool modules only); ruff clean.
+  > Files: tests/test_legacy_e2e.py, tests/test_genropy_proxy.py,
+    tests/test_worker_application.py, tests/test_cli_multiworker_e2e.py,
+    src/genropy_asgi/proxy/genropy_proxy.py
+  > Review: the proxy's route_cleanup has no core seam in 0.30 (make_callable
+    lost the hook) — the per-request thread-local db cleanup wiring needs its
+    own commission; details in notes.md.
   - Pattern reference: the migrated tests of Phases 1-5 (same fixture style);
     `tests/test_legacy_e2e.py` (the e2e suite being migrated)
   - Files: tests/test_legacy_e2e.py, tests/test_genropy_proxy.py,

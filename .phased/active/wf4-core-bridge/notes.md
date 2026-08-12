@@ -185,6 +185,48 @@ Phase 5 against committed main.
   public-API-built; the orphan test backdates the FOLDER's mtime with
   `os.utime`, which is disk state, not register state.
 
+## Phase 6
+
+FLAGGED assertion rewrites in test_legacy_e2e.py (meaning changed with the
+core model — the equivalent observable is asserted, never silently flipped):
+
+- **User-store envelope shape** (`test_user_store_change_delivered_then_drained`,
+  `..._reaches_both_tabs_once_each`): a user-store `set_datachange` is now a
+  REAL write on the owner's live store; the legacy triggers report the
+  autocreated parent Bag alongside the leaf and BOTH travel in the envelope
+  (the browser applies them in order to the same net state). The old assert
+  `changes == [("chat.msg","hello")]` became `leaf_changes(...) == [...]` —
+  a helper that excludes Bag-valued (structural) changes; the destructive
+  drain assert is unchanged. The old `_new_datachange`/offset bookkeeping
+  wording was already dead in the previous migration.
+- **The machinery guard** (`test_register_is_served_by_the_application_
+  machinery` -> `..._by_the_worker_machinery`): the app surface/mailbox died
+  with the old architecture; the equivalent observable is the worker's own
+  index (`worker.subscriptions.pages_for(table)`) and the page's pending
+  list through the ping.
+- **The cookie observable widened**: the single answers with TWO cookies —
+  the site's own legacy session cookie AND the front's `sticky_cid` — and
+  the test jar (`merge_cookies`) presents both; the page-row `user` field is
+  gone (ownership is derived), so the tests derive the user through the
+  connection row.
+
+Other Phase 6 notes:
+
+- **Pool-only modules skipped as declared**: `test_worker_application.py`
+  and `test_cli_multiworker_e2e.py` carry the module-level
+  `pytest.skip("pool bridge is stage two", allow_module_level=True)`.
+- **The proxy needed more than the import fix** (flagged): core 0.30 has no
+  `on_init` hook (cooperative D16 constructors) and no `route_cleanup` seam
+  in `make_callable`. `GenropyProxyMixin.on_init` became a cooperative
+  `__init__` (mechanical); `route_cleanup` STAYS as the cleanup method but
+  nothing calls it per-dispatch anymore — the per-request thread-local db
+  cleanup wiring needs its own commission on the core (or a proxy redesign).
+  Flagged for human follow-up; the e2e proxy test now mounts on
+  `AsgiServer(applications=[app])` (GenroAsgiWorker is gone from the core).
+- The foreman's core note (commit 177ee84) — never pin sibling order in
+  multi-page drop cascades — required no change here: no migrated test
+  asserts cross-sibling order.
+
 - **Tests open the CALL sinks with the core's own `call_sink` convention**
   (genro-asgi tests/test_spa_worker.py): the lifecycle ops announce on the
   CALL that causes them, and outside a CALL the events sink is closed by

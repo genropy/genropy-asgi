@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from genro_asgi.applications.openapi_application import OpenApiApplication
+from genro_asgi.applications.openapi import OpenApiApplication
 
 log = logging.getLogger("genropy_asgi.proxy")
 
@@ -43,14 +43,14 @@ class GenropyProxyMixin:
     connection after each handler — where it is thread-correct.
     """
 
-    def on_init(self, instance: str | None = None, debug: bool = False, **kwargs: Any) -> None:
-        """Build the GnrApp, then let the OpenApiApplication base mount the API.
+    def __init__(self, *, instance: str | None = None, debug: bool = False, **kwargs: Any) -> None:
+        """Build the GnrApp, then let the cooperative chain mount the API (D16).
 
         Args:
             instance: GenroPy instance name (or path) resolved by GnrApp.
             debug: Passed through to GnrApp.
-            **kwargs: Forwarded to ``OpenApiApplication.on_init`` (routing_class,
-                module, docs, api_name, ...).
+            **kwargs: Forwarded up the chain (routing_class, module, docs,
+                api_name, code, mount, ...).
         """
         from gnr.app.gnrapp import GnrApp
 
@@ -59,7 +59,7 @@ class GenropyProxyMixin:
         log.info("Creating GnrApp for instance '%s'", instance)
         self._gnr_app = GnrApp(instance, debug=debug)
         log.info("GnrApp '%s' ready", instance)
-        super().on_init(**kwargs)  # type: ignore[misc]
+        super().__init__(**kwargs)  # type: ignore[misc]
 
     @property
     def gnr_app(self) -> Any:
@@ -69,9 +69,11 @@ class GenropyProxyMixin:
     def route_cleanup(self) -> None:
         """Close the current thread's db connection after the handler.
 
-        Runs in the executor thread (via ``make_callable``), which is where the
-        GnrApp opened its thread-local connection, so this is where it must be
-        closed. The request-level cleanup runs on the loop and cannot do it.
+        The GnrApp opens its connection thread-local, so it must be closed on
+        the executor thread that ran the handler. NOTE: the core seam that
+        called this after every dispatch (0.2x ``make_callable``) is gone in
+        0.30 — the method stays as the cleanup the future seam (or a caller)
+        invokes, and the per-request wiring is a flagged follow-up.
         """
         db = getattr(self._gnr_app, "db", None)
         if db is not None:
