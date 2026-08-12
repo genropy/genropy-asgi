@@ -13,7 +13,17 @@ on 2026-08-12 (record: `temp/design_WF4_ponte_2026-08-12.md`, all §7 items
 closed).
 
 ## Work Plan
-- [ ] **Phase 1**: GenropyWorker + GenropyRegistry + the `::BAG` wire type
+- [x] **Phase 1**: GenropyWorker + GenropyRegistry + the `::BAG` wire type
+  > Done: legacy_bag.py (LegacyBagCollector + ::BAG tytx registration) and
+    genropy_worker.py (GenropyWorker(UserStickyWorker) + GenropyRegistry)
+    written; 15 unit tests green, 1 skip (worker construction skips until
+    Phase 2 rewires the register client — site fixture pattern); ruff clean.
+  > Files: src/genropy_asgi/spa/legacy_bag.py,
+    src/genropy_asgi/spa/genropy_worker.py, src/genropy_asgi/spa/__init__.py,
+    tests/test_genropy_worker_units.py
+  > Review: spa/__init__.py touched beyond the declared Files (broken
+    pre-rebase re-exports dropped so the subpackage imports; Phase 4
+    rewrites it) — rationale in notes.md.
   - Pattern reference: `src/genropy_asgi/spa/genropy_spa_application.py:57-225`
     (site creation/debug wrapper/shutdown to transcribe);
     `../genro-asgi/src/genro_asgi/spa/register_registry.py:172-189` (the
