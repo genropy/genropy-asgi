@@ -308,9 +308,12 @@ class GenropyRegisterClient:
         """A browser's first connection is born (login-less, guest included).
 
         Called by ``Connection.register`` (gnrwebpage_proxy/connection.py) the first time
-        a browser is seen. The worker's reception makes the row: born guest when no user
-        is named (the naked sticky key). A connection the worker already holds is a
-        re-registration (a browser re-presenting its cookie): the live row answers.
+        a browser is seen. In production the connection arrives already guest-named —
+        ``Connection.create`` sets ``user = 'guest_<cid>'`` before registering
+        (connection.py:91) — and the core recognizes the reserved prefix; with no user
+        named, the core mints ``GUEST_PREFIX + cid`` itself (0.33, the name carries the
+        rule). A connection the worker already holds is a re-registration (a browser
+        re-presenting its cookie): the live row answers.
         Returns the local connection item with its data Bag attached.
 
         The row is born with ``start_ts`` — the daemon's own birth stamp
@@ -329,8 +332,11 @@ class GenropyRegisterClient:
 
         Called by ``WebPage._register_new_page`` (gnrwebpage.py) on page registration.
         The op is user-addressed (``new_page(user, page_id, session_id=cid, ...)``);
-        a page with no user yet belongs to the guest — the connection id itself, the
-        born-guest rule. The legacy ``data`` seed becomes the page's live STORE: one
+        a page with no user named belongs to its connection's user — the name the core
+        minted at the ``new_connection`` door (``guest_<cid>`` for an anonymous
+        browser), read off the live row, never re-minted here: composing a guest name
+        would mis-own the page when the connection has already logged in. The legacy
+        ``data`` seed becomes the page's live STORE: one
         Bag serves the dbenv walk, the channel-A writes and the capture, and a move
         would package exactly it. Returns the local page item with that Bag as
         ``data``.
@@ -344,7 +350,7 @@ class GenropyRegisterClient:
         user = fields.pop("user", None)
         connection_id = fields.pop("connection_id", None)
         if user is None:
-            user = connection_id
+            user = worker.connection_items.get(connection_id)["user"]
         data = fields.pop("data", None)
         if data is not None:
             fields["store"] = data

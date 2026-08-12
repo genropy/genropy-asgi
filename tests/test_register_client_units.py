@@ -22,6 +22,8 @@ from contextlib import contextmanager
 
 import pytest
 
+from genro_asgi.spa import GUEST_PREFIX
+
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
 
@@ -106,7 +108,7 @@ def test_new_connection_is_born_guest_with_live_data_bag(client, worker):
     with call_sink(worker):
         item = client.new_connection(cid)
     assert item["register_item_id"] == cid
-    assert item["user"] == cid  # born guest: the naked sticky key
+    assert item["user"] == GUEST_PREFIX + cid  # born guest: the core mints the name
     assert isinstance(item["data"], Bag)
     assert item["data"] is item["store"]  # one live Bag, two names
 
@@ -173,7 +175,7 @@ def test_refresh_stamps_server_clock_and_client_fields(client, worker):
     page = worker.page_items.get(page_id)
     assert page["last_refresh_ts"] >= before  # the server's own clock
     assert page["last_user_ts"] == client_clock  # the client's, as a plain field
-    assert user_item is worker.user_items.get(cid)
+    assert user_item is worker.user_items.get(GUEST_PREFIX + cid)
     assert client.refresh("never_registered") is None
 
 
@@ -204,10 +206,11 @@ def test_datachange_replace_coalesces(client, worker):
 
 def test_user_store_write_reaches_the_subscribed_page(client, worker):
     cid, page_id = open_page(client, worker)
+    guest = GUEST_PREFIX + cid  # the legacy addresses the user store by page.user
     client.setStoreSubscription(page_id, storename="user", client_path="chat", active=True)
-    client.set_datachange(cid, "chat.room1", value="ping", register_name="user")
+    client.set_datachange(guest, "chat.room1", value="ping", register_name="user")
     # the write landed on the live user store...
-    assert client.user(cid, include_data="lazy")["data"]["chat.room1"] == "ping"
+    assert client.user(guest, include_data="lazy")["data"]["chat.room1"] == "ping"
     # ...and the page's user_view captured it — the legacy pair: the
     # autocreated parent first, then the leaf (the daemon's triggers saw the same)
     changes = client.subscription_storechanges(None, page_id)
@@ -263,7 +266,7 @@ def test_handle_ping_builds_the_sc_i_envelope(client, worker):
 
 def test_handle_ping_flags_the_running_batch_window(client, worker):
     cid, page_id = open_page(client, worker)
-    with client.userStore(cid) as store:
+    with client.userStore(GUEST_PREFIX + cid) as store:
         store.setItem("lastBatchUpdate", datetime.datetime.now())
     envelope = client.handle_ping(page_id=page_id)
     assert envelope.getItem("runningBatch") is True
@@ -308,7 +311,7 @@ def test_pages_reads_and_the_filter_grammar(client, worker):
     assert page_id not in client.pages(filters="pagename:elsewhere")
     assert client.exists(page_id, register_name="page")
     assert cid in client.connections()
-    assert cid in client.users()  # the guest user is the cid itself
+    assert GUEST_PREFIX + cid in client.users()  # the guest user carries the prefix
 
 
 # ------------------------------------------------------------------
@@ -360,8 +363,9 @@ def test_connected_users_reads_a_freshly_created_row(client, worker):
 def test_connected_users_reads_a_guest_row(client, worker):
     # a guest never logged in, so it has no user_name: the key is the caption
     cid, _ = open_page(client, worker)
-    row = connected_users_row(cid, client.users()[cid])
-    assert row["caption"] == cid
+    guest = GUEST_PREFIX + cid
+    row = connected_users_row(guest, client.users()[guest])
+    assert row["caption"] == guest
 
 
 def test_stale_connections_reads_the_connection_rows(client, worker):
