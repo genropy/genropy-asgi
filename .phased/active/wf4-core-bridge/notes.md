@@ -130,6 +130,33 @@ Phase 5 against committed main.
   full protocol on a LocalChannel (dev==deploy), the core's own
   test_spa_single.py fixture pattern.
 
+## Phase 4
+
+- **The CLI keeps `--reload` as an accepted-and-ignored flag**: the plan says
+  the CLI surface is unchanged, but the core 0.30 server has no reloader
+  (`AsgiServer.serve` boots uvicorn programmatically, no reload plumbing).
+  The flag prints a one-line notice instead of erroring — scripts that pass
+  it keep working. The old `server.run()` became `server.serve(host, port)`
+  (the 0.30 API; host/port default to the config's).
+- **`gnr_site` property kept on the front** (the single's worker's site) —
+  the established name from the pre-rebase app, used by the e2e suite and by
+  operators; on a pool it raises through `commander.worker` being None,
+  which is honest (the sites live in the children).
+- **`/metrics` counters read the commander's routing surface**
+  (`user_worker_map`/`page_connection`/`connection_user` — names verified on
+  core commander.py:555-568). `stale_connections_5min` of the legacy webtool
+  stays dropped (surface is keys-and-locations only) — as the pre-rebase
+  commander app already documented.
+- **memory budget derivation splits over `max_workers` when capped**, else
+  over the boot target — D6's "(max_workers or workers)" read as the slots
+  the pool may actually reach.
+- **Native-dispatch tests mount the front on an `AsgiServer`**
+  (`applications=[front]` wires `app.server`): RoutedApplication dispatch
+  requires the owning server; the forward path does not.
+- Floor bumped to `genro-asgi>=0.30.0` exactly as the committed plan says;
+  the possible 0.31 amendment (expiry kwargs) arrives from the foreman as a
+  plan change, never decided here.
+
 - **Tests open the CALL sinks with the core's own `call_sink` convention**
   (genro-asgi tests/test_spa_worker.py): the lifecycle ops announce on the
   CALL that causes them, and outside a CALL the events sink is closed by

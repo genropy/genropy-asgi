@@ -215,7 +215,24 @@ closed).
     tests/` zero errors. Refs #1 in the phase commit (the issue closes at
     consolidation).
 
-- [ ] **Phase 4**: the front on the core SpaApplication + recipe + CLI + floor
+- [x] **Phase 4**: the front on the core SpaApplication + recipe + CLI + floor
+  > Done: genropy_spa_application.py rewritten on SpaApplication (pool
+    defaults -> GenropyWorker dotted path, /metrics native route, D6 memory
+    derivation); config.py unified to ONE recipe (workers + local_worker);
+    CLI on the 0.30 server API (surface unchanged, --reload
+    accepted-and-ignored with a notice); the two pre-rebase application
+    modules deleted; exports fixed; floor genro-asgi>=0.30.0. 12 front tests
+    green (structural + real-single e2e: forward 200, cookie mint, /metrics
+    demux); phases 1-4 set 69 green; `import genropy_asgi.spa` clean; ruff
+    clean.
+  > Files: src/genropy_asgi/spa/genropy_spa_application.py,
+    src/genropy_asgi/spa/config.py, src/genropy_asgi/spa/cli.py,
+    src/genropy_asgi/spa/genropy_commander_application.py (deleted),
+    src/genropy_asgi/spa/genropy_worker_application.py (deleted),
+    src/genropy_asgi/spa/__init__.py, src/genropy_asgi/__init__.py,
+    pyproject.toml, tests/test_genropy_spa_application.py
+  > Review: --reload is a no-op with a printed notice (core has no reloader)
+    — rationale in notes.md.
   - Pattern reference:
     `../genro-asgi/src/genro_asgi/applications/spa_app.py` (the base being
     subclassed: kwarg peel, demux, forward);

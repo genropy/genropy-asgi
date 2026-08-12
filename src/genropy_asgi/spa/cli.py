@@ -58,7 +58,12 @@ def cmd_serve(argv: list[str]) -> int:
     parser.add_argument("instance", help="GenroPy instance/site name (or path)")
     parser.add_argument("-H", "--host", default=None)
     parser.add_argument("-p", "--port", type=int, default=None)
-    parser.add_argument("--reload", action="store_true", default=None)
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=None,
+        help="accepted for surface compatibility; the core server has no reloader",
+    )
     parser.add_argument("--nodebug", action="store_true")
     parser.add_argument(
         "--workers",
@@ -89,9 +94,11 @@ def cmd_serve(argv: list[str]) -> int:
     if opts.config is None and opts.workers:
         os.environ["GNR_ASGI_WORKERS"] = str(opts.workers)
 
+    if opts.reload:
+        print("--reload: the core server has no reloader; flag accepted and ignored.")
     config_path = opts.config or CONFIG
-    server = AsgiServer(config_path, host=opts.host, port=opts.port, reload=opts.reload)
-    server.run()
+    server = AsgiServer(str(config_path))
+    server.serve(host=opts.host, port=opts.port)
     return 0
 
 
