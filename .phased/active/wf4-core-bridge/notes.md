@@ -232,3 +232,17 @@ Other Phase 6 notes:
   CALL that causes them, and outside a CALL the events sink is closed by
   design. State building itself goes through the register's public commands
   on a real site.
+
+## Post-run amendments (owner ratifications, 2026-08-12)
+
+- **data = store RATIFIED**: the Phase-2 decision (the legacy `data` seed of
+  `new_page` IS the row's live store — one Bag, `data` aliased to `store`)
+  is confirmed by the owner.
+- **Floor raised to `genro-asgi>=0.31.0`**: Phase 5 passes the expiry kwargs
+  (`page_max_age`/`guest_max_age`/`connection_max_age`), born with 0.31
+  (core #12, commit 873d167) — 0.30 would reject them at worker construction.
+- **`_add_data_to_register_item` removed**: dead compat, zero callers in the
+  whole legacy `gnr.*` tree and in this repo; a loud immediate error is the
+  accepted outcome if an external caller exists.
+- **`route_cleanup` seam commissioned to the core** (owner ok): per-dispatch
+  cleanup hook on the executor thread, same liturgy as #11/#12.

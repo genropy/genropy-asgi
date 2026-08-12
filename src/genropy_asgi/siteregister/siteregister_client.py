@@ -1169,10 +1169,6 @@ class GenropyRegisterClient:
             item["data"] = store if isinstance(store, Bag) else Bag()
         return item
 
-    def _add_data_to_register_item(self, register_item: Any) -> Any:
-        """The local Bag replaces the daemon's RemoteStoreBag proxy (compat name)."""
-        return self._ensure_item_data(register_item)
-
     def _conn_kwargs(self, connection: Any, kwargs: dict) -> dict:
         """Extract the scalar fields the connection registry needs from a Connection.
 
