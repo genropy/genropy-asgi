@@ -104,6 +104,10 @@ class ServerStore:
         self.thread_id = threading.get_ident()
 
     def __enter__(self) -> ServerStore:
+        if self.register_name == "global":
+            # The REAL lease (develop == deploy): the block holds the master.
+            self._lease = self.siteregister._open_global_lease()
+            return self
         delay = RETRY_DELAY
         for attempt in range(LOCK_MAX_RETRY + 1):
             if self.siteregister.lock_item(
@@ -118,6 +122,11 @@ class ServerStore:
         )
 
     def __exit__(self, exc_type: Any, exc_value: Any, tb: Any) -> None:
+        if self.register_name == "global":
+            lease = self.__dict__.pop("_lease", None)
+            if lease is not None:
+                self.siteregister._close_global_lease(lease, exc_type)
+            return
         self.siteregister.unlock_item(
             self.register_item_id, reason=self.thread_id, register_name=self.register_name
         )
@@ -614,17 +623,25 @@ class GenropyRegisterClient:
 
     def _ship_global(self, op: str, path: str, value: Any) -> None:
         """One rail write: ``store_set`` ships the TYTX-encoded scalar, ``store_del``
-        the key alone — directly on the worker's store ops. Best-effort: a missing
-        worker never breaks the legacy write (the boot writes before the worker
-        attaches; nothing to replicate yet)."""
+        the key alone — directly on the worker's store ops. While this THREAD holds
+        the global lease, the write is COLLECTED on the lease instead of shipping:
+        the block's writes travel once, on the release, all-or-nothing. Best-effort:
+        a missing worker never breaks the legacy write (the boot writes before the
+        worker attaches; nothing to replicate yet)."""
+        if op == "store_set" and callable(value):
+            logger.debug("global-store rail: callable at %r not replicated", path)
+            return
+        state = self._global_rail_state
+        if getattr(state, "lease_writes", None) is not None:
+            state.lease_writes.append(
+                (op, path, None if op == "store_del" else self._encode_global(value))
+            )
+            return
         worker = self.spa_worker
         if worker is None:
             return
         if op == "store_del":
             worker.store_del(None, path)
-            return
-        if callable(value):
-            logger.debug("global-store rail: callable at %r not replicated", path)
             return
         worker.store_set(None, path, value=self._encode_global(value))
 
@@ -652,37 +669,113 @@ class GenropyRegisterClient:
             value = value.astimezone().replace(tzinfo=None)
         return value
 
+    def _open_global_lease(self) -> Any:
+        """Acquire the REAL global-store lock and hand back the lease (D4, ratified).
+
+        Runs on the WSGI thread — the sync ``with`` form of the core lease, which
+        parks this thread on the worker's loop until the commander grants the
+        master. On grant, the master content (TYTX wire-text scalars) is
+        materialized into ``global_bag`` under the ``applying`` flag, and this
+        THREAD's rail switches to collecting: the block's leaf writes join the
+        lease instead of shipping one by one. A lease that cannot be acquired —
+        channel down, worker not started — maps to ``GnrDaemonLocked``, the
+        exception the legacy already catches around a store lock.
+        """
+        from genro_bag import Bag as CoreBag
+
+        worker = self.spa_worker
+        if worker is None:
+            raise GnrDaemonLocked("global store lease: no worker attached")
+        try:
+            lease = worker.global_store_lock()
+            master = lease.__enter__()
+        except Exception as exc:
+            raise GnrDaemonLocked(f"global store lease not acquired: {exc}") from exc
+        # The grant crossed a tytx hop, so its leaves arrive DECODED.
+        self._materialize_global_snapshot(
+            {
+                path: node.value
+                for path, node in master.walk()
+                if not isinstance(node.value, CoreBag)
+            }
+        )
+        self._global_rail_state.lease_writes = []
+        return lease
+
+    def _close_global_lease(self, lease: Any, exc_type: Any) -> None:
+        """Apply the block's collected writes to the lease's working copy and release.
+
+        The writes travel ONCE, on ``store_unlock``, all-or-nothing: a body that
+        raised releases with nothing applied (the core's own apply-on-success
+        rule), and the collecting state ends with the block either way. Lock-less
+        writes on other threads kept shipping immediately throughout.
+        """
+        state = self._global_rail_state
+        writes = getattr(state, "lease_writes", None) or []
+        state.lease_writes = None
+        if exc_type is None:
+            for op, path, value in writes:
+                if op == "store_del":
+                    lease.copy.delete(path)
+                else:
+                    lease.copy.set(path, value)
+        lease.__exit__(exc_type, None, None)
+
     def apply_global_write(self, op: str | None, key: str | None, value: Any = None) -> None:
-        """Materialize one commander push into the Bag.
+        """Materialize one push carried as TYTX wire TEXT (the ascent's own encoding).
+
+        Decodes the text, then materializes. The frames that crossed a
+        ``to_tytx``/``from_tytx`` hop arrive already decoded and go through
+        ``_materialize_global`` directly — decoding twice would corrupt a
+        legacy string that LOOKS typed.
+        """
+        self._materialize_global(op, key, self._decode_global(value))
+
+    def _materialize_global(self, op: str | None, key: str | None, value: Any = None) -> None:
+        """Materialize one DECODED write into the Bag.
 
         Runs under the thread-local ``applying`` flag so the Bag triggers do not
-        bounce the echo back on the rail. A missing key on delete is silent.
+        bounce the echo back on the rail. An aware datetime is normalized back
+        to naive local (the legacy compares naive clocks). A missing key on
+        delete is silent.
         """
         if not key:
             return
+        if isinstance(value, datetime.datetime) and value.tzinfo is not None:
+            value = value.astimezone().replace(tzinfo=None)
         state = self._global_rail_state
         state.applying = True
         try:
             if op == "store_del":
                 self.global_bag.delItem(key)
             else:
-                self.global_bag.setItem(key, self._decode_global(value))
+                self.global_bag.setItem(key, value)
         finally:
             state.applying = False
 
     def load_global_snapshot(self, content: dict) -> None:
-        """Replace the whole Bag from a snapshot push (the late-worker seed).
+        """Replace the whole Bag from a snapshot carried as TYTX wire TEXT values."""
+        self._materialize_global_snapshot(
+            {key: self._decode_global(value) for key, value in content.items()}
+        )
 
-        The channel is FIFO: later writes apply on top, no partial window. Under the
-        ``applying`` flag — the rebuild never re-ships.
+    def _materialize_global_snapshot(self, leaves: dict) -> None:
+        """Replace the whole Bag from DECODED ``{full_path: value}`` leaves.
+
+        The channel is FIFO: later writes apply on top, no partial window. Under
+        the ``applying`` flag — the rebuild never re-ships. Aware datetimes are
+        normalized like every materialized value.
         """
         state = self._global_rail_state
         state.applying = True
         try:
             bag = self.global_bag
             bag.clear()
-            for key in sorted(content):
-                bag.setItem(key, self._decode_global(content[key]))
+            for key in sorted(leaves):
+                value = leaves[key]
+                if isinstance(value, datetime.datetime) and value.tzinfo is not None:
+                    value = value.astimezone().replace(tzinfo=None)
+                bag.setItem(key, value)
         finally:
             state.applying = False
 

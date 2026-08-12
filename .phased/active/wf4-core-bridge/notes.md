@@ -95,6 +95,41 @@ Phase 5 against committed main.
 - **Pool-vs-single in `filter_subscribed_tables`** is structural: a worker
   on a real socket channel is a pool child (pass-through); a `LocalChannel`
   or no channel is the single (filters on `worker.subscriptions.pages_for`).
+## Phase 3
+
+- **The wire decodes the ascent's text — by construction, not by accident.**
+  `_encode_global` ships TYTX-suffixed TEXT (ratified, unchanged) and the
+  master keeps it verbatim (blind courier: the immediate-rail EVENT crosses
+  no tytx hop). But every DESCENDING hop — the changes batch, the snapshot,
+  the lease grant, the unlock — crosses `to_tytx`/`from_tytx`, and the
+  suffix grammar being the shared historical one, the hop decodes the text
+  back to the original value (`"7::L"` → 7, `"42::L::T"` → `"42::L"`). So
+  values arrive at the edges ALREADY DECODED, and materializing them through
+  the text-decoding `apply_global_write` would corrupt a legacy string that
+  looks typed. The client therefore has two entry points:
+  `apply_global_write`/`load_global_snapshot` keep the TEXT contract
+  (the direct seam, stub tests), and `_materialize_global`/
+  `_materialize_global_snapshot` take DECODED values (aware→naive
+  normalization only) — the worker's `handle_frame` override and the lease
+  grant use the latter. Master content is mixed (text from the immediate
+  rail, raw from the lease releases) but converges at every edge.
+- **Autocreated parents in the descending changes are skipped**: the master's
+  collector captures the parent Bag node an intermediate write creates;
+  materializing it into the legacy Bag would crash (`setBackRef` on a core
+  Bag) and is pointless — the legacy Bag autocreates its own parents, the
+  leaves travel as changes of their own.
+- **The lease lives in ServerStore('global')'s enter/exit** (client-internal
+  `_open_global_lease`/`_close_global_lease`): sync `with` form on the WSGI
+  thread; grant materializes the master; thread-local `lease_writes` makes
+  `_ship_global` collect instead of shipping; exit applies to the working
+  copy and releases (all-or-nothing — a raising body applies nothing).
+  `GnrDaemonLocked` wraps any acquire failure. Lease tests run the with-block
+  in `asyncio.to_thread` — the WSGI-thread shape it has in production.
+- **Phase 3 tests use the REAL single**: `UserStickyCommander(workers=0,
+  local_worker=True, worker_class="genropy_asgi...GenropyWorker")` — the
+  full protocol on a LocalChannel (dev==deploy), the core's own
+  test_spa_single.py fixture pattern.
+
 - **Tests open the CALL sinks with the core's own `call_sink` convention**
   (genro-asgi tests/test_spa_worker.py): the lifecycle ops announce on the
   CALL that causes them, and outside a CALL the events sink is closed by

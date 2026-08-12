@@ -162,7 +162,19 @@ closed).
     tests/test_genropy_worker_units.py` passes; `ruff check src/ tests/`
     zero errors.
 
-- [ ] **Phase 3**: global rail on the core transport, with the REAL lease
+- [x] **Phase 3**: global rail on the core transport, with the REAL lease
+  > Done: ascent on worker.store_set/store_del (landed in Phase 2, verified
+    here); descent via GenropyWorker.handle_frame override materializing
+    snapshot/changes into the legacy global_bag; the REAL lease on
+    ServerStore('global') — sync with-form, grant materializes the master,
+    thread-local collection, all-or-nothing release, GnrDaemonLocked on a
+    dead channel. 20 rail tests green (incl. 5 on a REAL single via
+    UserStickyCommander local_worker), full set 57, ruff clean.
+  > Files: src/genropy_asgi/siteregister/siteregister_client.py,
+    src/genropy_asgi/spa/genropy_worker.py, tests/test_global_store_rail.py
+  > Review: the tytx-hop decode discovery (ascent text arrives DECODED at
+    every descending edge; two materialization entry points, master content
+    mixed but edge-convergent) — mechanism and rationale in notes.md.
   - Pattern reference:
     `src/genropy_asgi/siteregister/siteregister_client.py:529-653` (the
     legacy-side rail: leaf-write shipping, echo suppression, aware→naive

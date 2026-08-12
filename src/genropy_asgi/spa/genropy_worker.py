@@ -45,7 +45,12 @@ import os
 from types import SimpleNamespace
 from typing import Any
 
+from genro_bag import Bag as CoreBag
+from genro_tytx import from_tytx
+
+from genro_asgi.channel.hub import EVENT_METHOD
 from genro_asgi.spa import RegisterRegistry, UserStickyWorker
+from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH, GLOBAL_SNAPSHOT_PATH
 from gnr.core.gnrbag import Bag
 
 from .legacy_bag import LegacyBagCollector
@@ -132,6 +137,49 @@ class GenropyWorker(UserStickyWorker):
         bag.setItem(path, change["value"], _attributes=attributes, _reason=reason)
         if change["key"]["fired"]:
             bag.getNode(path).staticvalue = None
+
+    async def handle_frame(self, frame: Any) -> None:
+        """The core wire handling, then the legacy materialization of the global rail.
+
+        The core applies the descending global pushes INLINE on its replica
+        (snapshot before the changes that follow it — the receive loop is the
+        only place that order still exists); the same content is then poured
+        into the legacy ``global_bag`` through the register, so the legacy
+        reads stay local and coherent with the commander's master. The snapshot
+        is read back from the replica (already decoded once); the changes are
+        the master collector's own dicts, translated to the write/delete pair
+        the register materializes (``applying`` flag, aware->naive decode —
+        all of it the register's, unchanged).
+        """
+        await super().handle_frame(frame)
+        if frame.method != EVENT_METHOD:
+            return
+        if frame.path == GLOBAL_SNAPSHOT_PATH:
+            self._gnr_site.register._materialize_global_snapshot(self._replica_global_leaves())
+        elif frame.path == GLOBAL_CHANGES_PATH:
+            register = self._gnr_site.register
+            for change in from_tytx(frame.data, "json"):
+                if not change["delete"] and isinstance(change["value"], CoreBag):
+                    # an autocreated parent on the master: structure, not a
+                    # leaf — the legacy Bag autocreates its own parents and
+                    # the leaves travel as changes of their own
+                    continue
+                op = "store_del" if change["delete"] else "store_set"
+                register._materialize_global(op, change["key"]["path"], change["value"])
+
+    def _replica_global_leaves(self) -> dict[str, Any]:
+        """The replica's ``{full_path: value}`` leaves, already DECODED.
+
+        The legacy ascent ships TYTX-suffixed text, but every descending hop
+        crosses ``to_tytx``/``from_tytx`` — and the suffix grammar being the
+        shared historical one, the hop decodes the text back to the original
+        value. A core-Bag node is structure, never a leaf.
+        """
+        return {
+            path: node.value
+            for path, node in self.global_store.walk()
+            if not isinstance(node.value, CoreBag)
+        }
 
     async def shutdown(self) -> None:
         """Stop the site first, then the core teardown (sender, CALLs, channel)."""
