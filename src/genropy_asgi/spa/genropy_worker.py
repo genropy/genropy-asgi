@@ -42,8 +42,10 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import shutil
+import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 from genro_bag import Bag as CoreBag
 from genro_tytx import from_tytx
@@ -58,6 +60,18 @@ from .legacy_bag import LegacyBagCollector
 log = logging.getLogger("genropy_asgi.spa")
 
 __all__ = ["GenropyRegistry", "GenropyWorker"]
+
+# The expiry knobs of the bridge (ratified names and values, seconds): a page
+# idle past PAGE_MAX_AGE is swept, an anonymous page or connection past
+# GUEST_MAX_AGE, a logged connection past CONNECTION_MAX_AGE. The ping stamps
+# ``refresh_chain``, so an idle-but-alive page is refreshed by its own polling.
+PAGE_MAX_AGE = 600
+GUEST_MAX_AGE = 1800
+CONNECTION_MAX_AGE = 86400
+
+# The sweep cadence: ARMED by default on the bridge (the browser rail is the
+# legacy polling, which already stamps the chain).
+SWEEP_INTERVAL = 60
 
 
 class GenropyRegistry(RegisterRegistry):
@@ -87,8 +101,15 @@ class GenropyWorker(UserStickyWorker):
         name: the worker's channel name (already typed, e.g. ``W:w1``).
         source: the GenroPy site — a site name or a path to it.
         debug: True wraps the site in the Werkzeug debugger middleware.
-        kwargs: forwarded to ``UserStickyWorker`` verbatim.
+        kwargs: forwarded to ``UserStickyWorker``; the expiry knobs and the
+            sweep cadence default to the bridge's ratified values (the sweep
+            is ARMED here — the legacy polling stamps the chain, so an
+            idle-but-alive page refreshes itself).
         """
+        kwargs.setdefault("sweep_interval", SWEEP_INTERVAL)
+        kwargs.setdefault("page_max_age", PAGE_MAX_AGE)
+        kwargs.setdefault("guest_max_age", GUEST_MAX_AGE)
+        kwargs.setdefault("connection_max_age", CONNECTION_MAX_AGE)
         super().__init__(name, **kwargs)
         self._gnr_site = self._create_site(source, debug)
         self.wsgi_app = self._gnr_site
@@ -180,6 +201,71 @@ class GenropyWorker(UserStickyWorker):
             for path, node in self.global_store.walk()
             if not isinstance(node.value, CoreBag)
         }
+
+    @property
+    def connections_folder(self) -> str:
+        """The site's per-connection disk root (``data/_connections``)."""
+        return self._gnr_site.allConnectionsFolder
+
+    def demolish_page(self, page_id: str, announce: Callable[..., Any]) -> dict[str, Any]:
+        """The core demolition, then the page's disk folder goes with the row.
+
+        Expiry, logout and cascades all pass here, so they all clean the same
+        way. When the drop took the connection with it (the last page of it),
+        the whole connection folder goes too.
+        """
+        entry = super().demolish_page(page_id, announce)
+        connection_id = entry["connection_id"]
+        if connection_id in self.connection_items:
+            shutil.rmtree(
+                os.path.join(self.connections_folder, connection_id, page_id),
+                ignore_errors=True,
+            )
+        else:
+            shutil.rmtree(
+                os.path.join(self.connections_folder, connection_id), ignore_errors=True
+            )
+        return entry
+
+    def demolish_connection(self, connection_id: str, announce: Callable[..., Any]) -> dict[str, Any]:
+        """The core demolition, then the connection's disk folder goes with the row.
+
+        The cascaded pages are dropped by the core registry internally (never
+        through ``demolish_page``); their subfolders live under the connection
+        folder removed here, so nothing is left behind.
+        """
+        entry = super().demolish_connection(connection_id, announce)
+        shutil.rmtree(os.path.join(self.connections_folder, connection_id), ignore_errors=True)
+        return entry
+
+    def sweep_expired(self) -> dict[str, list[str]]:
+        """The core sweep, then the ORPHAN disk pass.
+
+        A folder under ``data/_connections`` whose connection this worker does
+        not hold — a previous run's leftovers — and older than
+        ``connection_max_age`` by mtime is removed. Sufficient in the single,
+        where the worker sees every connection.
+        """
+        dropped = super().sweep_expired()
+        self.sweep_orphan_folders()
+        return dropped
+
+    def sweep_orphan_folders(self) -> None:
+        """Remove the stale per-connection folders nobody's row explains."""
+        folder = self.connections_folder
+        if not os.path.isdir(folder):
+            return
+        now = time.time()
+        for entry in os.listdir(folder):
+            path = os.path.join(folder, entry)
+            if not os.path.isdir(path) or entry in self.connection_items:
+                continue
+            try:
+                age = now - os.stat(path).st_mtime
+            except OSError:
+                continue
+            if age > self.connection_max_age:
+                shutil.rmtree(path, ignore_errors=True)
 
     async def shutdown(self) -> None:
         """Stop the site first, then the core teardown (sender, CALLs, channel)."""

@@ -157,6 +157,34 @@ Phase 5 against committed main.
   the possible 0.31 amendment (expiry kwargs) arrives from the foreman as a
   plan change, never decided here.
 
+## Phase 5
+
+- **Gate re-checked and PASSED before this phase**: core origin/main c6b8b95
+  (0.31.0) carries the three expiry kwargs on `UserStickyWorker.__init__`
+  and the sweep reads instance state — the commissioned prerequisite landed.
+- **The demolition overrides clean at the drop** (`super()` first, then
+  `shutil.rmtree(..., ignore_errors=True)`): `demolish_page` removes the
+  page subfolder — or the WHOLE connection folder when the cascade took the
+  connection with the last page; `demolish_connection` removes the
+  connection folder (its page subfolders live inside). Expiry, logout and
+  cascades all pass through these two, so they all clean the same way. The
+  rmtree runs under `dispatch_lock` (the sweep's own hold) — accepted for
+  the single, as the drops are rare and `ignore_errors` never raises.
+- **The orphan pass hooks `sweep_expired`** (super, then
+  `sweep_orphan_folders`): a folder under `data/_connections` not in
+  `connection_items` and older than `connection_max_age` by mtime is
+  removed — a previous run's leftovers; sufficient in the single, where the
+  worker sees every connection.
+- **The legacy cleanup thread is disarmed at the gate**: `claim_cleanup`
+  returns False always (the site's own `_runCleanup` never starts);
+  `expire_pages`/`expire_connection` are documented no-ops; the shim's
+  `DEFAULT_PAGE_MAX_AGE` aligns to 600. The dead `_expired_keys` helper was
+  removed with them.
+- **Expiry tests wait real fractions of a second** (`guest_max_age=0.2` on
+  the fixture) instead of backdating row fields — the rows stay
+  public-API-built; the orphan test backdates the FOLDER's mtime with
+  `os.utime`, which is disk state, not register state.
+
 - **Tests open the CALL sinks with the core's own `call_sink` convention**
   (genro-asgi tests/test_spa_worker.py): the lifecycle ops announce on the
   CALL that causes them, and outside a CALL the events sink is closed by

@@ -1072,31 +1072,22 @@ class GenropyRegisterClient:
         return self.__dict__.get("_allowed_users")
 
     def claim_cleanup(self, interval: Any = 60, **kwargs: Any) -> bool:
-        """The cleanup-lottery gate: grant it when the interval elapsed (single node: us).
+        """The cleanup lottery is never granted: the WORKER sweeps.
 
-        Called by ``gnrwsgisite`` to decide whether this process runs the periodic
-        page/connection eviction.
+        The core sweep (armed on GenropyWorker, ``sweep_interval=60``) owns
+        both halves of the eviction — the register rows and their disk
+        folders — so the legacy site's own cleanup thread must never run.
         """
-        now = time.monotonic()
-        last = self.__dict__.get("_last_cleanup_claim")
-        if last is not None and (now - last) < float(interval or 60):
-            return False
-        self.__dict__["_last_cleanup_claim"] = now
-        return True
+        return False
 
-    def expire_pages(self, max_age: Any = 120, **kwargs: Any) -> list:
-        """Drop pages whose last refresh is older than ``max_age`` seconds."""
-        expired = self._expired_keys("page", max_age or 120)
-        for page_id in expired:
-            self.drop_page(page_id, cascade=True)
-        return expired
+    def expire_pages(self, max_age: Any = None, **kwargs: Any) -> list:
+        """Documented no-op: the worker's sweep expires pages (``page_max_age``)."""
+        return []
 
-    def expire_connection(self, max_age: Any = 3600, **kwargs: Any) -> list:
-        """Drop connections whose last refresh is older than ``max_age`` seconds."""
-        expired = self._expired_keys("connection", max_age or 3600)
-        for connection_id in expired:
-            self.drop_connection(connection_id, cascade=True)
-        return expired
+    def expire_connection(self, max_age: Any = None, **kwargs: Any) -> list:
+        """Documented no-op: the worker's sweep expires connections
+        (``connection_max_age``, ``guest_max_age`` for a guest)."""
+        return []
 
     def on_reloader_restart(self, *args: Any, **kwargs: Any) -> None:
         """Dev reloader restart hook — nothing to persist in-process."""
@@ -1266,23 +1257,6 @@ class GenropyRegisterClient:
         if isinstance(value, (bytes, str)):
             return self.catalog.fromTypedText(value)
         return value
-
-    def _expired_keys(self, register_name: str, max_age: Any) -> list:
-        worker = self.spa_worker
-        if worker is None:
-            return []
-        registers = {"page": worker.page_items, "connection": worker.connection_items}
-        register = registers[register_name]
-        now = time.time()
-        expired = []
-        for key in register.keys():
-            item = register.get(key)
-            last_seen = item.get("last_refresh_ts")
-            if last_seen is None:
-                continue  # never pinged: birth handling stays the site's business
-            if (now - last_seen) > float(max_age):
-                expired.append(key)
-        return expired
 
     def _collect_local_datachanges(self, page_id: Any) -> list:
         """Drain the page's pending species and dress them for the legacy client.

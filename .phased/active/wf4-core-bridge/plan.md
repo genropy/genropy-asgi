@@ -278,7 +278,17 @@ closed).
   - Done: `pytest tests/test_genropy_spa_application.py` passes; `python -c
     "import genropy_asgi.spa"` clean; `ruff check src/ tests/` zero errors.
 
-- [ ] **Phase 5**: expiry armed + disk cleanup on drop
+- [x] **Phase 5**: expiry armed + disk cleanup on drop
+  > Done: gate re-checked on committed core main (c6b8b95, 0.31.0 — kwargs
+    delivered); knobs defaulted on GenropyWorker (600/1800/86400, sweep
+    armed at 60s); demolish_page/demolish_connection overrides remove the
+    disk folders at the drop; orphan pass in sweep_expired; client cleanup
+    trio neutered (claim_cleanup False, expire_* no-ops, shim aligned to
+    600). 8 expiry/disk tests green; phases 1-5 set 77 green; ruff clean.
+  > Files: src/genropy_asgi/spa/genropy_worker.py,
+    src/genropy_asgi/siteregister/siteregister_client.py,
+    src/genropy_asgi/siteregister/siteregister.py,
+    tests/test_expiry_and_disk.py
   - Pattern reference: `../genro-asgi/src/genro_asgi/spa/worker.py` (the
     sweep being armed: `sweep_expired`/`sweep_loop`/`is_guest_connection`);
     `~/Sviluppo/genropy/genropy/gnrpy/gnr/web/gnrwsgisite.py:1755-1814`
