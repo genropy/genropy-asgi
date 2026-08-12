@@ -51,3 +51,52 @@ Phase 5 against committed main.
   pattern, as the plan prescribes): building the GnrWsgiSite imports the
   register client, still broken until Phase 2. Phase 2's `Done:` re-runs
   this file with the client rewired, turning the test live.
+
+## Phase 2
+
+- **The legacy `data` seed of `new_page` becomes the row's `store`** — the
+  plan's "legacy data passes through" read as: through INTO the live store.
+  One Bag serves the dbenv walk, the channel-A writes, the capture (page
+  collector + cache observer) and a future move package; two separate Bags
+  (store + verbatim `data` field) would have split the capture from the
+  writes. `_ensure_item_data` aliases `data` -> `store` on every row: the
+  daemon-era name and the core name are one object.
+- **`GenropyWorker.apply_forwarded` override — a declared deviation** (file
+  not in this phase's Files list; Phase 3 touches it anyway): the core's
+  STATE delivery writes with the new Bag API (`set_item`, `_fired`), the
+  bridge stores are legacy Bags — the override translates to `setItem(...,
+  _attributes=..., _reason=...)` / `pop(path, _reason=...)`, and a fired
+  change resets the node's static value silently (the legacy one-shot).
+  Without it, `set_datachange(register_name='user')` would crash.
+- **`_ship_global` rerouted onto `worker.store_set`/`store_del`** one phase
+  early, by necessity: Phase 2 kills `_fold` (the plan's own decision) and
+  the global rail rode it. This is exactly Phase 3's ratified ascent; Phase
+  3 re-verifies it and owns the rail tests.
+- **`change_ts` normalized aware -> naive local at the legacy boundary**
+  (`_change_to_client`) — the legacy world compares naive clocks, same
+  convention as `_decode_global`.
+- **The dbevents disguise lives in `_dbevent_to_client`**: path
+  `gnr.dbchanges.<table>` with dots->underscores (the grammar of legacy
+  `notifyLocalDbEvents`), origin page and reason as attributes. The core
+  species stay separate up to that point.
+- **Autocreate parents are part of the legacy capture** (as in Phase 1):
+  a first write under a fresh prefix delivers the pair (parent Bag node,
+  then the leaf) — the daemon's own triggers reported the same; tests
+  assert the pair.
+- **Duplicate `new_connection` answers the live row** (a browser
+  re-presenting its cookie is a real case, the core `create` would raise);
+  `drop_page`/`drop_connection` on a gone row are legitimate no-ops (expiry
+  and double logout). Legacy `cascade` kwargs are absorbed: the cascade
+  discipline is the core's, cemented.
+- **`local_only` of the core `notifyDbEvents` is never used by the bridge**:
+  the legacy hidden-transaction path never reaches the register (it goes to
+  `page.notifyLocalDbEvents`, page-local list) — verified on
+  gnrwebapp.py:142-148.
+- **Pool-vs-single in `filter_subscribed_tables`** is structural: a worker
+  on a real socket channel is a pool child (pass-through); a `LocalChannel`
+  or no channel is the single (filters on `worker.subscriptions.pages_for`).
+- **Tests open the CALL sinks with the core's own `call_sink` convention**
+  (genro-asgi tests/test_spa_worker.py): the lifecycle ops announce on the
+  CALL that causes them, and outside a CALL the events sink is closed by
+  design. State building itself goes through the register's public commands
+  on a real site.

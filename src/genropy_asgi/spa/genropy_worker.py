@@ -112,6 +112,27 @@ class GenropyWorker(UserStickyWorker):
         """The hosted ``GnrWsgiSite`` instance (unwrapped)."""
         return self._gnr_site
 
+    def apply_forwarded(self, bag: Any, change: dict[str, Any]) -> None:
+        """Apply a change born elsewhere to a LEGACY Bag (STATE delivery).
+
+        The core writes with the new Bag's API (``set_item``/``_fired``); the
+        bridge stores are legacy Bags, so the write is translated: ``setItem``
+        with the attributes and the reason, ``pop(path, _reason=...)`` for a
+        delete (the legacy signature carries it). A fired change resets the
+        node's static value silently after the write — the same one-shot
+        semantics ``set_item(_fired=True)`` has on the core Bag.
+        """
+        path = change["key"]["path"]
+        reason = change["key"]["reason"]
+        if change["delete"]:
+            bag.pop(path, _reason=reason)
+            return
+        attributes = dict(change["attributes"] or {})
+        attributes["_original_ts"] = change["change_ts"]
+        bag.setItem(path, change["value"], _attributes=attributes, _reason=reason)
+        if change["key"]["fired"]:
+            bag.getNode(path).staticvalue = None
+
     async def shutdown(self) -> None:
         """Stop the site first, then the core teardown (sender, CALLs, channel)."""
         self._gnr_site.on_site_stop()

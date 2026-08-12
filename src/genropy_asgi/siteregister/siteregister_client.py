@@ -1,43 +1,47 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""GenropyRegisterClient — the standalone in-process register for legacy GenroPy.
+"""GenropyRegisterClient — the in-process register for legacy GenroPy, on the core worker.
 
 The GenroPy ``GnrWsgiSite`` talks to a register through ``site.register``, calling one
 command at a time while it serves a request. Historically that register was a daemon
-(Pyro4, then the genro-nodaemon TCP daemon) and the client funnelled every command
-through a single ``_sr_call`` that serialized it onto the wire. There is no wire here:
-this is the DAEMONLESS register, standalone (no daemon-client base class). So there is
-no funnel either — every command the legacy calls is an EXPLICIT public method with its
+(Pyro4, then the genro-nodaemon TCP daemon); here it is the DAEMONLESS register,
+standalone, and every command the legacy calls is an EXPLICIT public method with its
 own body and a docstring saying who calls it and when. No ``__getattr__`` magic, no
 per-string dispatch table: what the register serves is exactly the set of methods below.
 
-Two things a mutating command does, both explicit in the method:
-1. ``_fold(op, args, kwargs)`` — hand the command to the SPA worker so the local
-   registries update and (on a pool child) the lifecycle/POST event rides up to the
-   commander on the pool CHANNEL. Reads do NOT fold.
-2. its own in-process body — read the local registries / surface / pending lists and
-   return what the legacy expects.
+The register reaches its worker as ``site.spa_worker`` — a
+:class:`~genropy_asgi.spa.genropy_worker.GenropyWorker`, the core ``UserStickyWorker``
+hosting this very site — and calls its op methods DIRECTLY: the ops are sync, take
+``dispatch_lock``, and the call runs on the worker's http_pool thread, where the CALL
+sinks are open by context copy. There is no fold, no event sink read from the environ:
+the op itself announces what it did on the CALL that caused it.
 
 Who serves what (FIXED):
-- Lifecycle (new/change/drop of connection/page/user, refresh) — folded into the
-  worker's registries; the read side (page/connection/pages/…/get_item/exists) answers
-  from those registries.
-- Datachanges — channel C (subscribeTable/notifyDbEvents) and channel D
-  (setStoreSubscription + userStore writes) fold; the deposit lands on the page's OWN
-  worker (switch model — a cross-worker change arrives via the commander's
-  ``/datachange_in`` forward), so the pull (subscription_storechanges / handle_ping)
-  drains the LOCAL pending list.
-- Stores — each item's ``data`` is a real in-process legacy Bag; ``ServerStore`` locks
-  the item (reentrant per reason) and reads/writes it in-process.
-- Global store — one stable legacy Bag (``global_bag``), write-by-reference, wired to
-  the framework's global-store rail: every LEAF write ships up as ``store_set``/
-  ``store_del`` with a FULL-PATH key and a TYTX-encoded SCALAR value (the global
-  register carries flags and timestamps — full-path keys keep concurrent sibling
-  writes from clobbering each other); commander pushes (``/update_global``,
-  ``/store_snapshot``) materialize back into the Bag, so reads stay local and
-  write-by-reference survives. On the single the same dispatch folds in-process
-  (master and replica coincide). Coherence is EVENTUAL (one channel round-trip).
+- Lifecycle — ``new_connection``/``new_page``/``change_connection_user``/``drop_page``/
+  ``drop_connection`` call the worker's homonymous ops. LOGIN STAYS: the login is a
+  local re-label on the live connection row (core 0.29) — nothing ships, and the WSGI
+  request keeps finding its pages on this worker to the end.
+- Reads — answered from the worker's registers directly (``page_items.get`` etc.);
+  the ``_filter_items`` grammar stays client-local (the single sees everything).
+- Datachanges — ``set_datachange``/``setInClientData`` build the genro-bag change dict
+  and call ``worker.set_datachange`` with the TYTX-encoded parcel; a page address is a
+  SIGNAL deposit on that page's collector, ``register_name='user'`` is a STATE write on
+  the user's live store, found by every subscribed page in its own ``user_view``.
+  ``subscribeTable``/``notifyDbEvents``/``setStoreSubscription`` map to the homonymous
+  ops (``client_path`` becomes ``prefix``).
+- The pull — ``subscription_storechanges``/``handle_ping`` drain via
+  ``worker.collect_page`` and rebuild the legacy envelope. The ``dbevents`` species is
+  DRESSED at delivery as datachanges on ``gnr.dbchanges.<table>``: the disguise is the
+  bridge's, at the envelope — the core keeps the species separate.
+- Stores — each row's ``data`` IS its live ``store`` (one legacy Bag, the object the
+  collectors watch and a move would package); ``ServerStore`` locks the item and
+  reads/writes it in-process. The legacy ``data`` seed of ``new_page`` becomes the
+  page's store, so channel-A writes, the dbenv walk and the capture all see one Bag.
+- Global store — one stable legacy Bag (``global_bag``), write-by-reference: every LEAF
+  write ships up as ``store_set``/``store_del`` with a FULL-PATH key and a TYTX-encoded
+  SCALAR value; commander pushes materialize back into the Bag (Phase 3 rewires the
+  descent onto ``handle_frame``). Coherence is EVENTUAL (one channel round-trip).
 
 NOT served (explicit, PROVISIONAL): dump/load (future Service Store),
 sendProcessCommand/pendingProcessCommands (inter-process bus, will move to the
@@ -47,8 +51,8 @@ Wiring: this class IS the ``SiteRegisterClient`` the legacy imports as
 ``gnr.web.daemon.siteregister_client`` (the ``siteregister`` submodule provides the
 ``gnr.web:daemon`` entry-point), so the ``GnrWsgiSite`` builds it directly at
 ``site.register`` — no daemon connection at construction, no rebind. Extra state is
-created lazily through ``__dict__`` (the site touches ``self.register`` before the SPA
-application has attached itself via ``site.spa_application``).
+created lazily through ``__dict__`` (the site touches ``self.register`` before the
+worker has attached itself via ``site.spa_worker``).
 """
 
 from __future__ import annotations
@@ -59,12 +63,11 @@ import threading
 import time
 from typing import Any
 
+from genro_tytx import to_tytx
 from gnr.core.gnrbag import Bag
 from gnr.core.gnrclasses import GnrClassCatalog
 from gnr.web import logger
 from gnr.web.gnrwebpage import ClientDataChange
-
-from genro_asgi.applications.spa_application import LIFECYCLE_EVENTS_KEY
 
 from .exceptions import GnrDaemonLocked
 
@@ -117,6 +120,27 @@ class ServerStore:
     def __exit__(self, exc_type: Any, exc_value: Any, tb: Any) -> None:
         self.siteregister.unlock_item(
             self.register_item_id, reason=self.thread_id, register_name=self.register_name
+        )
+
+    @property
+    def datachanges(self) -> list:
+        """Peek at the item's pending changes WITHOUT consuming them.
+
+        Served from the collector peek (``drain(reset=False)``), returning legacy
+        ``ClientDataChange`` objects — the read a serverbatch makes between its own
+        writes, which the daemon-era store answered with an empty list (the latent
+        serverbatch defect this property heals). Only a page has collectors; any
+        other register answers empty.
+        """
+        return self.siteregister._pending_datachanges(
+            self.register_item_id, register_name=self.register_name
+        )
+
+    @property
+    def subscribed_paths(self) -> set:
+        """The prefixes this page's own capture watches (empty off the page register)."""
+        return self.siteregister._item_subscribed_paths(
+            self.register_item_id, register_name=self.register_name
         )
 
     def reset_datachanges(self) -> Any:
@@ -186,13 +210,12 @@ class RegisterResolver:
 
 
 class GenropyRegisterClient:
-    """The standalone in-process register: every ``site.register`` command is a method.
+    """The in-process register: every ``site.register`` command is a method.
 
-    Not a subclass of any daemon client. It holds the ``site`` and answers every command
-    directly. Mutating commands call ``_fold`` (hand to the worker) and then run their
-    in-process body; reads skip the fold. A command the legacy might call that is not a
-    method here would simply raise ``AttributeError`` — the served set is exactly what is
-    written below, on purpose.
+    Not a subclass of any daemon client. It holds the ``site`` and answers every
+    command directly against the worker's op vocabulary and registers. A command the
+    legacy might call that is not a method here would simply raise ``AttributeError``
+    — the served set is exactly what is written below, on purpose.
     """
 
     # The exception the legacy catches around a store lock (touched on the client).
@@ -203,7 +226,7 @@ class GenropyRegisterClient:
         self.site = site
 
     # ------------------------------------------------------------------
-    # Lazy state (the site touches self.register before the app attaches)
+    # Lazy state (the site touches self.register before the worker attaches)
     # ------------------------------------------------------------------
 
     @property
@@ -259,106 +282,103 @@ class GenropyRegisterClient:
         return self.__dict__["_locks_mutex"]
 
     @property
-    def spa_application(self) -> Any:
-        """The hosting SpaApplication, reached through the site (set by the app)."""
-        return getattr(self.site, "spa_application", None)
-
-    @property
     def spa_worker(self) -> Any:
-        """The SPA worker that holds the local registries and the executor."""
-        return getattr(self.spa_application, "worker", None)
-
-    # ------------------------------------------------------------------
-    # The one shared step: fold a mutating command into the SPA worker
-    # ------------------------------------------------------------------
-
-    def _fold(self, op: str, args: tuple = (), kwargs: dict | None = None) -> None:
-        """Hand a mutating command to the SPA worker (the only thing common to them all).
-
-        ``worker.dispatch`` folds the command into the local registries and, for a
-        lifecycle/POST op, shapes the event and delivers it: on the single it applies to
-        the app's own surface/mailbox; on a pool child it rides the request's event sink
-        (the synchronous rail — read from the current request's environ, where the
-        hosting mixin copied it) or falls to the outbox. Best-effort: a missing worker
-        or a broken fold must never break the legacy call. Reads never call this.
-        """
-        worker = self.spa_worker
-        if worker is None:
-            return
-        try:
-            worker.dispatch(op, args, kwargs or {}, events=self._request_events_sink())
-        except Exception:
-            logger.exception("registry fold failed for op %r", op)
-
-    def _request_events_sink(self) -> Any:
-        """The per-request lifecycle sink, from the current request's environ (or None)."""
-        current_request = getattr(self.site, "currentRequest", None)
-        environ = getattr(current_request, "environ", None)
-        if not environ:
-            return None
-        return environ.get(LIFECYCLE_EVENTS_KEY)
+        """The GenropyWorker hosting this site (set by its constructor), or None."""
+        return getattr(self.site, "spa_worker", None)
 
     # ==================================================================
-    # Lifecycle commands (mutating: fold + local body)
+    # Lifecycle commands: direct calls onto the worker's op vocabulary
     # ==================================================================
 
     def new_connection(self, connection_id: Any, connection: Any = None, **kwargs: Any) -> dict | None:
         """A browser's first connection is born (login-less, guest included).
 
         Called by ``Connection.register`` (gnrwebpage_proxy/connection.py) the first time
-        a browser is seen. Folds into the connection registry (and auto-creates the user
-        if named), then returns the local connection item with its data Bag attached.
+        a browser is seen. The worker's reception makes the row: born guest when no user
+        is named (the naked sticky key). A connection the worker already holds is a
+        re-registration (a browser re-presenting its cookie): the live row answers.
+        Returns the local connection item with its data Bag attached.
         """
-        self._fold("new_connection", (connection_id,), self._conn_kwargs(connection, kwargs))
+        worker = self.spa_worker
+        if worker.connection_items.get(connection_id) is None:
+            worker.new_connection(connection_id, **self._conn_kwargs(connection, kwargs))
         return self._item_with_data(connection_id, "connection")
 
     def new_page(self, page_id: Any, page: Any = None, **kwargs: Any) -> dict | None:
         """A new page (browser tab) opens.
 
         Called by ``WebPage._register_new_page`` (gnrwebpage.py) on page registration.
-        Folds into the page registry, returns the local page item with its data Bag.
+        The op is user-addressed (``new_page(user, page_id, session_id=cid, ...)``);
+        a page with no user yet belongs to the guest — the connection id itself, the
+        born-guest rule. The legacy ``data`` seed becomes the page's live STORE: one
+        Bag serves the dbenv walk, the channel-A writes and the capture, and a move
+        would package exactly it. Returns the local page item with that Bag as
+        ``data``.
         """
-        self._fold("new_page", (page_id,), self._page_kwargs(page, kwargs))
+        worker = self.spa_worker
+        fields = self._page_kwargs(page, kwargs)
+        user = fields.pop("user", None)
+        connection_id = fields.pop("connection_id", None)
+        if user is None:
+            user = connection_id
+        data = fields.pop("data", None)
+        if data is not None:
+            fields["store"] = data
+        worker.new_page(user, page_id=page_id, session_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
     def change_connection_user(self, connection_id: Any, **kwargs: Any) -> dict | None:
         """A connection's user changes — LOGIN / avatar switch.
 
-        Called by ``Connection.change_user`` (connection.py) at login. Folds the rebind
-        (reindex user, propagate to the connection's pages, drop the old orphan user),
-        returns the updated local connection item.
+        Called by ``Connection.change_user`` (connection.py) at login. A LOCAL mutation
+        on the live row (login-stays, core 0.29): nothing ships, the request keeps
+        finding its pages here. Returns the updated local connection item.
         """
-        self._fold("change_connection_user", (connection_id,), kwargs)
+        worker = self.spa_worker
+        user = kwargs.pop("user")
+        worker.change_connection_user(connection_id, user=user, **kwargs)
         return self._item_with_data(connection_id, "connection")
 
     def drop_page(self, page_id: Any, **kwargs: Any) -> None:
         """A page closes (client onClosePage, or a page flagged closed at end of RPC).
 
         Called by ``WebPage`` at RPC end when closed and by ``onClosedPage``
-        (gnrwsgisite.py). Folds the drop (cascading to an emptied connection when
-        ``cascade``); the surface fold also retires the page's mailbox queues.
+        (gnrwsgisite.py). The core demolition cascades to an emptied connection by
+        design (the legacy ``cascade`` kwarg is absorbed: the cascade discipline is
+        the core's, cemented). A page already gone — expired, or reported closed
+        twice — is a legitimate no-op.
         """
-        self._fold("drop_page", (page_id,), kwargs)
+        worker = self.spa_worker
+        if worker.page_items.get(page_id) is None:
+            return
+        user = worker.registry.page_user(page_id)
+        worker.drop_page(user, page_id=page_id)
 
     def drop_connection(self, connection_id: Any, **kwargs: Any) -> None:
         """A connection ends — LOGOUT / browser gone.
 
-        Called by ``Connection.unregister`` and ``rpc_logout`` (connection.py). Folds the
-        drop with its page cascade (and user cascade when ``cascade``).
+        Called by ``Connection.unregister`` and ``rpc_logout`` (connection.py). The
+        core op demolishes pages first, then the connection, then the user when it
+        was its last one. A connection already gone is a legitimate no-op (a double
+        logout). The legacy ``cascade`` kwarg is absorbed — the cascade is the core's.
         """
-        self._fold("drop_connection", (connection_id,), kwargs)
+        worker = self.spa_worker
+        if worker.connection_items.get(connection_id) is None:
+            return
+        worker.drop_connection(connection_id, session_id=connection_id)
 
     def refresh(self, page_id: Any, ts: Any = None, lastRpc: Any = None, pageProfilers: Any = None) -> dict | None:
         """Bump the last-seen timestamps for a page, up through connection to user.
 
-        The daemon exposed ``refresh`` separately; in-process it is the same timestamp
-        propagation ``handle_ping`` also does. Returns the user item at the top of the
+        The server stamp is ``worker.refresh_chain`` — the server's own clock, which a
+        client value never touches; the client-reported clocks land as row fields
+        (``last_user_ts``/``last_rpc_ts``). Returns the user item at the top of the
         chain (or None if the page is gone).
         """
         return self._local_refresh(page_id, last_user_ts=ts, last_rpc_ts=lastRpc)
 
     # ==================================================================
-    # Read commands (no fold: answer from the local registries)
+    # Read commands (answered from the worker's registers)
     # ==================================================================
 
     def get_item(self, register_item_id: Any, include_data: Any = False, register_name: Any = None) -> Any:
@@ -366,7 +386,7 @@ class GenropyRegisterClient:
 
         The read primitive the whole read side builds on. ``register_name='global'``
         returns the stable global Bag; ``include_data == 'lazy'`` attaches the item's
-        in-process Bag (the daemon attached a RemoteStoreBag proxy — here it is local).
+        in-process Bag — the row's own live store.
         """
         if register_name == "global":
             return {"register_item_id": "*", "register_name": "global", "data": self.global_bag}
@@ -379,9 +399,8 @@ class GenropyRegisterClient:
         """The local page item, enriched with its ``subscribed_tables``.
 
         Called on every RPC to validate the page and by the commit path (a hidden
-        transaction reads ``page(page_id)['subscribed_tables']``). Switch model: the
-        subscriptions live worker-LOCAL on the page item itself (``table_subscriptions``,
-        the local fan-out surface) — the commander surface is only the cross-worker view.
+        transaction reads ``page(page_id)['subscribed_tables']``). The subscriptions
+        live on the page row itself (``table_subscriptions``).
         """
         item = self.get_item(page_id, include_data=include_data, register_name="page")
         if item is not None:
@@ -405,43 +424,53 @@ class GenropyRegisterClient:
 
         Returns ``{register_item_id: item}`` — the daemon-client contract (``adaptListToDict``):
         the legacy does ``page_id in register.pages(...)`` (Connection.validate_page_id), so
-        the keys must be the page ids. Called for the ``setInClientData`` broadcast (with
-        filters) and by monitoring.
+        the keys must be the page ids. ``connection_id`` reads the ``session_id`` index;
+        ``user`` walks the ownership edges (user -> connections -> pages). Called for the
+        ``setInClientData`` broadcast (with filters) and by monitoring.
         """
-        register = self._page_register()
-        if register is None:
+        worker = self.spa_worker
+        if worker is None:
             return {}
+        page_items = worker.page_items
         if connection_id:
-            items = [register[k] for k in register.keys_by("connection_id", connection_id)]
+            items = [page_items.get(k) for k in page_items.keys_by("session_id", connection_id)]
             if user:
-                items = [p for p in items if p.get("user") == user]
+                items = [
+                    p for p in items
+                    if worker.registry.page_user(p["register_item_id"]) == user
+                ]
         elif user:
-            items = [register[k] for k in register.keys_by("user", user)]
+            items = []
+            entry = worker.user_items.get(user)
+            for cid in (entry or {}).get("connections", ()):
+                connection = worker.connection_items.get(cid)
+                items.extend(page_items.get(pid) for pid in connection["pages"])
         else:
-            items = [item for _, item in register.items()]
+            items = [page_items.get(k) for k in page_items.keys()]
         return {item["register_item_id"]: item for item in self._filter_items(items, filters)}
 
     def connections(self, user: Any = None, **kwargs: Any) -> dict:
         """Connections optionally by user, keyed by connection_id (``adaptListToDict``).
 
-        Called by ``connected_users_bag`` and cleanup.
+        Called by ``connected_users_bag`` and cleanup. ``user`` reads the ownership
+        edge (the user entry's ``connections`` set).
         """
-        registry = self._registers()
-        if registry is None:
+        worker = self.spa_worker
+        if worker is None:
             return {}
-        register = registry.connections
         if user:
-            items = [register[k] for k in register.keys_by("user", user)]
+            entry = worker.user_items.get(user)
+            items = [worker.connection_items.get(cid) for cid in (entry or {}).get("connections", ())]
         else:
-            items = [item for _, item in register.items()]
+            items = [worker.connection_items.get(k) for k in worker.connection_items.keys()]
         return {item["register_item_id"]: item for item in items}
 
     def users(self, **kwargs: Any) -> dict:
         """Active users keyed by user id (``adaptListToDict``): lists connected users."""
-        registry = self._registers()
-        if registry is None:
+        worker = self.spa_worker
+        if worker is None:
             return {}
-        return {item["register_item_id"]: item for _, item in registry.users.items()}
+        return {key: worker.user_items.get(key) for key in worker.user_items.keys()}
 
     def get_dbenv(self, register_item_id: Any, **kwargs: Any) -> Bag:
         """Build a page's database-environment Bag from its data (= the daemon's walk).
@@ -472,7 +501,8 @@ class GenropyRegisterClient:
         return self._make_store("connection", connection_id, triggered=triggered)
 
     def userStore(self, user: Any, triggered: bool = False) -> ServerStore:
-        """Lockable store over a user item — the channel-D user-store writes go here."""
+        """Lockable store over a user item — a write into it is found by every
+        subscribed page in its own ``user_view``."""
         return self._make_store("user", user, triggered=triggered)
 
     def pageStore(self, page_id: Any, triggered: bool = False) -> ServerStore:
@@ -584,15 +614,19 @@ class GenropyRegisterClient:
 
     def _ship_global(self, op: str, path: str, value: Any) -> None:
         """One rail write: ``store_set`` ships the TYTX-encoded scalar, ``store_del``
-        the key alone. Best-effort through ``_fold`` — a missing worker never breaks
-        the legacy write (and the single folds in-process, master == replica)."""
+        the key alone — directly on the worker's store ops. Best-effort: a missing
+        worker never breaks the legacy write (the boot writes before the worker
+        attaches; nothing to replicate yet)."""
+        worker = self.spa_worker
+        if worker is None:
+            return
         if op == "store_del":
-            self._fold("store_del", (path,))
+            worker.store_del(None, path)
             return
         if callable(value):
             logger.debug("global-store rail: callable at %r not replicated", path)
             return
-        self._fold("store_set", (path, self._encode_global(value)))
+        worker.store_set(None, path, value=self._encode_global(value))
 
     def _encode_global(self, value: Any) -> str:
         """Scalar -> TYTX wire text, ALWAYS suffixed.
@@ -619,7 +653,7 @@ class GenropyRegisterClient:
         return value
 
     def apply_global_write(self, op: str | None, key: str | None, value: Any = None) -> None:
-        """Materialize one commander push (``/update_global``) into the Bag.
+        """Materialize one commander push into the Bag.
 
         Runs under the thread-local ``applying`` flag so the Bag triggers do not
         bounce the echo back on the rail. A missing key on delete is silent.
@@ -637,10 +671,10 @@ class GenropyRegisterClient:
             state.applying = False
 
     def load_global_snapshot(self, content: dict) -> None:
-        """Replace the whole Bag from a ``/store_snapshot`` push (the late-worker seed).
+        """Replace the whole Bag from a snapshot push (the late-worker seed).
 
-        The channel is FIFO: later ``/update_global`` writes apply on top, no partial
-        window. Under the ``applying`` flag — the rebuild never re-ships.
+        The channel is FIFO: later writes apply on top, no partial window. Under the
+        ``applying`` flag — the rebuild never re-ships.
         """
         state = self._global_rail_state
         state.applying = True
@@ -653,63 +687,125 @@ class GenropyRegisterClient:
             state.applying = False
 
     # ==================================================================
-    # Datachange writes (used by ServerStore and setInClientData): POST ops.
-    # They fold to the commander's surface/mailbox; no local body.
+    # Datachange writes (used by ServerStore and setInClientData)
     # ==================================================================
 
-    def set_datachange(self, register_item_id: Any, path: Any, register_name: Any = None, **kwargs: Any) -> None:
-        """Queue one datachange on an item (page queue = channel C, user queue = channel D).
+    def set_datachange(
+        self,
+        register_item_id: Any,
+        path: Any,
+        value: Any = None,
+        attributes: Any = None,
+        fired: Any = False,
+        reason: Any = None,
+        replace: bool = False,
+        delete: bool = False,
+        register_name: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        """Queue one datachange toward an item (page = SIGNAL deposit, stores = STATE write).
 
-        Called by ``ServerStore.set_datachange`` (batch thermo/result, chat, mixin_set).
+        Called by ``ServerStore.set_datachange`` (batch thermo/result, chat, mixin_set)
+        and by ``setInClientData``. The change travels as the genro-bag plain dict,
+        TYTX-encoded (a gnr Bag value rides ``::BAG``); ``register_name`` picks the
+        address kind: a page is a deposit on that page's collector, ``user``/
+        ``connection`` are real writes on the addressed row's live store, captured by
+        every subscribed ``user_view``.
         """
-        self._fold("set_datachange", (register_item_id, path), dict(register_name=register_name, **kwargs))
+        worker = self.spa_worker
+        if worker is None:
+            return
+        change = {
+            "key": {"path": path, "reason": reason, "fired": bool(fired)},
+            "value": value,
+            "attributes": attributes,
+            "delete": bool(delete),
+            "change_ts": datetime.datetime.now(datetime.UTC),
+            "change_idx": 0,
+        }
+        kinds = {"page": "page", "user": "user_store", "connection": "connection_store"}
+        kind = kinds[register_name or "page"]
+        worker.set_datachange(
+            None,
+            change=to_tytx(change, "json"),
+            kind=kind,
+            target=register_item_id,
+            replace=replace,
+        )
 
     def reset_datachanges(self, register_item_id: Any, register_name: Any = None) -> None:
-        """Empty an item's datachange queue without reading it."""
-        self._fold("reset_datachanges", (register_item_id,), {"register_name": register_name})
+        """Empty a page's datachange queue without reading it.
+
+        Only a page has a pending queue in this world; the store registers carry
+        STATE (their live Bag), which a reset has no meaning for.
+        """
+        worker = self.spa_worker
+        if worker is None or (register_name or "page") != "page":
+            return
+        worker.reset_datachanges(None, target=register_item_id)
 
     def drop_datachanges(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
-        """Remove an item's queued datachanges under a path prefix."""
-        self._fold("drop_datachanges", (register_item_id, path), {"register_name": register_name})
+        """Remove a page's queued datachanges under a path prefix."""
+        worker = self.spa_worker
+        if worker is None or (register_name or "page") != "page":
+            return
+        worker.drop_datachanges(None, path=path, target=register_item_id)
 
     def subscribe_path(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
-        """Record that a page subscribes a server path (setPendingContext uses this)."""
-        # The subscribed path is tracked on the page item by setPendingContext; there is
-        # no separate surface for server-path subscriptions, so this is a local note.
-        item = self.local_item(register_item_id, register_name or "page")
-        if item is not None:
-            subscribed = item.setdefault("subscribed_paths", [])
-            if path not in subscribed:
-                subscribed.append(path)
+        """Widen a page's own capture with a server path (setPendingContext uses this).
+
+        Maps to ``setStoreSubscription(storename='page')``: the row's
+        ``subscribed_paths`` and the collector's prefix set move together. Only a
+        page has a capture to widen; any other register is a documented no-op.
+        """
+        worker = self.spa_worker
+        if worker is None or (register_name or "page") != "page":
+            return
+        worker.setStoreSubscription(
+            None, page_id=register_item_id, storename="page", prefix=path, active=True
+        )
 
     def subscribeTable(self, page_id: Any, table: Any = None, subscribe: bool = True, **kwargs: Any) -> None:
         """A page subscribes/unsubscribes a db table (channel-C surface).
 
-        Called by ``WebPage.subscribeTable`` when a selection/query binds a table. Folds
-        into the commander's page->tables surface.
+        Called by ``WebPage.subscribeTable`` when a selection/query binds a table.
+        The worker keeps the row's ``table_subscriptions`` and its index together.
         """
-        self._fold("subscribeTable", (page_id,), dict(table=table, subscribe=subscribe, **kwargs))
+        worker = self.spa_worker
+        if worker is None:
+            return
+        worker.subscribeTable(
+            None, table=table, page_id=page_id, subscribe=subscribe,
+            subscribeMode=kwargs.get("subscribeMode"),
+        )
 
     def setStoreSubscription(self, page_id: Any, storename: Any = None, client_path: Any = None, active: Any = None) -> None:
-        """A page subscribes a store path (channel-D surface for ``storename='user'``).
+        """A page subscribes a store path (``storename='user'`` opens its user_view).
 
-        Called by ``WebPage.setStoreSubscription``. Only user-store subscriptions feed
-        the pull; the fold routes them to the commander's channel-D surface.
+        Called by ``WebPage.setStoreSubscription``. ``client_path`` becomes the
+        worker op's ``prefix``; user-store subscriptions create or widen the page's
+        ``user_view`` on the owner's live store.
         """
-        self._fold(
-            "setStoreSubscription", (page_id,),
-            dict(storename=storename, client_path=client_path, active=active),
+        worker = self.spa_worker
+        if worker is None:
+            return
+        worker.setStoreSubscription(
+            None, page_id=page_id, storename=storename, prefix=client_path,
+            active=bool(active),
         )
 
     def notifyDbEvents(self, dbeventsDict: Any, register_name: Any = None, origin_page_id: Any = None, dbevent_reason: Any = None, **kwargs: Any) -> None:
         """Fan db-commit events out to the subscribed pages (channel C).
 
-        Called by ``GnrWsgiWebApp.onDbCommitted`` after a db commit. Folds to the
-        commander, which deposits ``gnr.dbchanges.<table>`` on every subscribing page.
+        Called by ``GnrWsgiWebApp.onDbCommitted`` after a db commit. The worker
+        deposits on its local subscribers at once (origin page NOT excluded — legacy
+        semantics) and ascends the same deposits for the other workers.
         """
-        self._fold(
-            "notifyDbEvents", (dbeventsDict,),
-            dict(register_name=register_name, origin_page_id=origin_page_id, dbevent_reason=dbevent_reason, **kwargs),
+        worker = self.spa_worker
+        if worker is None:
+            return
+        worker.notifyDbEvents(
+            None, dbevents=dbeventsDict, reason=dbevent_reason, page_id=origin_page_id
         )
 
     def setInClientData(self, path: Any, value: Any = None, attributes: Any = None, page_id: Any = None, filters: Any = None, fired: bool = False, reason: Any = None, public: bool = False, replace: bool = False, register_name: Any = None, **kwargs: Any) -> None:
@@ -743,10 +839,10 @@ class GenropyRegisterClient:
     # ==================================================================
 
     def set_serverstore_changes(self, page_id: Any, datachanges: Any = None, **kwargs: Any) -> None:
-        """Write the client's server-path changes into the page's local data Bag.
+        """Write the client's server-path changes into the page's live store.
 
         Called at the start of every RPC (and inside ``handle_ping``) when the client
-        sends ``_serverstore_changes``. Worker-local (channel A): stays on the page item.
+        sends ``_serverstore_changes``. Worker-local (channel A): stays on the page row.
         """
         item = self._ensure_item_data(self.local_item(page_id, "page"))
         if item is None or not datachanges:
@@ -759,31 +855,30 @@ class GenropyRegisterClient:
         """Persist the page's pending server context at end of page.
 
         Called by ``WebPage`` at page teardown. Writes each (path, value, attr) into the
-        page data Bag and records the subscribed path.
+        page's live store, then widens the page's own capture with the path — future
+        writes on it become datachanges, the daemon's contract.
         """
         item = self._ensure_item_data(self.local_item(page_id, "page"))
         if item is None or not pendingContext:
             return
         data = item["data"]
-        subscribed = item.setdefault("subscribed_paths", [])
         for serverpath, value, attr in pendingContext:
             data.setItem(serverpath, value, attr)
             if isinstance(value, Bag):
                 data.clearBackRef()
                 data.setBackRef()
-            if serverpath not in subscribed:
-                subscribed.append(serverpath)
+            self.subscribe_path(page_id, serverpath, register_name="page")
 
     # ==================================================================
     # The pull: subscription_storechanges + handle_ping (both channels)
     # ==================================================================
 
     def subscription_storechanges(self, user: Any, page_id: Any) -> list:
-        """The page's pull, served in-process: the local pending list, no daemon.
+        """The page's pull, served in-process: one drain on the page's own worker.
 
-        Called by ``WebPage.collectClientDatachanges`` at the end of every RPC. The
-        page's queue lives on its own worker (switch model): channel D was already
-        applied at the deposit, so *user* plays no part in the read.
+        Called by ``WebPage.collectClientDatachanges`` at the end of every RPC.
+        Channel D was already captured by the page's ``user_view`` at the write, so
+        *user* plays no part in the read.
         """
         return self._collect_local_datachanges(page_id)
 
@@ -793,8 +888,8 @@ class GenropyRegisterClient:
         Called by ``gnrwsgisite.serve_ping`` on the polling endpoint. Refreshes the page
         (timestamps up to the user; a dead page answers ``False`` and the client stops),
         applies the client's serverstore changes (page and children), then builds the
-        envelope: ``dataChanges`` (both channels), ``childDataChanges.<id>``, and the
-        ``runningBatch`` flag from the user store's ``lastBatchUpdate``.
+        envelope: ``dataChanges`` (both species, the dbevents dressed), ``childDataChanges.<id>``,
+        and the ``runningBatch`` flag from the user store's ``lastBatchUpdate``.
         """
         user_item = self._local_refresh(
             page_id, last_user_ts=kwargs.get("_lastUserEventTs"), last_rpc_ts=kwargs.get("_lastRpc")
@@ -834,22 +929,31 @@ class GenropyRegisterClient:
         """The commit gate: which tables of ``table_list`` deserve db events.
 
         Called by ``site.getSubscribedTables`` on every db commit to decide whether to
-        build and send the db events. Switch model: the SINGLE knows every subscription
-        (all pages are its own) and filters on its local surface; a POOL CHILD only
-        knows its own pages — a page on ANOTHER worker may subscribe the table — so it
-        passes the whole list through and lets the fan-out target the real subscribers
-        (immediate local deposit + the commander for the other workers). Over-notifying
-        on the child is innocuous: an event nobody subscribes is dropped at the fan-out.
+        build and send the db events. The SINGLE knows every subscription (all pages
+        are its own) and answers from the worker's own index; a pool child — a worker
+        on a real socket channel — only knows its own pages, so it passes the whole
+        list through and lets the fan-out target the real subscribers (unchanged
+        cemented rule; over-notifying on the child is innocuous).
         """
-        registry = self._registers()
-        if registry is None:
-            return []
         worker = self.spa_worker
-        if worker is not None and worker.name is not None:
+        if worker is None:
+            return []
+        if self._pool_member(worker):
             return list(table_list or [])
         return [
-            table for table in (table_list or []) if registry.pages_subscribing_local(table)
+            table for table in (table_list or []) if worker.subscriptions.pages_for(table)
         ]
+
+    def _pool_member(self, worker: Any) -> bool:
+        """Whether the worker serves in a pool (a spawned child on a socket channel).
+
+        The single's worker sits on a ``LocalChannel`` (or none yet): in-process,
+        commander of itself.
+        """
+        from genro_asgi.channel import LocalChannel
+
+        channel = getattr(worker, "channel", None)
+        return channel is not None and not isinstance(channel, LocalChannel)
 
     # ==================================================================
     # Maintenance / cleanup (in-process, single node)
@@ -954,20 +1058,31 @@ class GenropyRegisterClient:
     # ==================================================================
 
     def local_item(self, register_item_id: Any, register_name: Any) -> dict | None:
-        """The local register item (page/connection/user) from the worker, or None."""
+        """The live register row (page/connection/user) from the worker, or None."""
         worker = self.spa_worker
         if worker is None or not register_name:
             return None
-        return worker.dispatch("get_item", (register_item_id,), {"register_name": register_name})
+        registers = {
+            "page": worker.page_items,
+            "connection": worker.connection_items,
+            "user": worker.user_items,
+        }
+        return registers[register_name].get(register_item_id)
 
     def _item_with_data(self, item_id: Any, register_name: str) -> dict | None:
-        """The local item after a fold, with its data Bag attached (new_* return this)."""
+        """The live row after a lifecycle op, with its data Bag attached."""
         return self._ensure_item_data(self.local_item(item_id, register_name))
 
     def _ensure_item_data(self, item: dict | None) -> dict | None:
-        """Give the item its in-process legacy Bag ``data`` (born on first access)."""
+        """Alias the row's live store as ``data`` — the name the legacy reads.
+
+        One Bag, two keys: ``store`` is the core's name (the collectors watch it,
+        a move packages it), ``data`` is the daemon-era name every legacy consumer
+        uses. The alias is set once on the live row.
+        """
         if item is not None and not isinstance(item.get("data"), Bag):
-            item["data"] = Bag()
+            store = item.get("store")
+            item["data"] = store if isinstance(store, Bag) else Bag()
         return item
 
     def _add_data_to_register_item(self, register_item: Any) -> Any:
@@ -1000,14 +1115,6 @@ class GenropyRegisterClient:
                 out[field] = getattr(page, field, None)
         return out
 
-    def _registers(self) -> Any:
-        """The worker's registry handler (users/connections/pages), or None."""
-        return getattr(self.spa_worker, "registry_handler", None)
-
-    def _page_register(self) -> Any:
-        registry = self._registers()
-        return getattr(registry, "pages", None)
-
     def _filter_items(self, items: list, filters: Any) -> list:
         """The daemon's ad-hoc page filter grammar: ``name:regex AND name:value``."""
         if not filters or filters == "*":
@@ -1036,35 +1143,30 @@ class GenropyRegisterClient:
         return filtered
 
     def _local_refresh(self, page_id: Any, last_user_ts: Any = None, last_rpc_ts: Any = None) -> dict | None:
-        """Propagate the refresh timestamps page -> connection -> user (= the daemon's).
+        """Stamp the chain: the server clock via ``refresh_chain``, the client clocks as fields.
 
-        Returns the USER item (``handle_ping`` reads the user from it), or None when the
-        chain is broken (a dead page: the ping answers False).
+        ``last_refresh_ts`` is NEVER touched with client values — a page cannot buy
+        immortality by lying about its own activity. The client-reported clocks land
+        as ``last_user_ts``/``last_rpc_ts`` on the three rows, under ``dispatch_lock``.
+        Returns the USER item (``handle_ping`` reads the user from it), or None when
+        the chain is broken (a dead page: the ping answers False).
         """
-        refresh_ts = datetime.datetime.now()
-        page = self._refresh_item("page", page_id, last_user_ts, last_rpc_ts, refresh_ts)
-        if not page:
+        worker = self.spa_worker
+        if worker is None:
             return None
-        connection = self._refresh_item(
-            "connection", page.get("connection_id"), last_user_ts, last_rpc_ts, refresh_ts
-        )
-        if not connection:
-            return None
-        return self._refresh_item("user", connection.get("user"), last_user_ts, last_rpc_ts, refresh_ts)
-
-    def _refresh_item(self, register_name: str, item_id: Any, last_user_ts: Any, last_rpc_ts: Any, refresh_ts: Any) -> dict | None:
-        item = self.local_item(item_id, register_name)
-        if not item:
-            return None
-        for field, value in (
-            ("last_user_ts", last_user_ts),
-            ("last_rpc_ts", last_rpc_ts),
-            ("last_refresh_ts", refresh_ts),
-        ):
-            if value is not None:
-                current = item.get(field)
-                item[field] = max(current, value) if current else value
-        return item
+        with worker.dispatch_lock:
+            page = worker.page_items.get(page_id)
+            if page is None:
+                return None
+            worker.refresh_chain(page_id)
+            connection = worker.connection_items.get(page["connection_id"])
+            user_item = worker.user_items.get(connection["user"])
+            for item in (page, connection, user_item):
+                for field, value in (("last_user_ts", last_user_ts), ("last_rpc_ts", last_rpc_ts)):
+                    if value is not None:
+                        current = item.get(field)
+                        item[field] = max(current, value) if current else value
+        return user_item
 
     def _parse_typed(self, value: Any) -> Any:
         """Parse a typed-text value from the client wire (the daemon used its catalog)."""
@@ -1073,32 +1175,102 @@ class GenropyRegisterClient:
         return value
 
     def _expired_keys(self, register_name: str, max_age: Any) -> list:
-        registry = self._registers()
-        if registry is None:
+        worker = self.spa_worker
+        if worker is None:
             return []
-        register = registry.registers[register_name]
-        now = datetime.datetime.now()
+        registers = {"page": worker.page_items, "connection": worker.connection_items}
+        register = registers[register_name]
+        now = time.time()
         expired = []
-        for key, item in list(register.items()):
+        for key in register.keys():
+            item = register.get(key)
             last_seen = item.get("last_refresh_ts")
             if last_seen is None:
                 continue  # never pinged: birth handling stays the site's business
-            if (now - last_seen).total_seconds() > float(max_age):
+            if (now - last_seen) > float(max_age):
                 expired.append(key)
         return expired
 
     def _collect_local_datachanges(self, page_id: Any) -> list:
-        """Drain the page's pending list from its OWN worker (the switch model).
+        """Drain the page's pending species and dress them for the legacy client.
 
-        Every worker holds its pages' datachange queues locally; a cross-worker change
-        was already deposited here by the commander's ``/datachange_in`` forward. One
-        local read for the single and the pool child alike — no RPC, no mailbox.
-        Returns legacy ``ClientDataChange`` objects.
+        ``worker.collect_page`` drains the page's own collector, its ``user_view``
+        and the ``dbevents`` list under one lock. The datachanges become legacy
+        ``ClientDataChange`` objects; the dbevents are DRESSED here as datachanges
+        on ``gnr.dbchanges.<table>`` — the envelope disguise is the bridge's, the
+        core keeps the species separate. A page already gone answers empty.
         """
-        app = self.spa_application
-        if app is None:
+        worker = self.spa_worker
+        if worker is None:
             return []
-        return [ClientDataChange(**raw) for raw in app.collect_datachanges(page_id)]
+        try:
+            collected = worker.collect_page(page_id)
+        except KeyError:
+            return []
+        changes = [self._change_to_client(raw) for raw in collected["datachanges"]]
+        changes.extend(self._dbevent_to_client(deposit) for deposit in collected["dbevents"])
+        return changes
+
+    def _change_to_client(self, change: dict) -> ClientDataChange:
+        """One genro-bag change dict -> the legacy ClientDataChange.
+
+        ``change_ts`` is normalized aware -> naive local at this boundary: the legacy
+        world compares naive clocks (same convention as ``_decode_global``).
+        """
+        key = change["key"]
+        change_ts = change["change_ts"]
+        if isinstance(change_ts, datetime.datetime) and change_ts.tzinfo is not None:
+            change_ts = change_ts.astimezone().replace(tzinfo=None)
+        return ClientDataChange(
+            key["path"], change["value"], attributes=change["attributes"],
+            reason=key["reason"], fired=key["fired"], change_ts=change_ts,
+            change_idx=change["change_idx"], delete=change["delete"],
+        )
+
+    def _dbevent_to_client(self, deposit: dict) -> ClientDataChange:
+        """One dbevent deposit -> the legacy datachange on ``gnr.dbchanges.<table>``.
+
+        The table dots become underscores (the legacy path grammar, gnrwebpage.py
+        ``notifyLocalDbEvents``); the origin page and the reason ride as attributes.
+        """
+        table_code = deposit["table"].replace(".", "_")
+        attributes = {
+            "from_page_id": deposit["from_page_id"],
+            "dbevent_reason": deposit["reason"],
+        }
+        return ClientDataChange(
+            f"gnr.dbchanges.{table_code}", deposit["batch"], attributes=attributes
+        )
+
+    def _pending_datachanges(self, register_item_id: Any, register_name: Any = None) -> list:
+        """Peek at a page's pending changes without consuming them (ServerStore.datachanges).
+
+        The ``drain(reset=False)`` equivalent of ``collect_page``: both collectors
+        peeked and merged by ``change_ts``, under the worker's lock. Only a page has
+        collectors; any other register answers empty.
+        """
+        worker = self.spa_worker
+        if worker is None or (register_name or "page") != "page":
+            return []
+        with worker.dispatch_lock:
+            page = worker.page_items.get(register_item_id)
+            if page is None:
+                return []
+            changes = page["collector"].drain(reset=False)
+            if page["user_view"] is not None:
+                changes.extend(page["user_view"].drain(reset=False))
+        changes.sort(key=lambda change: change["change_ts"])
+        return [self._change_to_client(raw) for raw in changes]
+
+    def _item_subscribed_paths(self, register_item_id: Any, register_name: Any = None) -> set:
+        """The page row's ``subscribed_paths`` set, copied (ServerStore.subscribed_paths)."""
+        worker = self.spa_worker
+        if worker is None or (register_name or "page") != "page":
+            return set()
+        page = worker.page_items.get(register_item_id)
+        if page is None:
+            return set()
+        return set(page["subscribed_paths"])
 
     def _changes_to_bag(self, changes: list) -> Bag | None:
         """Number the changes ``sc_%i`` into the envelope Bag (the daemon's shape)."""
@@ -1133,7 +1305,3 @@ class GenropyRegisterClient:
 # The legacy imports ``SiteRegisterClient`` from ``gnr.web.daemon.siteregister_client``
 # and instantiates it as ``site.register``. This standalone client IS that class.
 SiteRegisterClient = GenropyRegisterClient
-
-
-if __name__ == "__main__":
-    pass

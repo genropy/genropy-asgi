@@ -80,7 +80,22 @@ closed).
   - Done: `pytest tests/test_genropy_worker_units.py` passes; `ruff check
     src/ tests/` zero errors.
 
-- [ ] **Phase 2**: register client rewired onto the worker ops (login-stays)
+- [x] **Phase 2**: register client rewired onto the worker ops (login-stays)
+  > Done: siteregister_client.py rewritten command-by-command onto the worker
+    op vocabulary (direct sync calls; _fold, the environ event sink and
+    LIFECYCLE_EVENTS_KEY are gone); reads answer from the registers; the pull
+    drains collect_page and dresses dbevents at the envelope;
+    ServerStore.datachanges/subscribed_paths added (serverbatch heal). 37
+    tests green (both files), ruff clean. The Phase 1 worker-construction
+    test is now live (the site builds with the rewired client).
+  > Files: src/genropy_asgi/siteregister/siteregister_client.py,
+    src/genropy_asgi/spa/genropy_worker.py, tests/test_register_client_units.py
+  > Review: two declared deviations, rationale in notes.md —
+    GenropyWorker.apply_forwarded override (STATE writes need the legacy Bag
+    API; genropy_worker.py is a Phase 3 file anyway) and _ship_global
+    rerouted onto worker.store_set/store_del one phase early (_fold died
+    under it; Phase 3 owns the rail tests). Legacy `data` seed becomes the
+    row's live `store` (one-Bag decision, notes.md).
   - Pattern reference: `src/genropy_asgi/siteregister/siteregister_client.py`
     (the file being rewritten — every command keeps its docstring contract);
     op signatures in `../genro-asgi/src/genro_asgi/spa/worker.py` (the
