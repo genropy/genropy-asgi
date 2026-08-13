@@ -65,8 +65,32 @@ def test_pool_defaults_point_at_the_genropy_worker():
     assert app.commander.worker_kwargs == {
         "source": "some_site",
         "debug": True,
-        "sole_registry_owner": True,  # no spawned children: the single owns the registry
+        # workers unset is the CORE default of one spawned child, and the pool
+        # can autoscale: the ownership guarantee cannot be given
+        "sole_registry_owner": False,
     }
+
+
+def test_registry_ownership_travels_only_where_the_pool_never_spawns():
+    """``sole_registry_owner`` is a lifetime guarantee, and worker_kwargs is
+    inherited verbatim by every spawned child (core ``spawn_payload``): any
+    config that CAN spawn — at boot or by autoscale (``check_capacity`` widens
+    even a pool of one) — must ship False. True requires the static no-spawn
+    config: ``workers=0`` (explicit — unset is the core default of one child)
+    AND ``max_workers=0`` (the hard ceiling of every scale-up path)."""
+    frozen = GenropySpaApplication(
+        source="some_site", workers=0, max_workers=0, local_worker=True
+    )
+    assert frozen.commander.worker_kwargs["sole_registry_owner"] is True
+    # the plain single: no boot children, but no ceiling — the core may widen it
+    single = GenropySpaApplication(source="some_site", workers=0, local_worker=True)
+    assert single.commander.worker_kwargs["sole_registry_owner"] is False
+    # a pool that spawns at boot: every child would inherit the flag
+    pool = GenropySpaApplication(source="some_site", workers=2)
+    assert pool.commander.worker_kwargs["sole_registry_owner"] is False
+    # workers unset: the core commander defaults to ONE spawned child
+    unset = GenropySpaApplication(source="some_site", max_workers=0)
+    assert unset.commander.worker_kwargs["sole_registry_owner"] is False
 
 
 def test_debug_flag_coerces_from_string():
@@ -139,7 +163,9 @@ def test_the_recipe_wires_the_commander_for_the_single(booted):
     assert commander.worker_kwargs == {
         "source": "/tmp/genropy_asgi_recipe_probe",  # the resolved instance path
         "debug": False,  # --nodebug writes an empty GNR_ASGI_DEBUG
-        "sole_registry_owner": True,  # workers == 0: the single owns the registry
+        # the recipe caps nothing: the core may autoscale the single into a
+        # pool, so the lifetime ownership guarantee cannot be given
+        "sole_registry_owner": False,
     }
     assert commander.local_worker is True  # workers == 0: the in-process single
 

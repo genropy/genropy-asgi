@@ -91,7 +91,20 @@ def make_dirs(worker, cid, page_id=None):
     return path
 
 
-def test_knob_defaults_are_daemon_parity():
+def test_knob_defaults():
+    """Page and connection defaults are DAEMON PARITY; the guest one is NOT.
+
+    600/7200 are the daemon's own (setConfiguration,
+    gnr/web/daemon/siteregister.py), used when the site's <cleanup> section
+    is silent. The guest default is deliberately 1800, not the daemon's 40:
+    the daemon enforced its 40 through a 5% per-request lottery behind a
+    240-minute claim gate, while this bridge ARMS the sweep every 60s, and
+    the only writer of the stamp the sweep compares is the page ping —
+    auto_polling 30s by default, >=60s on browser-throttled hidden tabs,
+    disabled in dev mode — so a 40s default would reap live guests between
+    two of their own pings. A ``guest_connection_max_age`` set in <cleanup>
+    still wins (the site-knob tests below).
+    """
     from genropy_asgi.spa.genropy_worker import (
         CONNECTION_MAX_AGE,
         GUEST_MAX_AGE,
@@ -100,9 +113,7 @@ def test_knob_defaults_are_daemon_parity():
         SWEEP_INTERVAL,
     )
 
-    # the daemon's own defaults (setConfiguration, gnr/web/daemon/siteregister.py),
-    # used only when the site's <cleanup> section is silent
-    assert (PAGE_MAX_AGE, GUEST_MAX_AGE, CONNECTION_MAX_AGE) == (600, 40, 7200)
+    assert (PAGE_MAX_AGE, GUEST_MAX_AGE, CONNECTION_MAX_AGE) == (600, 1800, 7200)
     # every worker knob maps to its legacy <cleanup> key with that same default
     assert SITE_EXPIRY_KNOBS == {
         "page_max_age": ("page_max_age", PAGE_MAX_AGE),
@@ -213,8 +224,9 @@ def test_the_two_demolition_branches_match_when_neither_climbs(client, worker):
     The same drop through the two branches, on twin connections that BOTH keep
     another page — so neither climbs in effect — must leave identical
     observable worker state: register reads, the subscriptions index, the disk,
-    a subsequent ping. If a future core demolition change misses the
-    transcription, this turns red. Public commands only.
+    a subsequent ping — and must ANNOUNCE the same events (what a transcribed
+    branch could most easily get wrong). If a future core demolition change
+    misses the transcription, this turns red. Public commands only.
     """
 
     def open_pair(tag):
@@ -247,12 +259,28 @@ def test_the_two_demolition_branches_match_when_neither_climbs(client, worker):
             "connection_folder_alive": os.path.isdir(connection_dir(worker, cid)),
         }
 
+    def normalize(events, cid, user, dropped_page, kept_page):
+        # the same announcements up to the per-pair ids and the seq stamp
+        roles = {cid: "CID", user: "USER", dropped_page: "DROPPED", kept_page: "KEPT"}
+        return [
+            {key: roles.get(value, value) if isinstance(value, str) else value
+             for key, value in event.items() if key != "seq"}
+            for event in events
+        ]
+
     cid_bare, user_bare, bare_dropped, bare_kept = open_pair("nf")
     cid_casc, user_casc, casc_dropped, casc_kept = open_pair("ct")
     try:
         with call_sink(worker):
             client.drop_page(bare_dropped, cascade=False)
+            bare_events = list(worker._call_events.get())
+        with call_sink(worker):
             client.drop_page(casc_dropped, cascade=True)
+            casc_events = list(worker._call_events.get())
+        bare_announced = normalize(bare_events, cid_bare, user_bare, bare_dropped, bare_kept)
+        casc_announced = normalize(casc_events, cid_casc, user_casc, casc_dropped, casc_kept)
+        assert bare_announced == casc_announced
+        assert [event["op"] for event in bare_announced] == ["drop_page"]
         bare_state = observe(cid_bare, user_bare, bare_dropped, bare_kept)
         casc_state = observe(cid_casc, user_casc, casc_dropped, casc_kept)
         assert bare_state == casc_state

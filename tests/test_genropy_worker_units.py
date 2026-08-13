@@ -16,6 +16,11 @@ import importlib.util
 import pickle
 
 import pytest
+from genro_tytx import to_tytx
+
+from genro_asgi.channel.frame import Frame
+from genro_asgi.channel.hub import EVENT_METHOD
+from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
@@ -309,12 +314,15 @@ def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
 def test_the_sites_cleanup_ages_become_the_sweeps(worker):
     # no age was named at construction: the site's own <cleanup> config decides
     # all THREE ages — the same keys the daemon's setConfiguration read — with
-    # the daemon's defaults where the site is silent
+    # the module defaults where the site is silent (the guest default is
+    # deliberately NOT the daemon's 40: see test_expiry_and_disk)
+    from genropy_asgi.spa.genropy_worker import GUEST_MAX_AGE
+
     site = worker.gnr_site
     cleanup = site.custom_config.getAttr("cleanup") or {}
     assert worker.page_max_age == site.page_max_age
     assert worker.connection_max_age == site.connection_max_age
-    assert worker.guest_max_age == int(cleanup.get("guest_connection_max_age") or 40)
+    assert worker.guest_max_age == int(cleanup.get("guest_connection_max_age") or GUEST_MAX_AGE)
 
 
 def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
@@ -324,11 +332,6 @@ def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
     # worker captures it on the init thread). The public proof: a descending
     # global change handled on the wire lands in the bag the site's own
     # ``register`` exposes — the rail was wired at construction.
-    from genro_asgi.channel.frame import Frame
-    from genro_asgi.channel.hub import EVENT_METHOD
-    from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH
-    from genro_tytx import to_tytx
-
     change = {
         "key": {"path": "gnr.captured_at_init", "reason": None, "fired": False},
         "value": 7,
@@ -342,18 +345,28 @@ def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
     )
     asyncio.run(worker.handle_frame(frame))
     assert worker.gnr_site.register.global_bag.getItem("gnr.captured_at_init") == 7
+    # leave the module-scoped worker's global bag clean: the removal rides the
+    # same wire path (a descending delete), never a hand-wired mutation
+    removal = dict(change, delete=True, value=None)
+    frame = Frame(
+        method=EVENT_METHOD, path=GLOBAL_CHANGES_PATH, data=to_tytx([removal], "json")
+    )
+    asyncio.run(worker.handle_frame(frame))
+    assert worker.gnr_site.register.global_bag.getItem("gnr.captured_at_init") is None
 
 
 def test_the_app_declares_the_registry_ownership_in_worker_kwargs():
-    # the composition root knows the pool shape: a pool — even one whose front
-    # keeps a local worker beside the spawned children — shares the site's
-    # data/_connections, so only the true single owns the registry over it
+    # worker_kwargs is inherited verbatim by every spawned child, so True is
+    # given only to the statically frozen pool (workers=0 AND max_workers=0);
+    # any shape that can spawn — at boot or by autoscale — ships False
     from genropy_asgi.spa import GenropySpaApplication
 
     pool = GenropySpaApplication(source=_SITE, workers=2, local_worker=True)
     assert pool.commander.worker_kwargs["sole_registry_owner"] is False
-    single = GenropySpaApplication(source=_SITE)
-    assert single.commander.worker_kwargs["sole_registry_owner"] is True
+    default = GenropySpaApplication(source=_SITE)  # core default: ONE child
+    assert default.commander.worker_kwargs["sole_registry_owner"] is False
+    frozen = GenropySpaApplication(source=_SITE, workers=0, max_workers=0, local_worker=True)
+    assert frozen.commander.worker_kwargs["sole_registry_owner"] is True
 
 
 def test_the_single_is_not_a_pool_member(worker):

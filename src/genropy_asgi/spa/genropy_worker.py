@@ -75,18 +75,26 @@ log = logging.getLogger("genropy_asgi.spa")
 
 __all__ = ["GenropyRegistry", "GenropyWorker"]
 
-# The expiry knobs of the bridge (seconds), DAEMON PARITY: a page idle past
-# ``page_max_age`` is swept, an anonymous page or connection past
-# ``guest_max_age``, a logged connection past ``connection_max_age``. The ping
-# stamps ``refresh_chain``, so an idle-but-alive page — and a live guest, via
-# the ~2s ping — refreshes itself: the short guest age reaps only the departed.
-# ALL THREE have a legacy config key: the daemon read them from the site's
-# ``<cleanup>`` section (``setConfiguration``, gnr/web/daemon/siteregister.py),
-# and so does this worker as soon as the site is built, unless the caller named
-# the knob explicitly. These constants are the daemon's own defaults, used only
-# when the site is silent.
+# The expiry knobs of the bridge (seconds): a page idle past ``page_max_age``
+# is swept, an anonymous page or connection past ``guest_max_age``, a logged
+# connection past ``connection_max_age``. ALL THREE have a legacy config key:
+# the daemon read them from the site's ``<cleanup>`` section
+# (``setConfiguration``, gnr/web/daemon/siteregister.py), and so does this
+# worker as soon as the site is built, unless the caller named the knob
+# explicitly. These constants apply only when the site is silent.
+# ``page_max_age`` and ``connection_max_age`` are DAEMON PARITY.
+# ``guest_max_age`` deliberately is NOT: the daemon's 40 was enforced through
+# a 5%-per-request lottery behind a 240-minute claim gate (gnrwsgisite.py
+# ``cleanup_threshold``/``claim_cleanup``), while this sweep is ARMED every
+# ``SWEEP_INTERVAL``. The ONLY writer of the stamp the sweep compares is the
+# ping chain, and the ping is the page's ``auto_polling`` — 30s by default
+# (gnrresourceloader.py:149; the 2s in genro.js:803 is server-down recovery
+# only), throttled to >=60s by browsers on hidden tabs, and disabled in dev
+# mode. Under a 40s age an armed sweep would reap a backgrounded or dev-mode
+# guest between two of its own pings; 1800 (the ratified value) reaps only
+# the truly departed.
 PAGE_MAX_AGE = 600
-GUEST_MAX_AGE = 40
+GUEST_MAX_AGE = 1800
 CONNECTION_MAX_AGE = 7200
 
 # worker knob -> (its legacy <cleanup> key, the daemon-parity default).
@@ -130,16 +138,18 @@ class GenropyWorker(UserStickyWorker):
         source: the GenroPy site — a site name or a path to it.
         debug: True wraps the site in the Werkzeug debugger middleware.
         sole_registry_owner: whether this worker's registry is the only one
-            over the site's disk root — the composition root knows and
-            declares it (False on any pool). None derives it from the
-            channel at read time, so a bare test worker stays a single.
+            over the site's disk root, for the worker's whole life — the
+            composition root declares it (False wherever the pool can ever
+            spawn). None derives it from the channel at read time, so a bare
+            test worker stays a single.
         kwargs: forwarded to ``UserStickyWorker``; the sweep cadence defaults
             to the bridge's ratified value (the sweep is ARMED here — the
             legacy polling stamps the chain, so an idle-but-alive page
             refreshes itself). The THREE expiry ages come FROM THE SITE's
-            ``<cleanup>`` config unless named here, with the daemon's own
-            defaults where the site is silent: a caller's value always wins
-            over the site's.
+            ``<cleanup>`` config unless named here, with the module defaults
+            where the site is silent (daemon parity for page/connection, a
+            deliberately longer guest age — see the knob block above): a
+            caller's value always wins over the site's.
         """
         site_ages_wanted = [knob for knob in SITE_EXPIRY_KNOBS if knob not in kwargs]
         kwargs.setdefault("sweep_interval", SWEEP_INTERVAL)
@@ -148,7 +158,7 @@ class GenropyWorker(UserStickyWorker):
         self._gnr_site = self._create_site(source, debug)
         # The three ages the daemon read from <cleanup> (``setConfiguration``),
         # read from the same section here — the site exposes it raw as
-        # ``custom_config.getAttr('cleanup')`` — with the daemon's own defaults;
+        # ``custom_config.getAttr('cleanup')`` — with the module defaults;
         # ``guest_connection_max_age`` maps onto the core's ``guest_max_age``.
         cleanup = self._gnr_site.custom_config.getAttr("cleanup") or {}
         for knob in site_ages_wanted:
@@ -338,13 +348,15 @@ class GenropyWorker(UserStickyWorker):
     def sole_registry_owner(self) -> bool:
         """Whether this registry is the only one over the site's disk root.
 
-        The composition root knows the pool shape and declares it: False
-        whenever workers are spawned — including a front's LOCAL worker, which
-        sits on a ``LocalChannel`` yet shares ``data/_connections`` with the
-        children. Undeclared (None), the channel decides as before — a socket
-        channel means a pool member — so a bare test worker stays a single.
-        The honest long-term predicate belongs to the core, which owns the
-        pool shape.
+        A LIFETIME guarantee the composition root declares: the pool shape is
+        dynamic (the core autoscales, and a spawned child inherits its
+        ``worker_kwargs`` verbatim), so True travels only where the commander
+        provably never spawns — anywhere a sibling registry may EVER share
+        ``data/_connections`` ships False, a front's LOCAL worker beside
+        children included. Undeclared (None), the channel decides as before —
+        a socket channel means a pool member — so a bare test worker stays a
+        single. The honest long-term predicate belongs to the core, which owns
+        the pool shape.
         """
         if self._sole_registry_owner is None:
             return not self.pool_member

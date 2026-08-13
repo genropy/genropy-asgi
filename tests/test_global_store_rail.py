@@ -296,9 +296,11 @@ def test_a_good_snapshot_clears_and_fills():
 
 def test_a_rejected_snapshot_leaf_leaves_the_bag_untouched():
     # Validate-then-apply: a leaf the legacy setItem rejects raises on the
-    # SCRATCH Bag, before the live one is cleared. Driven through the frame
-    # handler's own entry — no public seam ships such a key, the rail collects
-    # plain dotted paths only, but a snapshot arrives from outside this process.
+    # SCRATCH Bag, before the live one is cleared. The '#3' leaf is SYNTHETIC
+    # and unproducible by production: snapshots are built in this same process
+    # by _replica_global_leaves, which yields plain dotted paths only. What is
+    # guarded is the validate-then-apply MECHANISM itself — a rejected leaf
+    # must leave the live bag full, never emptied or partially refilled.
     from gnr.core.gnrbag import BagException
 
     worker = RailWorker()

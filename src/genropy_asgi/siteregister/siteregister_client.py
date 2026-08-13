@@ -386,8 +386,9 @@ class GenropyRegisterClient:
         own ``dispatch_lock`` (a pagehide beacon racing the sweep) — is a
         legitimate no-op: the owner is resolved with the tolerant walk, and
         the op's ``KeyError`` on a page that vanished meanwhile is the same
-        no-op (the op guards under its own lock and cannot be made tolerant
-        from here).
+        no-op. That window is re-checked: a ``KeyError`` with the page row
+        still present is not the race but a half-applied demolition, and it
+        propagates.
         """
         worker = self.spa_worker
         user = self._page_owner(page_id)
@@ -396,6 +397,8 @@ class GenropyRegisterClient:
         try:
             worker.drop_page(user, page_id=page_id, cascade=cascade)
         except KeyError:
+            if worker.page_items.get(page_id) is not None:
+                raise
             return
 
     def drop_connection(self, connection_id: Any, **kwargs: Any) -> None:
@@ -826,11 +829,13 @@ class GenropyRegisterClient:
     def _materialize_global_snapshot(self, leaves: dict) -> None:
         """Replace the whole Bag content from DECODED ``{full_path: value}`` leaves.
 
-        Validate-then-apply: every leaf lands in a SCRATCH legacy Bag first
-        (the same ``setItem`` semantics — a key the Bag grammar rejects raises
-        there), and only a fully materialized scratch clears and refills the
-        live Bag, so a failing leaf leaves the legacy ``global_bag`` untouched
-        instead of empty-to-partial for the process lifetime. The live Bag
+        Validate-then-apply: every leaf lands in a SCRATCH legacy Bag first,
+        and only a fully materialized scratch clears and refills the live Bag,
+        so a failing leaf leaves the legacy ``global_bag`` untouched instead
+        of empty-to-partial for the process lifetime. The scratch validates
+        KEY GRAMMAR only — a path the Bag grammar rejects raises there — not
+        the full live-write semantics: the live Bag carries backref and
+        subscribers, the bare scratch neither. The live Bag
         stays THE SAME object (write-by-reference, subscribers attached —
         cemented). The channel is FIFO: later writes apply on top, no partial
         window. The refill runs under the ``applying`` flag — the rebuild

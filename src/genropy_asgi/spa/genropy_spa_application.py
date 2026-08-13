@@ -16,12 +16,16 @@ subclass adds exactly the GenroPy fit:
   :class:`~genropy_asgi.spa.genropy_worker.GenropyWorker` and
   ``worker_kwargs`` carries ``source``/``debug`` — every worker of the pool
   (or the in-process single) hosts the same ``GnrWsgiSite``;
-- ``sole_registry_owner`` into ``worker_kwargs``: True only on the single
-  (``workers == 0``). The composition root is the one place that knows the
-  pool shape — a front with ``local_worker=True`` AND ``workers > 0`` has
-  its local worker on a ``LocalChannel``, yet it shares ``data/_connections``
-  with the spawned children, so only the true single may sweep the orphan
-  folders;
+- ``sole_registry_owner`` into ``worker_kwargs``: the flag guarantees the
+  worker is the ONLY registry over the site's ``data/_connections`` for the
+  whole process life, so it licenses the orphan-folder sweep. The pool shape
+  is DYNAMIC — the core autoscales even a pool of one (``check_capacity``)
+  and ``spawn_payload`` ships ``worker_kwargs`` verbatim to every child —
+  so True travels only where the commander provably never spawns:
+  ``workers`` explicitly 0 (unset means the core default of one child) AND
+  ``max_workers`` explicitly 0 (the hard ceiling of every scale-up path).
+  Every other shape ships False and forgoes the automatic orphan cleaning —
+  a named debt with the core seam;
 - ``/metrics``: the Prometheus exposition of the site-wide counters, served
   natively by the demux (the commander's own surface is the whole pool's
   view, as the daemon-central siteregister gave it). The metric name
@@ -101,9 +105,19 @@ class GenropySpaApplication(SpaApplication):
         worker_kwargs = kwargs.setdefault(
             "worker_kwargs", {"source": source, "debug": _as_bool(debug)}
         )
-        # The composition root declares the registry ownership: only the true
-        # single (no spawned children) may treat the site's disk root as its own.
-        worker_kwargs.setdefault("sole_registry_owner", workers == 0)
+        # The registry ownership is a LIFETIME guarantee, not a boot shape: the
+        # core autoscales (check_capacity widens even a pool of one) and every
+        # spawned child inherits worker_kwargs verbatim (spawn_payload), so True
+        # may travel only where the commander provably never spawns — workers
+        # explicitly 0 (unset is the core default of ONE child) and max_workers
+        # explicitly 0 (the hard ceiling of every scale-up path).
+        never_spawns = (
+            kwargs.get("workers") is not None
+            and workers == 0
+            and kwargs.get("max_workers") is not None
+            and int(kwargs["max_workers"]) == 0
+        )
+        worker_kwargs.setdefault("sole_registry_owner", never_spawns)
         if kwargs.get("memory_limit_mb") is None and workers > 0:
             kwargs["memory_limit_mb"] = self.derive_memory_limit_mb(
                 int(kwargs.get("max_workers") or 0) or workers
