@@ -201,9 +201,12 @@ class GenropyWorker(UserStickyWorker):
         The core writes with the new Bag's API (``set_item``/``_fired``); the
         bridge stores are legacy Bags, so the write is translated: ``setItem``
         with the attributes and the reason, ``pop(path, _reason=...)`` for a
-        delete (the legacy signature carries it). A fired change resets the
-        node's static value silently after the write — the same one-shot
-        semantics ``set_item(_fired=True)`` has on the core Bag.
+        delete (the legacy signature carries it). A fired change rides the
+        transient ``_fired`` attribute for the capture (the legacy ``setItem``
+        has no ``_fired`` parameter — the collectors pop it from their local
+        copy, see ``legacy_bag``), then the node is cleaned: the attribute
+        removed and the static value reset — the same one-shot semantics
+        ``set_item(_fired=True)`` has on the core Bag.
         """
         path = change["key"]["path"]
         reason = change["key"]["reason"]
@@ -212,9 +215,14 @@ class GenropyWorker(UserStickyWorker):
             return
         attributes = dict(change["attributes"] or {})
         attributes["_original_ts"] = change["change_ts"]
+        fired = change["key"]["fired"]
+        if fired:
+            attributes["_fired"] = True
         bag.setItem(path, change["value"], _attributes=attributes, _reason=reason)
-        if change["key"]["fired"]:
-            bag.getNode(path).staticvalue = None
+        if fired:
+            node = bag.getNode(path)
+            node.attr.pop("_fired", None)
+            node.staticvalue = None
 
     async def handle_frame(self, frame: Any) -> None:
         """The core wire handling, then the legacy materialization of the global rail.

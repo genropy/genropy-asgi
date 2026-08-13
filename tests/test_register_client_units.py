@@ -236,11 +236,12 @@ def test_user_store_write_reaches_the_subscribed_page(client, worker):
     client.set_datachange(guest, "chat.room1", value="ping", register_name="user")
     # the write landed on the live user store...
     assert client.user(guest, include_data="lazy")["data"]["chat.room1"] == "ping"
-    # ...and the page's user_view captured it — the legacy pair: the
-    # autocreated parent first, then the leaf (the daemon's triggers saw the same)
+    # ...and the page's user_view captured it — but the envelope keeps the
+    # daemon contract: only the explicitly written leaf travels, the
+    # autocreated parent stays in the internal capture
     changes = client.subscription_storechanges(None, page_id)
-    assert [c.path for c in changes] == ["chat", "chat.room1"]
-    assert changes[-1].value == "ping"
+    assert [c.path for c in changes] == ["chat.room1"]
+    assert changes[0].value == "ping"
 
 
 def test_subscribe_table_and_dbevents_dressed_at_the_envelope(client, worker):
@@ -315,11 +316,11 @@ def test_serverstore_subscribed_paths_mirrors_the_capture(client, worker):
     _, page_id = open_page(client, worker)
     client.subscribe_path(page_id, "srv.ctx", register_name="page")
     assert "srv.ctx" in client.pageStore(page_id).subscribed_paths
-    # the capture is live: a write under the prefix becomes a pending change
-    # (the legacy pair — autocreated parent, then the leaf)
+    # the capture is live: a write under the prefix becomes a pending change,
+    # delivered leaf-only (the autocreated parent never reaches the envelope)
     with client.pageStore(page_id) as store:
         store.setItem("srv.ctx.flag", True)
-    assert [c.path for c in store.datachanges] == ["srv.ctx", "srv.ctx.flag"]
+    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]
 
 
 # ------------------------------------------------------------------

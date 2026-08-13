@@ -1434,6 +1434,12 @@ class GenropyRegisterClient:
         ``ClientDataChange`` objects; the dbevents are DRESSED here as datachanges
         on ``gnr.dbchanges.<table>`` — the envelope disguise is the bridge's, the
         core keeps the species separate. A page already gone answers empty.
+
+        The ``autocreate`` changes — the parents the legacy Bag inserts on a
+        first write under a fresh prefix — stay OUT of the envelope: the daemon
+        built its changes from the write's arguments, so only the explicitly
+        written leaves ever travelled. The capture keeps them (they ARE the net
+        store state); the envelope is where the daemon contract rules.
         """
         worker = self.spa_worker
         if worker is None:
@@ -1442,7 +1448,11 @@ class GenropyRegisterClient:
             collected = worker.collect_page(page_id)
         except KeyError:
             return []
-        changes = [self._change_to_client(raw) for raw in collected["datachanges"]]
+        changes = [
+            self._change_to_client(raw)
+            for raw in collected["datachanges"]
+            if raw["key"]["reason"] != "autocreate"
+        ]
         changes.extend(self._dbevent_to_client(deposit) for deposit in collected["dbevents"])
         return changes
 
@@ -1482,7 +1492,8 @@ class GenropyRegisterClient:
 
         The ``drain(reset=False)`` equivalent of ``collect_page``: both collectors
         peeked and merged by ``change_ts``, under the worker's lock. Only a page has
-        collectors; any other register answers empty.
+        collectors; any other register answers empty. The ``autocreate`` parents
+        stay out, as in ``_collect_local_datachanges`` — same envelope, same rule.
         """
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
@@ -1495,7 +1506,11 @@ class GenropyRegisterClient:
             if page["user_view"] is not None:
                 changes.extend(page["user_view"].drain(reset=False))
         changes.sort(key=lambda change: change["change_ts"])
-        return [self._change_to_client(raw) for raw in changes]
+        return [
+            self._change_to_client(raw)
+            for raw in changes
+            if raw["key"]["reason"] != "autocreate"
+        ]
 
     def _item_subscribed_paths(self, register_item_id: Any, register_name: Any = None) -> set:
         """The page row's ``subscribed_paths`` set, copied (ServerStore.subscribed_paths)."""

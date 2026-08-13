@@ -27,9 +27,17 @@ the node's label, an ``ins``/``del`` event's does not, so the full path is
 rebuilt with the label there. Prefixes match on segment boundaries (``a.b``
 captures ``a.b.c``, never ``a.bc``); ``paths=None`` captures everything, an
 empty set captures nothing. The legacy Bag has no transaction rail, so the
-three plain events are the whole capture surface. Locally captured changes
-always carry ``fired=False``; a consumer forwarding a fire event supplies
-``fired=True`` on the change it appends.
+three plain events are the whole capture surface.
+
+The legacy ``setItem`` has no ``_fired`` parameter (the core Bag's
+``set_item(_fired=...)`` hands the flag to its trigger natively), so a fired
+write announces itself with the transient ``_fired`` node attribute: the
+writer (``apply_forwarded``) sets it for the write and removes it right
+after. ``_on_event`` pops ``_fired`` from its LOCAL attribute copy — the node
+is untouched, so every collector on the Bag sees the flag — and stamps it on
+the change. Writes without the attribute carry ``fired=False``; a consumer
+forwarding a fire event still supplies ``fired=True`` on the change it
+appends.
 
 ``append`` deposits a shallow copy and assigns ``change_idx`` to that copy
 only — the caller's dict is never mutated, so one change can be forwarded to
@@ -100,7 +108,9 @@ class LegacyBagCollector:
         ``ins``/``del`` carry the parent's pathlist, so the full path is
         rebuilt with the node's label; the update events (``upd_value``,
         ``upd_attrs``) already carry it. ``oldvalue`` and ``ind`` belong to
-        the legacy signature and are not part of the change.
+        the legacy signature and are not part of the change. The transient
+        ``_fired`` attribute (see the module docstring) is popped from the
+        local copy only — the node keeps it for the collectors still to run.
         """
         if evt in ("ins", "del"):
             path = ".".join(list(pathlist or []) + [node.label])
@@ -110,8 +120,11 @@ class LegacyBagCollector:
             return
         delete = evt == "del"
         value = None if delete else node.staticvalue
-        attributes = dict(node.attr) or None
-        self._deposit(self._build_change(path, value, attributes, reason, delete))
+        attributes = dict(node.attr)
+        fired = bool(attributes.pop("_fired", False))
+        self._deposit(
+            self._build_change(path, value, attributes or None, reason, delete, fired=fired)
+        )
 
     # -------------------- change construction --------------------------------
 
