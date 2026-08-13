@@ -62,7 +62,11 @@ def test_a_non_empty_mount_is_refused():
 def test_pool_defaults_point_at_the_genropy_worker():
     app = GenropySpaApplication(source="some_site", debug=True)
     assert app.commander.worker_class == "genropy_asgi.spa.genropy_worker:GenropyWorker"
-    assert app.commander.worker_kwargs == {"source": "some_site", "debug": True}
+    assert app.commander.worker_kwargs == {
+        "source": "some_site",
+        "debug": True,
+        "sole_registry_owner": True,  # no spawned children: the single owns the registry
+    }
 
 
 def test_debug_flag_coerces_from_string():
@@ -135,6 +139,7 @@ def test_the_recipe_wires_the_commander_for_the_single(booted):
     assert commander.worker_kwargs == {
         "source": "/tmp/genropy_asgi_recipe_probe",  # the resolved instance path
         "debug": False,  # --nodebug writes an empty GNR_ASGI_DEBUG
+        "sole_registry_owner": True,  # workers == 0: the single owns the registry
     }
     assert commander.local_worker is True  # workers == 0: the in-process single
 

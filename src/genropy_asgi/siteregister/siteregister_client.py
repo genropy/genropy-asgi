@@ -381,14 +381,22 @@ class GenropyRegisterClient:
         the browser's pagehide beacon, passing nothing). A page close NEVER
         climbs to the connection — the tab is gone, the browser is still there
         with its cookie — so ``cascade`` defaults to the legacy False and is
-        forwarded to the worker op. A page already gone — expired, or reported
-        closed twice — is a legitimate no-op.
+        forwarded to the worker op. A page already gone — expired, reported
+        closed twice, or demolished between this lock-free read and the op's
+        own ``dispatch_lock`` (a pagehide beacon racing the sweep) — is a
+        legitimate no-op: the owner is resolved with the tolerant walk, and
+        the op's ``KeyError`` on a page that vanished meanwhile is the same
+        no-op (the op guards under its own lock and cannot be made tolerant
+        from here).
         """
         worker = self.spa_worker
-        if worker.page_items.get(page_id) is None:
+        user = self._page_owner(page_id)
+        if user is None:
             return
-        user = worker.registry.page_user(page_id)
-        worker.drop_page(user, page_id=page_id, cascade=cascade)
+        try:
+            worker.drop_page(user, page_id=page_id, cascade=cascade)
+        except KeyError:
+            return
 
     def drop_connection(self, connection_id: Any, **kwargs: Any) -> None:
         """A connection ends — LOGOUT / browser gone.
@@ -465,8 +473,11 @@ class GenropyRegisterClient:
         ``user`` walks the ownership edges (user -> connections -> pages). Called for the
         ``setInClientData`` broadcast (with filters) and by monitoring.
 
-        Filtering happens on the live rows — a ``user`` clause needs the registry's own
-        ownership walk — and what goes out is the legacy view of each match.
+        Filtering happens on the live rows — a ``user`` clause needs the ownership
+        walk, done with the tolerant ``_page_owner`` (a chain mid-demolition simply
+        does not match) — and what goes out is the legacy view of each match. Every
+        live edge set is snapshot (``list``) before iteration: the demolitions
+        mutate them in place on other threads.
         """
         worker = self.spa_worker
         if worker is None:
@@ -477,12 +488,12 @@ class GenropyRegisterClient:
             if user:
                 items = [
                     p for p in items
-                    if worker.registry.page_user(p["register_item_id"]) == user
+                    if self._page_owner(p["register_item_id"]) == user
                 ]
         elif user:
             items = []
             entry = worker.user_items.get(user)
-            for cid in (entry or {}).get("connections", ()):
+            for cid in list((entry or {}).get("connections", ())):
                 connection = worker.connection_items.get(cid)
                 if connection is None:
                     continue
@@ -498,7 +509,8 @@ class GenropyRegisterClient:
         """Connections optionally by user, keyed by connection_id (``adaptListToDict``).
 
         Called by ``connected_users_bag`` and cleanup. ``user`` reads the ownership
-        edge (the user entry's ``connections`` set).
+        edge (the user entry's ``connections`` set), snapshot before iteration —
+        the demolitions mutate the live set in place on other threads.
         """
         worker = self.spa_worker
         if worker is None:
@@ -506,7 +518,7 @@ class GenropyRegisterClient:
         connection_items = worker.connection_items
         if user:
             entry = worker.user_items.get(user)
-            items = self._live_rows(connection_items, (entry or {}).get("connections", ()))
+            items = self._live_rows(connection_items, list((entry or {}).get("connections", ())))
         else:
             items = self._live_rows(connection_items, connection_items.keys())
         return {item["register_item_id"]: self._legacy_row(item) for item in items}
@@ -724,8 +736,9 @@ class GenropyRegisterClient:
 
         Runs on the WSGI thread — the sync ``with`` form of the core lease, which
         parks this thread on the worker's loop until the commander grants the
-        master. On grant, the master content (TYTX wire-text scalars) is
-        materialized into ``global_bag`` under the ``applying`` flag, and this
+        master. On grant, the master content — whose leaves arrive DECODED, the
+        grant having crossed a tytx hop of its own — is materialized into
+        ``global_bag`` under the ``applying`` flag, and this
         THREAD's rail switches to collecting: the block's leaf writes join the
         lease instead of shipping one by one. A lease that cannot be acquired —
         channel down, worker not started — maps to ``GnrDaemonLocked``, the
@@ -811,21 +824,33 @@ class GenropyRegisterClient:
             state.applying = False
 
     def _materialize_global_snapshot(self, leaves: dict) -> None:
-        """Replace the whole Bag from DECODED ``{full_path: value}`` leaves.
+        """Replace the whole Bag content from DECODED ``{full_path: value}`` leaves.
 
-        The channel is FIFO: later writes apply on top, no partial window. Under
-        the ``applying`` flag — the rebuild never re-ships. Aware datetimes are
-        normalized like every materialized value.
+        Validate-then-apply: every leaf lands in a SCRATCH legacy Bag first
+        (the same ``setItem`` semantics — a key the Bag grammar rejects raises
+        there), and only a fully materialized scratch clears and refills the
+        live Bag, so a failing leaf leaves the legacy ``global_bag`` untouched
+        instead of empty-to-partial for the process lifetime. The live Bag
+        stays THE SAME object (write-by-reference, subscribers attached —
+        cemented). The channel is FIFO: later writes apply on top, no partial
+        window. The refill runs under the ``applying`` flag — the rebuild
+        never re-ships. Aware datetimes are normalized like every
+        materialized value.
         """
+        scratch = Bag()
+        normalized: list[tuple[str, Any]] = []
+        for key in sorted(leaves):
+            value = leaves[key]
+            if isinstance(value, datetime.datetime) and value.tzinfo is not None:
+                value = value.astimezone().replace(tzinfo=None)
+            scratch.setItem(key, value)
+            normalized.append((key, value))
         state = self._global_rail_state
         state.applying = True
         try:
             bag = self.global_bag
             bag.clear()
-            for key in sorted(leaves):
-                value = leaves[key]
-                if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-                    value = value.astimezone().replace(tzinfo=None)
+            for key, value in normalized:
                 bag.setItem(key, value)
         finally:
             state.applying = False
@@ -1208,6 +1233,24 @@ class GenropyRegisterClient:
         """
         return [row for row in (register.get(key) for key in keys) if row is not None]
 
+    def _page_owner(self, page_id: Any) -> Any:
+        """The page's user, walked page -> connection -> user with ``.get()``.
+
+        The registry's own ``page_user`` raises on a vanished link (``KeyError``
+        on the page, ``TypeError`` on the connection); the lock-free read sites
+        must not — a chain with a link gone is being demolished on another
+        thread (the sweep, a logout and a page close are concurrent by design)
+        and answers None: absent, never an error.
+        """
+        worker = self.spa_worker
+        page = worker.page_items.get(page_id)
+        if page is None:
+            return None
+        connection = worker.connection_items.get(page["connection_id"])
+        if connection is None:
+            return None
+        return connection["user"]
+
     def _item_with_data(self, item_id: Any, register_name: str) -> dict | None:
         """The live row after a lifecycle op, with its data Bag attached."""
         return self._ensure_item_data(self.local_item(item_id, register_name))
@@ -1299,17 +1342,18 @@ class GenropyRegisterClient:
         daemon read them (``pagename``, ``user_ip``, ``relative_url``, ...) — with ONE
         exception:
 
-        ``user`` is resolved through ``registry.page_user``, the walk page ->
+        ``user`` is resolved through ``_page_owner``, the tolerant walk page ->
         connection -> user. The daemon's page row carried a ``user`` field; the core's
         does not, on purpose — ownership is derived so it cannot go stale, and the
         bridge's ``new_page`` pops the field before the op. Reading ``item['user']``
         here therefore matched nothing, and ``user:X`` broadcasts
         (``gnr.chat.room_alert``, every filtered ``sendMessageToClient``) reached
-        nobody. The derived owner is the same answer, from the one place that holds it.
+        nobody. The derived owner is the same answer, from the one place that holds
+        it; a chain gone mid-read answers None and the row simply does not match —
+        it is being demolished, no broadcast belongs on it.
         """
         if not filters or filters == "*":
             return items
-        registry = self.spa_worker.registry
         fltdict: dict[str, Any] = {}
         for flt in filters.split(" AND "):
             fltname, fltvalue = flt.split(":", 1)
@@ -1321,7 +1365,7 @@ class GenropyRegisterClient:
         for item in items:
             for fltname, fltpat in fltdict.items():
                 if fltname == "user":
-                    value = registry.page_user(item["register_item_id"])
+                    value = self._page_owner(item["register_item_id"])
                 else:
                     value = item.get(fltname)
                 if not value:

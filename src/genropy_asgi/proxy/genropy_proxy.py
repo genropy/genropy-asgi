@@ -95,7 +95,3 @@ class GenropyProxyOpenApiApplication(GenropyProxyMixin, OpenApiApplication):
     owns the REST + OpenAPI machinery. Mount it like any OpenApiApplication and
     give it an ``instance`` plus a ``routing_class`` (or ``module``).
     """
-
-
-if __name__ == "__main__":
-    pass

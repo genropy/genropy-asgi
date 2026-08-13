@@ -31,8 +31,10 @@ _SITE = "test_invoice_pg"
 
 pytestmark = pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
 
-# The chains the reader/demolition race test churns through.
+# The chains the reader/demolition race test churns through, and the FIXED
+# reader budget it spins for (bounded: the test ends even if the churner stalls).
 CHURN_CHAINS = 150
+SPIN_ROUNDS = 400
 
 
 @contextmanager
@@ -173,6 +175,11 @@ def test_an_explicit_cascade_demolishes_the_emptied_chain(client, worker):
 
 def test_drop_page_on_a_gone_page_is_a_noop(client, worker):
     client.drop_page("never_registered")  # no raise: a page may expire first
+    cid, page_id = open_page(client, worker)
+    with call_sink(worker):
+        client.drop_page(page_id)
+        client.drop_page(page_id)  # the double pagehide beacon: same no-op
+        client.drop_connection(cid)  # leave the module worker clean
 
 
 def test_logout_drop_connection_demolishes_pages_first(client, worker):
@@ -474,12 +481,21 @@ def test_the_readers_tolerate_rows_demolished_mid_read(client, worker):
     — so a row demolished on another thread leaves its key behind. Handing that
     ``None`` out is what ``Connection.connected_users_bag`` subscripts on the
     next chat poll (connection.py:195), two seconds later, forever.
+
+    The user-addressed reads ride the same race twice over: ``pages(user=...)``
+    and ``connections(user=...)`` iterate the user entry's LIVE edge sets while
+    the drops mutate them in place, and the ``user:`` filter walks the
+    page -> connection -> user chain while the demolition tears it — the walk
+    must skip a gone chain, never raise. The spin is a FIXED budget of rounds
+    (bounded even if the churner stalls); each round polls the global readers
+    and the three user-addressed reads for a user the churner is dropping.
     """
     chains = []
     for _ in range(CHURN_CHAINS):
         cid, _ = open_page(client, worker)
         open_tab(client, worker, cid)
         chains.append(cid)
+    users = [GUEST_PREFIX + cid for cid in chains]
     churn_failure = []
 
     def churn():
@@ -497,8 +513,16 @@ def test_the_readers_tolerate_rows_demolished_mid_read(client, worker):
     churner = threading.Thread(target=churn)
     churner.start()
     try:
-        while churner.is_alive():
-            for rows in (client.users(), client.connections(), client.pages()):
+        for round_i in range(SPIN_ROUNDS):
+            user = users[round_i % len(users)]
+            for rows in (
+                client.users(),
+                client.connections(),
+                client.pages(),
+                client.pages(user=user),
+                client.connections(user=user),
+                client.pages(filters=f"user:{user}"),
+            ):
                 assert None not in rows.values()
     finally:
         sys.setswitchinterval(previous_interval)

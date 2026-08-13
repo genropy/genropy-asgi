@@ -16,6 +16,12 @@ subclass adds exactly the GenroPy fit:
   :class:`~genropy_asgi.spa.genropy_worker.GenropyWorker` and
   ``worker_kwargs`` carries ``source``/``debug`` — every worker of the pool
   (or the in-process single) hosts the same ``GnrWsgiSite``;
+- ``sole_registry_owner`` into ``worker_kwargs``: True only on the single
+  (``workers == 0``). The composition root is the one place that knows the
+  pool shape — a front with ``local_worker=True`` AND ``workers > 0`` has
+  its local worker on a ``LocalChannel``, yet it shares ``data/_connections``
+  with the spawned children, so only the true single may sweep the orphan
+  folders;
 - ``/metrics``: the Prometheus exposition of the site-wide counters, served
   natively by the demux (the commander's own surface is the whole pool's
   view, as the daemon-central siteregister gave it). The metric name
@@ -91,8 +97,13 @@ class GenropySpaApplication(SpaApplication):
                 "Serve it on its own host or port instead."
             )
         kwargs.setdefault("worker_class", "genropy_asgi.spa.genropy_worker:GenropyWorker")
-        kwargs.setdefault("worker_kwargs", {"source": source, "debug": _as_bool(debug)})
         workers = int(kwargs.get("workers") or 0)
+        worker_kwargs = kwargs.setdefault(
+            "worker_kwargs", {"source": source, "debug": _as_bool(debug)}
+        )
+        # The composition root declares the registry ownership: only the true
+        # single (no spawned children) may treat the site's disk root as its own.
+        worker_kwargs.setdefault("sole_registry_owner", workers == 0)
         if kwargs.get("memory_limit_mb") is None and workers > 0:
             kwargs["memory_limit_mb"] = self.derive_memory_limit_mb(
                 int(kwargs.get("max_workers") or 0) or workers

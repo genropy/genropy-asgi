@@ -307,19 +307,53 @@ def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
 
 
 def test_the_sites_cleanup_ages_become_the_sweeps(worker):
-    # no age was named at construction: the site's own <cleanup> config decides,
-    # so a site asking for the legacy 2-hour connection retention gets it
+    # no age was named at construction: the site's own <cleanup> config decides
+    # all THREE ages — the same keys the daemon's setConfiguration read — with
+    # the daemon's defaults where the site is silent
     site = worker.gnr_site
+    cleanup = site.custom_config.getAttr("cleanup") or {}
     assert worker.page_max_age == site.page_max_age
     assert worker.connection_max_age == site.connection_max_age
+    assert worker.guest_max_age == int(cleanup.get("guest_connection_max_age") or 40)
 
 
 def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
     # ``handle_frame`` runs on the event loop and materializes the global pushes
-    # into the register: it must never be the one to BUILD it. The site's
-    # ``register`` property is lazy, unlocked and reaches db work, so the client
-    # is taken here, on the init thread — and it is the site's own.
-    assert worker._register_client is worker.gnr_site.register
+    # into the register: it must never be the one to BUILD the client (the
+    # site's ``register`` property is lazy, unlocked and reaches db work; the
+    # worker captures it on the init thread). The public proof: a descending
+    # global change handled on the wire lands in the bag the site's own
+    # ``register`` exposes — the rail was wired at construction.
+    from genro_asgi.channel.frame import Frame
+    from genro_asgi.channel.hub import EVENT_METHOD
+    from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH
+    from genro_tytx import to_tytx
+
+    change = {
+        "key": {"path": "gnr.captured_at_init", "reason": None, "fired": False},
+        "value": 7,
+        "attributes": None,
+        "delete": False,
+        "change_ts": datetime.datetime.now(datetime.UTC),
+        "change_idx": 0,
+    }
+    frame = Frame(
+        method=EVENT_METHOD, path=GLOBAL_CHANGES_PATH, data=to_tytx([change], "json")
+    )
+    asyncio.run(worker.handle_frame(frame))
+    assert worker.gnr_site.register.global_bag.getItem("gnr.captured_at_init") == 7
+
+
+def test_the_app_declares_the_registry_ownership_in_worker_kwargs():
+    # the composition root knows the pool shape: a pool — even one whose front
+    # keeps a local worker beside the spawned children — shares the site's
+    # data/_connections, so only the true single owns the registry over it
+    from genropy_asgi.spa import GenropySpaApplication
+
+    pool = GenropySpaApplication(source=_SITE, workers=2, local_worker=True)
+    assert pool.commander.worker_kwargs["sole_registry_owner"] is False
+    single = GenropySpaApplication(source=_SITE)
+    assert single.commander.worker_kwargs["sole_registry_owner"] is True
 
 
 def test_the_single_is_not_a_pool_member(worker):

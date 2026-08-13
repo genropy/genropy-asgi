@@ -6,9 +6,10 @@
 Two layers, matching the rail's own two halves:
 
 - SHIP units on a bare client wired to a stub worker: leaf writes ship
-  full-path TYTX scalars on ``store_set``/``store_del``, and a lease that
-  fails — on the grant or on the write-back — is always released. No site
-  needed.
+  full-path TYTX scalars on ``store_set``/``store_del``, a snapshot
+  materialization ships NOTHING back up (and validates before it touches the
+  live Bag), and a lease that fails — on the grant or on the write-back — is
+  always released. No site needed.
 - The REAL SINGLE — ``UserStickyCommander(workers=0, local_worker=True)``
   holding a GenropyWorker on a ``LocalChannel`` — for the write-through in
   both directions (the DESCENT included: the pushes materialize through the
@@ -27,6 +28,7 @@ import importlib.util
 from types import SimpleNamespace
 
 import pytest
+from genro_bag import Bag as CoreBag
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
@@ -65,6 +67,46 @@ def make_client(worker=None):
     client = GenropyRegisterClient.__new__(GenropyRegisterClient)
     client.__dict__["site"] = SimpleNamespace(spa_worker=worker)
     return client
+
+
+class WorkingCopy:
+    """Accepts ``set``/``delete`` like the core lease's working copy; records the ops."""
+
+    def __init__(self):
+        self.ops = []
+
+    def set(self, path, value):
+        self.ops.append(("set", path, value))
+
+    def delete(self, path):
+        self.ops.append(("delete", path))
+
+
+class Lease:
+    """Stub of the core ``GlobalStoreLease``: grants *master*, carries a working
+    ``copy``, and records every ``__exit__`` type so a test can assert the release."""
+
+    def __init__(self, master=None, copy=None):
+        self.master = CoreBag() if master is None else master
+        self.copy = WorkingCopy() if copy is None else copy
+        self.exits = []
+
+    def __enter__(self):
+        return self.master
+
+    def __exit__(self, exc_type, exc, tb):
+        self.exits.append(exc_type)
+
+
+class LeaseWorker(RailWorker):
+    """A stub worker whose ``global_store_lock`` grants one prepared lease."""
+
+    def __init__(self, lease):
+        super().__init__()
+        self.lease = lease
+
+    def global_store_lock(self):
+        return self.lease
 
 
 # ------------------------------------------------------------------
@@ -199,25 +241,7 @@ def test_a_failed_grant_materialization_releases_the_lease():
         def walk(self):
             raise RuntimeError("corrupt master")
 
-    class Lease:
-        def __init__(self):
-            self.exits = []
-
-        def __enter__(self):
-            return BrokenMaster()
-
-        def __exit__(self, exc_type, exc, tb):
-            self.exits.append(exc_type)
-
-    class LeaseWorker(RailWorker):
-        def __init__(self):
-            super().__init__()
-            self.lease = Lease()
-
-        def global_store_lock(self):
-            return self.lease
-
-    worker = LeaseWorker()
+    worker = LeaseWorker(Lease(master=BrokenMaster()))
     client = make_client(worker)
     with pytest.raises(RuntimeError):
         client.globalStore().__enter__()
@@ -235,33 +259,58 @@ def test_a_write_the_working_copy_rejects_releases_the_lease():
         def delete(self, path):
             raise ValueError(f"the working copy rejects {path!r}")
 
-    class Lease:
-        def __init__(self):
-            self.copy = RejectingCopy()
-            self.exits = []
-
-        def __enter__(self):
-            from genro_bag import Bag as CoreBag
-
-            return CoreBag()
-
-        def __exit__(self, exc_type, exc, tb):
-            self.exits.append(exc_type)
-
-    class LeaseWorker(RailWorker):
-        def __init__(self):
-            super().__init__()
-            self.lease = Lease()
-
-        def global_store_lock(self):
-            return self.lease
-
-    worker = LeaseWorker()
+    worker = LeaseWorker(Lease(copy=RejectingCopy()))
     client = make_client(worker)
     with pytest.raises(ValueError):
         with client.globalStore() as store:
             store.setItem("gnr.rejected", 1)
     assert worker.lease.exits == [ValueError]  # released with nothing applied
+
+
+# ------------------------------------------------------------------
+# Descent: snapshot materialization on the stub client
+# ------------------------------------------------------------------
+
+
+def test_a_snapshot_materialization_ships_nothing_back_up():
+    # The snapshot is a descent (the replica seed): rebuilding the legacy Bag
+    # from it runs under the applying flag, so not one store op may echo up.
+    worker = RailWorker()
+    client = make_client(worker)
+    client.global_bag.setItem("gnr.stale", 1)  # pre-existing content, shipped
+    worker.calls.clear()
+    client._materialize_global_snapshot({"gnr.a": 1, "gnr.b": "x"})
+    assert worker.calls == []
+    assert client.global_bag.getItem("gnr.a") == 1
+    assert client.global_bag.getItem("gnr.b") == "x"
+
+
+def test_a_good_snapshot_clears_and_fills():
+    worker = RailWorker()
+    client = make_client(worker)
+    client.global_bag.setItem("gnr.stale", 1)
+    client._materialize_global_snapshot({"gnr.fresh": 2})
+    assert client.global_bag.getItem("gnr.stale") is None  # cleared
+    assert client.global_bag.getItem("gnr.fresh") == 2  # filled
+
+
+def test_a_rejected_snapshot_leaf_leaves_the_bag_untouched():
+    # Validate-then-apply: a leaf the legacy setItem rejects raises on the
+    # SCRATCH Bag, before the live one is cleared. Driven through the frame
+    # handler's own entry — no public seam ships such a key, the rail collects
+    # plain dotted paths only, but a snapshot arrives from outside this process.
+    from gnr.core.gnrbag import BagException
+
+    worker = RailWorker()
+    client = make_client(worker)
+    client.global_bag.setItem("gnr.kept", 3)
+    worker.calls.clear()
+    with pytest.raises(BagException):
+        # '#3' is the index form the legacy Bag grammar refuses on an empty Bag
+        client._materialize_global_snapshot({"gnr.good": 1, "#3": 2})
+    assert client.global_bag.getItem("gnr.kept") == 3  # untouched, not emptied
+    assert client.global_bag.getItem("gnr.good") is None  # and no partial fill
+    assert worker.calls == []
 
 
 # ------------------------------------------------------------------
@@ -373,6 +422,17 @@ async def test_two_sequential_lease_blocks_see_each_others_writes(single):
     # leaves there, never one decode ahead of it
     await until(lambda: single.global_master.bag["gnr.leased"] == "5::L")
     assert await asyncio.to_thread(second_block) == 5
+
+
+async def test_a_typed_looking_string_survives_the_immediate_rail(single):
+    # No lease: the leaf write ships once-encoded ('42::L' -> '42::L::T'), the
+    # master holds that literal text (blind courier), and the descent's single
+    # decoding hop hands every reader back the string — never the int 42.
+    register = single.worker.gnr_site.register
+    register.global_bag.setItem("gnr.tricky", "42::L")
+    await until(lambda: single.global_master.bag["gnr.tricky"] == "42::L::T")
+    await until(lambda: single.worker.global_store["gnr.tricky"] == "42::L")
+    assert register.global_bag.getItem("gnr.tricky") == "42::L"
 
 
 async def test_a_typed_looking_string_survives_the_lease_rail(single):
