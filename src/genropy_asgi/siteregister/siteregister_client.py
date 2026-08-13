@@ -441,7 +441,7 @@ class GenropyRegisterClient:
         item = self.local_item(register_item_id, register_name)
         if item is not None and (include_data == "lazy" or include_data):
             self._ensure_item_data(item)
-        return self._legacy_row(item)
+        return self._legacy_row(item, register_name=register_name)
 
     def page(self, page_id: Any, include_data: Any = None) -> Any:
         """The local page item, enriched with its ``subscribed_tables``.
@@ -537,7 +537,7 @@ class GenropyRegisterClient:
         if worker is None:
             return {}
         return {
-            item["register_item_id"]: self._legacy_row(item)
+            item["register_item_id"]: self._legacy_row(item, register_name="user")
             for item in self._live_rows(worker.user_items, worker.user_items.keys())
         }
 
@@ -1260,7 +1260,7 @@ class GenropyRegisterClient:
         """The live row after a lifecycle op, with its data Bag attached."""
         return self._ensure_item_data(self.local_item(item_id, register_name))
 
-    def _legacy_row(self, item: dict | None) -> dict | None:
+    def _legacy_row(self, item: dict | None, register_name: str | None = None) -> dict | None:
         """The legacy view of a core register row — the read side's own surface.
 
         The rows the core keeps and the rows the daemon handed out differ in two
@@ -1284,6 +1284,13 @@ class GenropyRegisterClient:
         - **``user_name``**, read unconditionally as the caption
           (connection.py:209). A row that never logged in has none: the legacy
           reads ``arguments['user_name'] or user`` and captions with the key.
+        - **``user`` on a USER row.** The daemon seeded ``user=user`` on the row
+          itself (daemon/siteregister.py:319-323) and the chat keys its rooms on
+          that attribute (``prepare_usersbag``, chat_component.js:180 —
+          ``setItem(n.attr.user, ...)``, which crashes the client Bag on
+          undefined). The core keys the entry by name instead of storing it, so
+          the view restores the field. Page rows stay WITHOUT a ``user`` field
+          on purpose: ownership is derived (``_page_owner``), never stored.
 
         Only the READ commands dress. The lifecycle commands keep answering the
         live row — the object the legacy holds for the page's whole life as
@@ -1299,6 +1306,8 @@ class GenropyRegisterClient:
         if row.get("start_ts") is None:
             row["start_ts"] = row.get("last_refresh_ts")
         row.setdefault("user_name", None)
+        if register_name == "user":
+            row.setdefault("user", row["register_item_id"])
         return row
 
     def _ensure_item_data(self, item: dict | None) -> dict | None:

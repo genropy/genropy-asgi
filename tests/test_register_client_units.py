@@ -393,6 +393,23 @@ def test_connected_users_reads_a_guest_row(client, worker):
     assert row["caption"] == guest
 
 
+def test_a_user_row_carries_its_own_name_as_the_user_field(client, worker):
+    # The chat keys its rooms on the node ATTRIBUTE, not on the key:
+    # prepare_usersbag does setItem(n.attr.user, ...) (chat_component.js:180),
+    # and an undefined path crashes the client Bag (htraverse). The daemon
+    # seeded user=user on the row (daemon/siteregister.py:319-323); the core
+    # keys the entry by name instead, so the legacy view restores the field.
+    cid, page_id = open_page(client, worker)
+    user = login(client, worker, cid, "carla", user_name="Carla C")
+    assert client.users()[user]["user"] == user
+    assert client.user(user)["user"] == user
+    guest_cid, _ = open_page(client, worker)
+    guest = GUEST_PREFIX + guest_cid
+    assert client.users()[guest]["user"] == guest  # uniform contract
+    # ownership on a PAGE row stays derived, never stored (cemented)
+    assert "user" not in client.page(page_id)
+
+
 def test_stale_connections_reads_the_connection_rows(client, worker):
     # ``datacollector.stale_connections``:54 — the same subtraction, unguarded
     cid, _ = open_page(client, worker)
