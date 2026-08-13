@@ -1,14 +1,16 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""genropy-spa — GenroPy legacy bridge for the genro-spa SPA model.
+"""genropy-spa — GenroPy legacy bridge on the genro-asgi SPA core.
 
-A ``GenropySpaApplication`` is a ``genro_asgi.applications.spa_application.SpaApplication`` whose hosted app is a GenroPy
-``GnrWsgiSite``. The only ``gnr.*``-aware piece; everything generic comes from genro_asgi.applications.spa_application.
+A :class:`GenropySpaApplication` is the core ``SpaApplication`` whose pool
+workers are :class:`~genropy_asgi.spa.genropy_worker.GenropyWorker` instances,
+each hosting a legacy ``GnrWsgiSite`` behind the core's ``wsgi_app`` seam.
+The worker side is reached by dotted path (``worker_class``), so importing
+this package never requires GenroPy.
 """
 
 from .genropy_spa_application import GenropySpaApplication
-from .genropy_worker_application import GenropyWorkerApplication
 
-__all__ = ["GenropySpaApplication", "GenropyWorkerApplication"]
+__all__ = ["GenropySpaApplication"]
 __version__ = "0.1.0"

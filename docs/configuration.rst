@@ -23,7 +23,7 @@ Save this recipe, then launch it with
    import os
 
    from genro_asgi.config import AsgiConfigBuilder
-   from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
+   from genropy_asgi.spa import GenropySpaApplication
 
    # The CLI writes these to the environment before loading the config, so the
    # CLI instance and port win; run directly they fall back to the defaults.
@@ -33,26 +33,23 @@ Save this recipe, then launch it with
 
    class ServerConfiguration(AsgiConfigBuilder):
        def main(self, root):
-           root.server(host="127.0.0.1", port=PORT)
-           root.middleware()
-           apps = root.applications(default="site")
-           apps.application(
+           cfg = root.configuration()
+           cfg.server(host="127.0.0.1", port=PORT)
+           cfg.middleware()
+           cfg.applications().application(
                code="site",
-               app_class=GenropyCommanderApplication,
-               worker_app_class=(
-                   "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
-               ),
-               app_args={"source": SITE, "debug": ""},
+               app_class=GenropySpaApplication,
+               source=SITE,                  # the site every worker hosts
+               debug=False,
                workers=1,                    # initial pool size; grows under load
                min_workers=1,                # compaction floor (the reception)
                max_workers=None,             # scale-up ceiling; None = unbounded
                reception_threshold=0.5,      # reception keeps logins under this occupancy
                admission_threshold=0.8,      # other workers stop taking logins over this
-               commander_url=f"http://127.0.0.1:{PORT}",
            )
 
-``apps.application(...)`` parameters
-------------------------------------
+``application(...)`` parameters
+-------------------------------
 
 .. list-table::
    :header-rows: 1
@@ -61,17 +58,17 @@ Save this recipe, then launch it with
    * - Parameter
      - Meaning
    * - ``code``
-     - The application code (``"site"``); it is mounted on the root.
+     - The application code (``"site"``); the class mounts itself on the root —
+       a GenroPy site owns its absolute URLs, so no other mount is accepted.
    * - ``app_class``
-     - The commander class, ``GenropyCommanderApplication`` (a subclass of
-       genro-asgi core's ``SpaMultiWorkerApplication``, adding the ``/metrics``
-       endpoint).
-   * - ``worker_app_class``
-     - Import path of the class each worker hosts —
-       ``genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication``.
-   * - ``app_args``
-     - Constructor kwargs forwarded to each worker: ``source`` (the site),
-       ``debug``.
+     - ``GenropySpaApplication`` — the one front for both shapes: it owns the
+       user-sticky pool and the site-wide ``/metrics`` endpoint. Its
+       ``worker_class`` default points at
+       ``genropy_asgi.spa.genropy_worker:GenropyWorker``, the worker that hosts
+       the site (in this process for the single, in each child for a pool).
+   * - ``source``, ``debug``
+     - The site (name or path) every worker hosts, and its debug flag. They
+       travel to each worker as its constructor kwargs.
    * - ``workers``
      - Initial pool size. The pool grows from here on measured pressure.
    * - ``min_workers``
@@ -90,9 +87,10 @@ Save this recipe, then launch it with
        non-reception worker drained and retired) when its spare occupancy exceeds
        this many workers' worth of ``admission_threshold``. Default 1.5 — the
        margin gives hysteresis, so scale-up and scale-down never chase each other.
-   * - ``commander_url``
-     - The commander's own public base URL, passed to each worker so it can
-       reach the commander back-channel.
+   * - ``memory_limit_mb``
+     - The per-worker memory budget the occupancy's memory component is measured
+       against. Left out, a pool derives it from the host RAM (80% split over the
+       worker slots) and the single passes none at all.
 
 Tune the thresholds
 -------------------
@@ -108,44 +106,14 @@ compaction walk-through.
 Run several versions at once (groups)
 -------------------------------------
 
-To run more than one version of the site behind the commander, declare ``groups``
-as a child of the application. Each ``group`` is a runtime with its own
-interpreter, so each can serve a different version:
+Not available in this model: one front owns one pool, and every worker of it
+belongs to the same group — the group name is a constructor value of the pool,
+not a collection the recipe declares. Running two versions of the site side by
+side therefore means two servers, each with its own front, port and interpreter,
+behind whatever routes between them.
 
-.. code-block:: python
-
-   app = apps.application(
-       code="site",
-       app_class=GenropyCommanderApplication,
-       worker_app_class="genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication",
-       app_args={"source": "mysite", "debug": ""},
-       commander_url="http://127.0.0.1:8080",
-   )
-   groups = app.groups(default="green")
-   groups.group(code="green",  workers=2, python="/venvs/stable/bin/python")
-   groups.group(code="canary", workers=1, python="/venvs/next/bin/python")
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Parameter
-     - Meaning
-   * - ``groups(default=...)``
-     - Names the welcome group: guests and unrecognized xgroups land here. Must
-       be one of the declared groups.
-   * - ``group(code=...)``
-     - The group name — the routing key matched against the avatar's ``xgroup``.
-       Worker names are prefixed with it (``green_01``, ``canary_01``).
-   * - ``group(workers=...)``
-     - The group's initial pool size (it grows under load, per group).
-   * - ``group(python=...)``
-     - The interpreter path for this group's worker processes. Point it at a
-       virtualenv to run a different version. Omitted = the current interpreter.
-
-Users reach a group by the ``xgroup`` field of their avatar; see the groups
-section of :doc:`single-vs-multi` for routing, live migration, and how this maps
-onto virtualenv / Podman / Docker isolation.
+The per-group interpreter, the avatar's ``xgroup`` routing key and the live
+migration between groups belong to the pool bridge, which is stage two.
 
 Set the environment variables
 -----------------------------

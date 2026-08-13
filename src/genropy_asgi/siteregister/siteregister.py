@@ -18,8 +18,9 @@ from .exceptions import GnrDaemonException
 
 __all__ = ["DEFAULT_PAGE_MAX_AGE", "GnrDaemonException", "RegisterResolver"]
 
-# The page eviction window the legacy cleanup config falls back to (seconds).
-DEFAULT_PAGE_MAX_AGE = 120
+# The page eviction window the legacy cleanup config falls back to (seconds),
+# aligned to the worker sweep's own page_max_age.
+DEFAULT_PAGE_MAX_AGE = 600
 
 
 class RegisterResolver:

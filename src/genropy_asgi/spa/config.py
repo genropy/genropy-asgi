@@ -3,20 +3,24 @@
 
 """Standard genro-asgi configuration for serving one GenroPy instance as a SPA.
 
-Used by the ``gnrasgiserve`` CLI: a normal multi-app ``AsgiServer`` on which the GenroPy
-instance is mounted on the root. The variable elements (the resolved instance ``path``,
-host/port/debug, the worker count) come from the environment; the rest of the recipe is
-fixed. No register daemon in either shape: the register is served in-process.
+Used by the ``gnrasgiserve`` CLI: a normal multi-app ``AsgiServer`` on which the
+GenroPy instance is mounted on the root. The variable elements (the resolved
+instance ``path``, host/port/debug, the worker count) come from the environment;
+the rest of the recipe is fixed. No register daemon in either shape: the register
+is served in-process, on each worker.
 
-Two shapes, chosen by ``GNR_ASGI_WORKERS``:
+ONE shape, whatever ``GNR_ASGI_WORKERS`` says: a single ``GenropySpaApplication``
+owning the user-sticky pool. ``0`` (the default) is the SINGLE — the commander
+holds its one worker in this process (``local_worker``); ``N > 0`` spawns N
+worker subprocesses, each hosting the same site behind the core ``worker_entry``.
 
-- ``0`` (default) — the SINGLE: one ``GenropySpaApplication`` serves the site in this
-  process (commander of itself).
-- ``N > 0`` — the POOL: a ``GenropyCommanderApplication`` (the commander, a
-  ``SpaMultiWorkerApplication`` subclass adding the site-wide ``/metrics`` endpoint) spawns
-  N worker subprocesses, each hosting a ``GenropyWorkerApplication`` on the same site path;
-  the commander forwards by sticky affinity and serves the ``/_commander/*`` back-channel
-  (datachange pull) at its own public URL.
+The environment enters the tree as ``EnvResolver`` VALUES sitting in the element
+attributes — the shape the core's own recipes use (``BaseConfiguration``) and the
+one its grammar types declare (``port: int | BagResolver``). The read door
+resolves such a resolver transparently and AT READ TIME, so the recipe follows
+the environment the CLI writes just before the server is built. The builder
+datastore plus ``^name`` pointers is a different mechanism: the configuration read
+stack never dereferences those strings, and the grammar rejects them outright.
 """
 
 import os
@@ -26,45 +30,27 @@ from genro_bag.resolvers import EnvResolver
 
 from genro_asgi.config import AsgiConfigBuilder
 
-from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 
 
 class ServerConfiguration(AsgiConfigBuilder):
-    def setup(self, data: Any) -> None:
-        # The only variable elements: the resolved instance path (or name) and the
-        # server address, set by the CLI through the environment.
-        data["path"] = EnvResolver("GNR_ASGI_PATH")
-        data["host"] = EnvResolver("GNR_ASGI_HOST", default="127.0.0.1")
-        data["port"] = EnvResolver("GNR_ASGI_PORT", default=8000, dtype="L")
-        data["debug"] = EnvResolver("GNR_ASGI_DEBUG", default=True, dtype="B")
-
     def main(self, root: Any) -> None:
-        root.server(host="^host", port="^port")
-        root.middleware()
-        apps = root.applications(default="site")
+        """The one document: the listener, the middleware and the site on the root."""
+        cfg = root.configuration()
+        cfg.server(
+            host=EnvResolver("GNR_ASGI_HOST", default="127.0.0.1"),
+            port=EnvResolver("GNR_ASGI_PORT", default=8000, dtype="L"),
+        )
+        cfg.middleware()
         workers = int(os.environ.get("GNR_ASGI_WORKERS") or "0")
-        if workers:
-            # The commander's own public URL: the workers call the /_commander/*
-            # back-channel here (the app is mounted on the root, no mount suffix).
-            port = int(os.environ.get("GNR_ASGI_PORT") or "8000")
-            apps.application(
-                code="site",
-                app_class=GenropyCommanderApplication,
-                worker_app_class=(
-                    "genropy_asgi.spa.genropy_worker_application:GenropyWorkerApplication"
-                ),
-                app_args={
-                    "source": os.environ.get("GNR_ASGI_PATH", ""),
-                    "debug": os.environ.get("GNR_ASGI_DEBUG", ""),
-                },
-                workers=workers,
-                commander_url=f"http://127.0.0.1:{port}",
-            )
-        else:
-            apps.application(
-                code="site",
-                app_class=GenropySpaApplication,
-                source="^path",
-                debug="^debug",
-            )
+        # mount="" IS the site root: a GenroPy site owns its absolute URLs
+        # (/_rsrc, /sys, the dojo tree), so it cannot live under a /site prefix.
+        cfg.applications().application(
+            code="site",
+            mount="",
+            app_class=GenropySpaApplication,
+            source=EnvResolver("GNR_ASGI_PATH"),
+            debug=EnvResolver("GNR_ASGI_DEBUG", default=True, dtype="B"),
+            workers=workers,
+            local_worker=(workers == 0),
+        )

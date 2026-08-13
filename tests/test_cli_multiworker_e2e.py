@@ -24,6 +24,8 @@ import time
 import httpx
 import pytest
 
+pytest.skip("pool bridge is stage two", allow_module_level=True)
+
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
 

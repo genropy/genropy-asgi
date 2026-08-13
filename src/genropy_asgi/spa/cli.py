@@ -16,9 +16,9 @@ No external register daemon is contacted, started or required.
 Name -> path resolution is the legacy GenroPy step and lives here (it uses ``gnr.*``); the
 generic SPA model only ever sees a path.
 
-With ``--workers N`` the same command serves the instance through a commander with a
-pool of N worker subprocesses (sticky routing per user; the workers reach the commander
-back-channel at its own address). Still no daemon.
+With ``--workers N`` the same command serves the instance through the front's
+user-sticky pool: N worker subprocesses, each hosting the same site, reached over
+the pool's own channel (sticky routing per user). Still no daemon.
 
 Usage:
     gnrasgiserve test_invoice_pg
@@ -58,7 +58,12 @@ def cmd_serve(argv: list[str]) -> int:
     parser.add_argument("instance", help="GenroPy instance/site name (or path)")
     parser.add_argument("-H", "--host", default=None)
     parser.add_argument("-p", "--port", type=int, default=None)
-    parser.add_argument("--reload", action="store_true", default=None)
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=None,
+        help="accepted for surface compatibility; the core server has no reloader",
+    )
     parser.add_argument("--nodebug", action="store_true")
     parser.add_argument(
         "--workers",
@@ -89,9 +94,11 @@ def cmd_serve(argv: list[str]) -> int:
     if opts.config is None and opts.workers:
         os.environ["GNR_ASGI_WORKERS"] = str(opts.workers)
 
+    if opts.reload:
+        print("--reload: the core server has no reloader; flag accepted and ignored.")
     config_path = opts.config or CONFIG
-    server = AsgiServer(config_path, host=opts.host, port=opts.port, reload=opts.reload)
-    server.run()
+    server = AsgiServer(str(config_path))
+    server.serve(host=opts.host, port=opts.port)
     return 0
 
 

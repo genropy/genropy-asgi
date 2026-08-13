@@ -66,11 +66,11 @@ PEP 3333 environ and runs the site in a thread executor, so uvicorn is never
 blocked. The site's register — connections, pages, sessions, datachanges,
 stores — is served **in-process**, not by a daemon.
 
-- **Single** (`GenropySpaApplication`): one process hosts the site and is the
-  commander of itself.
-- **Pool**: a commander (`GenropyCommanderApplication`, the genro-asgi core
-  commander plus the site-wide `/metrics` endpoint) supervises N workers
-  (`GenropyWorkerApplication`), forwards every request to the right worker by an
+- **Single** (`GenropySpaApplication` with `workers=0`): one process hosts the
+  site and is the commander of itself.
+- **Pool** (the same `GenropySpaApplication` with `workers=N`): its commander
+  supervises N spawned workers (`GenropyWorker`, one site each), forwards every
+  request to the right worker by an
   opaque `sticky_cid` cookie, and grows the pool on measured worker occupancy
   (cpu + executor), not head counts. Datachanges live locally on the page's own worker (the *switch
   model*); cross-worker changes arrive via the commander. The legacy

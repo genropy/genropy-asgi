@@ -18,7 +18,7 @@ import importlib.util
 import pytest
 from genro_routes import RoutingClass, route
 
-from genro_asgi.applications.openapi_application import OpenApiApplication
+from genro_asgi.applications.openapi import OpenApiApplication
 from genropy_asgi.proxy import GenropyProxyMixin, GenropyProxyOpenApiApplication
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
@@ -110,7 +110,7 @@ class _DemoApi(RoutingClass):
 
 @pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
 def test_e2e_real_gnrapp_closes_connection():
-    from genro_asgi import GenroAsgiWorker
+    from genro_asgi import AsgiServer
 
     api = _DemoApi(None)
     app = GenropyProxyOpenApiApplication(instance=_INSTANCE, routing_class=api)
@@ -118,8 +118,9 @@ def test_e2e_real_gnrapp_closes_connection():
     assert app.gnr_app is not None
     assert app.gnr_app.db is not None
 
-    worker = GenroAsgiWorker(app, host="127.0.0.1", port=8000)
-    received = _fire_get(worker, "/api/whoami")
+    server = AsgiServer(applications=[app])  # routed dispatch needs the owning server
+    assert app.server is server
+    received = _fire_get(app, "/api/whoami")
     assert received["status"] == 200
     app.on_shutdown()
 

@@ -51,17 +51,21 @@ genropy-asgi removes the wire. The register is served **entirely in-process** by
 hosting application's own registries, surface and stores. There is no daemon to
 start, connect to, or keep alive.
 
-Two application classes host the site, sharing one mixin
-(``GnrSiteHostingMixin``):
+One application class fronts the site in both shapes, and one worker class hosts
+it:
 
-``GenropySpaApplication`` (the *single*)
-   Hosts the site **and** is the commander of itself: it owns the surface, the
-   mailbox and the global store. This is what ``gnrasgiserve <site>`` runs.
+``GenropySpaApplication`` (the *front*)
+   The core ``SpaApplication``: it owns the user-sticky pool — the routing
+   surface, the sticky cookie, the global-store master — and adds the GenroPy
+   fit (the worker defaults, ``/metrics``, the memory budget). This is what
+   ``gnrasgiserve <site>`` runs, with or without ``--workers``.
 
-``GenropyWorkerApplication`` (the *pool child*)
-   Hosts the same site as one worker inside a commander's pool. Nothing
-   legacy-specific changes; the role differences (events ride the pool channel,
-   datachanges stay local) are inherited from genro-asgi.
+``GenropyWorker`` (the *site host*)
+   The core ``UserStickyWorker`` holding the ``GnrWsgiSite`` behind the
+   ``wsgi_app`` seam, with the legacy stores, the disk cleanup and the expiry
+   ages the site declares. The front holds one in this process for the single
+   (``local_worker``) and spawns one per child for a pool, by dotted path
+   (``worker_class``) — the same class in both roles.
 
 The daemonless register
 -----------------------
@@ -70,13 +74,11 @@ The daemonless register
 base class, no wire funnel. Every command the legacy calls is an **explicit
 public method** with its own body; there is no ``__getattr__`` dispatch magic.
 
-A mutating command does two things:
-
-#. ``_fold(op, args, kwargs)`` — hand the command to the SPA worker so the local
-   registries update. On a pool child the lifecycle/POST event also rides up to
-   the commander on the pool **channel**. Reads never fold.
-#. its own in-process body — read the local registries / stores / pending lists
-   and return what the legacy expects.
+A mutating command calls the worker's homonymous **op** directly — the ops are
+sync, take the worker's dispatch lock, and run on the pool thread the WSGI request
+is already on. The op itself announces what it did on the CALL that caused it, so
+the routing surface hears the lifecycle without the register knowing anything
+about the channel. Reads announce nothing: they answer from the local registers.
 
 What the register serves:
 
@@ -97,30 +99,27 @@ daemon behind them. This is what **replaces genro-nodaemon**.
 The commander and the workers
 -----------------------------
 
-With ``--workers N`` (or a pool config), the front server is a **commander**
-(``GenropyCommanderApplication``, a subclass of the generic
-``SpaMultiWorkerApplication`` from genro-asgi core) that:
+With ``--workers N`` (or a pool config), the front's **commander** (the core
+``UserStickyCommander`` the ``GenropySpaApplication`` owns):
 
-* spawns and supervises N **worker** subprocesses, each hosting a
-  ``GenropyWorkerApplication`` on the same site;
-* forwards every request to the right worker — it is an application-level
-  reverse proxy, transparent to cookies and headers;
-* holds the **affinity registries** and routes by a sticky cookie so a user
-  always returns to the same worker.
+* spawns and supervises N **worker** subprocesses, each a ``GenropyWorker`` on
+  the same site;
+* forwards every request to the right worker — an application-level reverse
+  proxy, transparent to cookies and headers;
+* holds the **affinity surface** and routes by a sticky cookie so a user always
+  returns to the same worker.
 
-The commander is ``GenropyCommanderApplication``, a subclass of the generic
-``SpaMultiWorkerApplication`` that adds one GenroPy-specific route: the
-``/metrics`` endpoint.
+The front adds one GenroPy-specific route to it: the ``/metrics`` endpoint.
 
 The ``/metrics`` endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``GenropyCommanderApplication`` exposes a Prometheus ``/metrics`` endpoint. Being
-an ``@route`` on the commander, ``/metrics`` roots one of the app's **internal
-roots** and is served locally by the commander — not forwarded to a single worker
+``GenropySpaApplication`` exposes a Prometheus ``/metrics`` endpoint. Being
+an ``@route`` on the front, ``/metrics`` roots one of the app's **internal
+roots** and is served locally — not forwarded to a single worker
 — so the numbers are the whole pool's. It reports the site-wide counters as the exact ``len()`` of the
-commander's aggregated registries: ``users`` (``user_registry``), ``pages``
-(``pages_index``) and ``connections`` (``cid_to_user``), under the metric
+commander's routing maps: ``users`` (``user_worker_map``), ``pages``
+(``page_connection``) and ``connections`` (``connection_user``), under the metric
 ``genropy_site_counters{counter="..."}``. This emulates the legacy webtool
 (``genropy/webtools/prometheus.py``), which read the daemon-central siteregister.
 One counter the legacy exposed, ``stale_connections_5min``, is **not** available
@@ -152,9 +151,9 @@ migrated *incrementally* — one path at a time, no big-bang rewrite:
 .. code-block:: python
 
    from genro_asgi import route
-   from genropy_asgi.spa.genropy_commander_application import GenropyCommanderApplication
+   from genropy_asgi.spa import GenropySpaApplication
 
-   class MyCommander(GenropyCommanderApplication):
+   class MySite(GenropySpaApplication):
        @route(media_type="application/json")
        def sys_health(self):            # serves /sys/health natively…
            return {"status": "ok"}
@@ -194,8 +193,8 @@ reach every page subscribed to that table, possibly on a different worker.
 genropy-asgi uses the **switch model**: a datachange queue lives **locally** on
 the worker that owns the page. A page drains its own pending list on its own
 worker; there is no pull RPC back to a central daemon. When a change must cross
-to a page on another worker, the commander forwards it to that worker's
-``/datachange_in`` endpoint, where it lands on the local queue like any other.
+to a page on another worker, it ascends the channel to the commander, which posts
+it down to that worker, where it lands on the local queue like any other.
 
 The commit gate that decides whether a change is worth notifying differs by
 role: the single filters against its own local subscriptions; a pool child
@@ -209,18 +208,17 @@ Request flow, end to end
 **Single**
 
 #. uvicorn hands the ASGI request to ``GenropySpaApplication``.
-#. The app converts it to a WSGI environ and runs the ``GnrWsgiSite`` in the
-   thread executor.
+#. The front forwards it to its in-process ``GenropyWorker``, which converts it
+   to a WSGI environ and runs the ``GnrWsgiSite`` in the thread executor.
 #. The site calls its register — served in-process by ``GenropyRegisterClient``.
 #. The response (with any ``sticky_cid`` birth cookie) goes back through uvicorn.
 
 **Pool**
 
-#. uvicorn hands the request to the commander (``GenropyCommanderApplication``).
-#. The commander reads ``sticky_cid``, looks up the user's worker, and forwards
+#. uvicorn hands the request to the front (``GenropySpaApplication``).
+#. Its commander reads ``sticky_cid``, looks up the user's worker, and forwards
    the request there. No cookie? The reception worker mints one.
 #. The worker runs the site exactly as in the single case; its register is
    in-process and local.
 #. The response is relayed back untouched. Lifecycle events the worker produced
-   ride the pool channel up to the commander to keep the affinity registries in
-   sync.
+   ride the channel up to the commander to keep the routing surface in sync.
