@@ -246,3 +246,82 @@ Other Phase 6 notes:
   accepted outcome if an external caller exists.
 - **`route_cleanup` seam commissioned to the core** (owner ok): per-dispatch
   cleanup hook on the executor thread, same liturgy as #11/#12.
+
+## Post-run repairs (finalize reviews, 2026-08-12/13)
+
+Three repair commits landed after the amendments, each driven by an
+independent review round; the reasoning below is NOT in review.md (which
+covers Phase 7 only) and must survive this run.
+
+### Round 0 — guest alignment (6c2c3de)
+- Core 0.33 delivered commission #14 (GUEST_PREFIX): the bridge's one
+  leftover transcription of the naked-cid rule was `new_page`'s fallback,
+  which now reads the user OFF THE LIVE CONNECTION ROW — minted at the door,
+  never re-minted downstream (re-minting would mis-own a page on a logged
+  connection). Floor raised to genro-asgi>=0.33.0. Two tests were green only
+  through the spurious split entry the old fallback created.
+
+### Round 1 — whole-diff review (b68ba8b, "ten defects confirmed")
+16-agent panel (8 finders + 5 adversarial verifiers) on the full workflow
+diff. Ten confirmed defects fixed, the load-bearing decisions:
+- **drop_page forwards the legacy `cascade=False`** (gnrwebpage.py:624; the
+  pagehide beacon fires on EVERY navigation, so the core cascade destroyed a
+  single-tab session on ordinary navigation).
+- **`_encode_leased` = encode twice**: the lease release crosses one extra
+  tytx hop (core release_global_lock -> commander apply_changes), so double
+  encoding leaves the MASTER holding the same text on both rails (blind
+  courier preserved). Verified empirically per scalar type; only benign
+  deviation: None. Do NOT "simplify" to a single encode — that was the bug.
+- Lease released + re-raise on any failure after acquire (the core lock has
+  NO TTL and waiters block in a no-timeout .result(): a leaked lease hangs
+  every later WSGI thread, not an exception).
+- `_live_rows` None-filtering in the readers (a row vanishing between
+  lock-free reads is a LEGITIMATE state, not a defensive-code case).
+- Expiry ages seeded from the site's <cleanup>; mount="" class attr +
+  ValueError on non-empty mount; register client captured once in __init__
+  (the site property is per-domain, lazy, unlocked, reaches db work);
+  orphan sweep gated off pool members; truthful docs sweep (the "groups"
+  grammar documented in configuration/single-vs-multi NEVER existed in the
+  core); dead TYTX-text descent trio deleted (descent goes through
+  handle_frame with DECODED values).
+- Refuted with proof (do not re-open): the user-store "leak" to browsers
+  (omitUnknownTypes whitelist eats Bag/set), the guest_ ValueError at login
+  (every real avatar carries a user), the multi-clause filter OR (verbatim
+  daemon parity, zero multi-clause callers in the whole legacy tree).
+
+### Round 2 — repair-commit review (53f7d3d, "ten findings")
+Second panel on b68ba8b itself: 7 of its 10 fixes complete with proof, 3
+partial. Fixes landed:
+- `_page_owner` walk (page->connection->user via .get(), None on a gone
+  chain) protects the DERIVED walks the row-fetch fix missed; user-addressed
+  readers snapshot the live `connections` set with list().
+- **Page EXPIRY must not cascade** (daemon expire_pages drops bare; only
+  connection expiry climbs, at its own age): bridge demolish_page defaults
+  cascade=False; the drop_page op passes it explicitly.
+- **All THREE <cleanup> knobs** honoured uniformly; `guest_connection_max_age`
+  IS a legacy key, daemon default 40s — the bridge guest default moved
+  1800 -> 40 deliberately (a live guest refreshes via the ~2s ping).
+- `sole_registry_owner` (owner-baptised name) declared by the composition
+  root (workers == 0) gates the orphan sweep — pool_member alone was wrong
+  for local_worker+workers>0 mixed fronts.
+- Equivalence test guards the transcribed cascade=False demolition branch
+  until the core grows the `cascade` seam (commission #15, TO BE OPENED on
+  genro-asgi — same liturgy as #11-#14).
+- Snapshot materialization = validate into a scratch Bag, then clear+refill
+  the live one (SAME object, subscribers attached — cemented); the two lost
+  rail assertions (immediate-rail round-trip, snapshot no-echo) restored.
+
+### Still open at finalize (on record)
+- Core commission #15: `cascade` on the core demolition (owner ok'd opening).
+- Live check (real boot + login + chat poll) NOT exercised after the guest
+  alignment — owner's explicit choice to proceed without.
+- Multidomain is NOT supported by the global rail (the captured register is
+  the root domain's) — declare it if it ever enters scope.
+- Maintenance debt (next cycle, not defects): LegacyBagCollector forks the
+  core collector (~100 lines, needs a core subscribe seam); aware->naive
+  normalization duplicated; no tests/conftest.py (3 site boots per run;
+  rail fixture is function-scoped: ~11 boots); tytx round-trip paid by every
+  LOCAL datachange; users() dresses every row per 2s poll; rmtree inside
+  dispatch_lock on every page close; Register.values() as a core seam would
+  delete _live_rows; churn test is timing-shaped; orphan cleaning in a POOL
+  has no owner.
