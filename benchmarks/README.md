@@ -18,10 +18,29 @@ PGGSSENCMODE=disable gnrasgiserve test_invoice_pg -p 8099 --nodebug
 `PGGSSENCMODE=disable` is required on macOS: libpq negotiating Kerberos in a
 forked child segfaults the process.
 
-**Accounts whose password you know.** The harness logs in as the usernames listed
-in `usernames.txt`, all with the same password (`--password`, default `a`). Those
-accounts live in the instance's own `adm.user` table; set their password from the
-site's user administration page. No password material is kept in this repository.
+**Accounts whose password you know.** The harness logs in as the 32 usernames
+listed in `usernames.txt`, all sharing one password (`--password`, default `a`).
+The accounts themselves come with the test instance; what `test_users.zip`
+carries is the pair of fixtures used to make them usable for a benchmark:
+
+- `set_pwd_a.sql` — 32 `UPDATE` statements, one per username, in a single
+  transaction: this is the one you run, and it sets every password to `a`;
+- `adm_user_backup_20260621_073407.sql` — the `pg_dump` of `adm.adm_user` taken
+  immediately BEFORE that overwrite, kept so the original passwords can be
+  restored. It recreates the table from scratch (no `DROP`, no `IF NOT EXISTS`),
+  so restoring means dropping `adm.adm_user` first — never a plain replay onto a
+  live table.
+
+```bash
+unzip -o test_users.zip
+psql -d <your_test_db> -f set_pwd_a.sql
+```
+
+Fictional accounts on a local test database: invented names,
+`@testinvoice.com` addresses, and the hash of the single letter `a`. Zipped
+rather than left loose so the archive reads as the database fixture it is
+instead of presenting itself as credential material. Never aim either file at
+anything but a throwaway database.
 
 ## The trap that cost a full session — read this before writing a new script
 
@@ -79,6 +98,7 @@ can be pointed at a classic gunicorn stack for comparison.
 | `session_capture.jsonl` | The recorded browser session every replay is built from (`capture_proxy.py` records it). No cookies or session tokens — request lines and form fields only. |
 | `usernames.txt` / `usernames_all.txt` | The pool of accounts sessions log in as. |
 | `cust_pkeys.txt` | Customer record keys for the record-level rungs. |
+| `test_users.zip` | The two SQL fixtures: set every benchmark account's password, and the pre-overwrite dump that restores the originals (see above). |
 
 ## The rest of the scripts
 
