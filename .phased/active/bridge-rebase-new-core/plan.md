@@ -17,7 +17,13 @@ notes.md, review.md), then the pre_refactoring worker
 
 ## Work Plan
 
-- [ ] **Phase 1**: New core wired in
+- [x] **Phase 1**: New core wired in
+  > Done: requirement bumped to genro-asgi>=0.34.0; local checkout ../genro-asgi
+    (HEAD 43973eb, version 0.34.0) reinstalled editable, genropy-asgi editable
+    install refreshed. Import check `SpaWorker` + `SpaApplicationNew` exits 0;
+    `pytest tests/` green on the old bridge (55 passed, 77 skipped — skips are
+    pre-existing environmental e2e skips, no code touched).
+  > Files: pyproject.toml
   - Run: opus / low
   - Pattern: library-standard
   - Files: pyproject.toml
