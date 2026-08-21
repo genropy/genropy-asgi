@@ -1140,6 +1140,29 @@ class GenropyRegisterClient:
             return list(table_list or [])
         return [table for table in (table_list or []) if table in worker.subscribed_tables]
 
+    def subscribed_tables(self, register_name: Any = None, **kwargs: Any) -> list:  # wf:phase-2:new
+        """Every table observed by at least one live page — the write-time gate reads it.
+
+        The daemon grew this command with the write-time broadcast gate
+        (genropy #968: ``site.allSubscribedTables`` asks the register instead
+        of unioning per-page lists at commit time). On the wire the worker's
+        subscription cache IS the whole pool's view, refreshed synchronously
+        by every subscribe and exchange reply; a bare worker unions its own
+        page rows, which are all the pages there are.
+        """
+        worker = self.spa_worker
+        if worker is None:
+            return []
+        if worker.pool_member:
+            return sorted(worker.subscribed_tables)
+        with worker.dispatch_lock:
+            tables: set = set()
+            for page_id in worker.page_items.keys():
+                page = worker.page_items.get(page_id)
+                if page is not None:
+                    tables.update(page["table_subscriptions"])
+        return sorted(tables)
+
     # ==================================================================
     # Maintenance / cleanup (in-process, single node)
     # ==================================================================

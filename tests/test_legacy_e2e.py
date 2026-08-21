@@ -5,9 +5,11 @@
 
 These REQUIRE GenroPy and the ``test_invoice_pg`` site; they skip cleanly when
 either is missing. No register daemon anywhere: the front is
-``GenropySpaApplication`` (the core ``SpaApplication``) holding its one
-``GenropyWorker`` in-process — the full protocol on a ``LocalChannel`` — and
-every request crosses the demux, the ``http`` CALL forward and the WSGI seam.
+``GenropySpaApplication`` (the core ``SpaApplicationNew``) attached to the live
+lane of ``tests/lane.py`` — the GenropyWorker with its real handler and a real
+commander desk, all in this process so the register and the db stay
+inspectable — and every request crosses the demux, the ``http`` CALL forward,
+the real wire and the WSGI seam.
 
 The asserts encode the register semantics the daemon rail established: the same
 scenarios stayed green across daemon -> daemonless -> core rebase — this suite
@@ -31,6 +33,7 @@ Scenario coverage:
   recipient with ``fired=True`` and only the written leaf in the envelope
 """
 
+import asyncio
 import importlib.util
 import re
 import uuid
@@ -46,41 +49,72 @@ pytestmark = pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
 
 @contextmanager
 def call_sink(worker):
-    """Open the sinks a CALL would open (the core's own test convention)."""
-    events_token = worker._call_events.set([])
-    tasks_token = worker._call_tasks.set([])
+    """The old base required an open CALL sink around every op; the new base's
+    verbs announce straight onto ``worker_events``. Kept as a no-op so the
+    scenarios read unchanged across the rebase."""
+    yield
+
+
+@pytest.fixture(scope="module")
+def lane():
+    """The live lane: the GenropyWorker, its real handler, a real desk."""
+    from tests.lane import start_site_lane
+
     try:
-        yield
-    finally:
-        worker._call_events.reset(events_token)
-        worker._call_tasks.reset(tasks_token)
+        instance = start_site_lane(_SITE)
+    except Exception as exc:  # site missing or broken: skip, don't fail
+        pytest.skip(f"cannot start the {_SITE} lane: {exc}")
+    yield instance
+    instance.stop()
 
 
 @pytest.fixture()
-async def app():
-    """One real single per test: the front + its in-process GenropyWorker."""
-    from genro_asgi import AsgiServer
+def app(lane):
+    """The front attached to the lane's live pool.
 
+    In production the pool is born at startup from the recipe; the lane
+    already holds a started commander with the site worker presented on it,
+    so the front is handed that commander directly — the one seam this suite
+    wires by hand. Every request still crosses the demux, the cookie mint,
+    the pack and the real wire.
+    """
     from genropy_asgi.spa import GenropySpaApplication
 
-    front = GenropySpaApplication(source=_SITE, debug=False, workers=0, local_worker=True)
-    server = AsgiServer(applications=[front])  # native dispatch needs the owner
-    assert front.server is server
-    try:
-        await front.on_startup()
-    except Exception as exc:  # site missing or broken: skip, don't fail
-        pytest.skip(f"cannot start the {_SITE} single: {exc}")
-    yield front
-    await front.on_shutdown()
+    front = GenropySpaApplication()
+    front._commander = lane.commander
+    front.lane = lane
+    return front
 
 
 @pytest.fixture()
-def register(app):
-    return app.gnr_site.register
+def register(lane):
+    return lane.worker.gnr_site.register
 
 
-async def fire(app, method, path, query=b"", cookies=None, body=b""):
-    """Drive one request through the full ASGI stack, in process."""
+@pytest.fixture()
+def flush(register):
+    """Play the end-of-request of the pytest thread: deliver its queued writes.
+
+    The core lays every addressed write on the caller's request slot and ships
+    it at that thread's own exchange — in production the writer IS a request
+    thread, and its collect is the shipment. The tests write from the pytest
+    thread, so this fixture exchanges on a throwaway page whose own queue is
+    empty by construction: the writes reach the desk and land in each TARGET
+    page's queue, exactly as a real request's tail would leave them.
+    """
+    cid = f"flush_{uuid.uuid4().hex[:8]}"
+    page_id = f"flushp_{uuid.uuid4().hex[:8]}"
+    register.new_connection(cid, user=None)
+    register.new_page(page_id, None, connection_id=cid)
+
+    def _flush():
+        assert register.subscription_storechanges(None, page_id) == []
+
+    return _flush
+
+
+def fire(app, method, path, query=b"", cookies=None, body=b""):
+    """Drive one request through the full ASGI stack, on the lane's loop."""
     headers = [(b"cookie", cookies.encode())] if cookies else []
     scope = {
         "type": "http", "method": method, "path": path, "query_string": query,
@@ -99,7 +133,7 @@ async def fire(app, method, path, query=b"", cookies=None, body=b""):
         elif message["type"] == "http.response.body":
             received["body"] += message.get("body", b"")
 
-    await app(scope, receive, send)
+    asyncio.run_coroutine_threadsafe(app(scope, receive, send), app.lane.loop).result(30)
     return received
 
 
@@ -123,20 +157,20 @@ def merge_cookies(received, cookies=None):
     return "; ".join(f"{name}={value}" for name, value in jar.items())
 
 
-async def open_page(app, cookies=None):
+def open_page(app, cookies=None):
     """GET the root page; return (page_id, cookie_jar_string)."""
-    received = await fire(app, "GET", "/", cookies=cookies)
+    received = fire(app, "GET", "/", cookies=cookies)
     assert received["status"] == 200
     match = re.search(r"page_id:'([\w-]+)'", received["body"].decode(errors="replace"))
     assert match, "no page_id in the bootstrap HTML"
     return match.group(1), merge_cookies(received, cookies)
 
 
-async def ping(app, page_id, cookies):
+def ping(app, page_id, cookies):
     """GET /_ping for the page; return the envelope as a legacy Bag."""
     from gnr.core.gnrbag import Bag
 
-    received = await fire(
+    received = fire(
         app, "GET", "/_ping", query=f"page_id={page_id}".encode(), cookies=cookies
     )
     assert received["status"] == 200
@@ -164,8 +198,8 @@ def unique_table():
     return f"probe.t{uuid.uuid4().hex[:8]}"
 
 
-async def test_page_open_mints_both_cookies_and_the_page(app, register):
-    page_id, cookie = await open_page(app)
+def test_page_open_mints_both_cookies_and_the_page(app, register):
+    page_id, cookie = open_page(app)
     jar = dict(pair.split("=", 1) for pair in cookie.split("; "))
     assert _SITE in jar  # the site's own legacy session cookie
     assert "sticky_cid" in jar  # the front's routing cookie
@@ -174,64 +208,68 @@ async def test_page_open_mints_both_cookies_and_the_page(app, register):
     assert page_item["register_item_id"] == page_id
 
 
-async def test_ping_with_no_changes_returns_empty_envelope(app):
-    page_id, cookie = await open_page(app)
-    envelope = await ping(app, page_id, cookie)
+def test_ping_with_no_changes_returns_empty_envelope(app):
+    page_id, cookie = open_page(app)
+    envelope = ping(app, page_id, cookie)
     assert datachanges(envelope) == []
 
 
-async def test_db_event_reaches_subscribed_page_once_including_origin(app, register):
-    page_id, cookie = await open_page(app)
+def test_db_event_reaches_subscribed_page_once_including_origin(app, register, flush):
+    page_id, cookie = open_page(app)
     table = unique_table()
     register.subscribeTable(page_id, table=table, subscribe=True)
     register.notifyDbEvents(
         {table: [{"dbevent": "U", "pkey": "K1"}]},
         register_name="page", origin_page_id=page_id, dbevent_reason="probe",
     )
-    changes = datachanges(await ping(app, page_id, cookie))
+    flush()
+    changes = datachanges(ping(app, page_id, cookie))
     # delivered even though this page IS the origin (legacy does not exclude it)
     assert len(changes) == 1
     path, value, attr = changes[0]
     assert path == "gnr.dbchanges." + table.replace(".", "_")
     assert attr["change_attr"]["from_page_id"] == page_id
     # the collect is destructive: nothing on the next ping
-    assert datachanges(await ping(app, page_id, cookie)) == []
+    assert datachanges(ping(app, page_id, cookie)) == []
 
 
-async def test_real_db_commit_notifies_subscribed_page(app, register):
-    page_id, cookie = await open_page(app)
+def test_real_db_commit_notifies_subscribed_page(app, register, flush):
+    page_id, cookie = open_page(app)
     table = "invc.customer_type"
     register.subscribeTable(page_id, table=table, subscribe=True)
-    db = app.gnr_site.db
+    db = app.lane.worker.gnr_site.db
     code = uuid.uuid4().hex[:5]
     tbl = db.table(table)
     tbl.insert({"code": code, "description": "e2e probe"})
     db.commit()
-    changes = datachanges(await ping(app, page_id, cookie))
+    flush()
+    changes = datachanges(ping(app, page_id, cookie))
     assert any(path == "gnr.dbchanges.invc_customer_type" for path, _, _ in changes)
     # clean up the record and drain the resulting event
     tbl.delete({"code": code})
     db.commit()
-    await ping(app, page_id, cookie)
+    flush()
+    ping(app, page_id, cookie)
 
 
-async def test_user_store_change_delivered_then_drained(app, register):
+def test_user_store_change_delivered_then_drained(app, register, flush):
     # The core model: the user-store write is a REAL write on the owner's live
     # store, captured by each subscribed page's own user_view — no offsets, no
     # ``_new_datachange`` bookkeeping. The drain is destructive.
-    page_id, cookie = await open_page(app)
+    page_id, cookie = open_page(app)
     user = register.connection(register.page(page_id)["connection_id"])["user"]
     register.setStoreSubscription(page_id, "user", "chat", True)
     with register.userStore(user) as store:
         store.set_datachange("chat.msg", "hello")
-    assert paths_and_values(await ping(app, page_id, cookie)) == [("chat.msg", "hello")]
+    flush()
+    assert paths_and_values(ping(app, page_id, cookie)) == [("chat.msg", "hello")]
     # destructive drain: the same change never comes back on later pulls
-    assert datachanges(await ping(app, page_id, cookie)) == []
+    assert datachanges(ping(app, page_id, cookie)) == []
 
 
-async def test_user_store_change_reaches_both_tabs_once_each(app, register):
-    page1, cookie = await open_page(app)
-    page2, cookie = await open_page(app, cookies=cookie)  # same connection, same user
+def test_user_store_change_reaches_both_tabs_once_each(app, register, flush):
+    page1, cookie = open_page(app)
+    page2, cookie = open_page(app, cookies=cookie)  # same connection, same user
     connection_id = register.page(page1)["connection_id"]
     assert register.page(page2)["connection_id"] == connection_id
     user = register.connection(connection_id)["user"]
@@ -239,23 +277,25 @@ async def test_user_store_change_reaches_both_tabs_once_each(app, register):
     register.setStoreSubscription(page2, "user", "news", True)
     with register.userStore(user) as store:
         store.set_datachange("news.flash", "ready")
-    assert paths_and_values(await ping(app, page1, cookie)) == [("news.flash", "ready")]
-    assert paths_and_values(await ping(app, page2, cookie)) == [("news.flash", "ready")]
+    flush()
+    assert paths_and_values(ping(app, page1, cookie)) == [("news.flash", "ready")]
+    assert paths_and_values(ping(app, page2, cookie)) == [("news.flash", "ready")]
     # each tab drained its own copy: nothing comes back to either
-    assert datachanges(await ping(app, page1, cookie)) == []
-    assert datachanges(await ping(app, page2, cookie)) == []
+    assert datachanges(ping(app, page1, cookie)) == []
+    assert datachanges(ping(app, page2, cookie)) == []
 
 
-async def test_page_store_set_datachange_delivered_like_batch_thermo(app, register):
-    page_id, cookie = await open_page(app)
+def test_page_store_set_datachange_delivered_like_batch_thermo(app, register, flush):
+    page_id, cookie = open_page(app)
     with register.pageStore(page_id) as store:
         store.set_datachange("gnr.batch.thermo", {"progress": 50})
-    changes = datachanges(await ping(app, page_id, cookie))
+    flush()
+    changes = datachanges(ping(app, page_id, cookie))
     assert [path for path, _, _ in changes] == ["gnr.batch.thermo"]
-    assert datachanges(await ping(app, page_id, cookie)) == []
+    assert datachanges(ping(app, page_id, cookie)) == []
 
 
-async def test_chat_fired_write_echoes_to_sender_and_recipient(app, register):
+def test_chat_fired_write_echoes_to_sender_and_recipient(app, register, flush):
     """The ct_send_message replay: the daemon envelope contract, whole.
 
     Chat builds everything on the one-shot write: ``setInClientData(...,
@@ -267,12 +307,12 @@ async def test_chat_fired_write_echoes_to_sender_and_recipient(app, register):
     """
     from gnr.core.gnrbag import Bag
 
-    page1, cookie1 = await open_page(app)
-    page2, cookie2 = await open_page(app)  # separate jar: second connection
+    page1, cookie1 = open_page(app)
+    page2, cookie2 = open_page(app)  # separate jar: second connection
     participants = []
     for page_id, user in ((page1, "alice.chat"), (page2, "bob.chat")):
         connection_id = register.page(page_id)["connection_id"]
-        with call_sink(app.commander.worker):
+        with call_sink(app.lane.worker):
             register.change_connection_user(connection_id, user=user, user_name=user.title())
         register.setStoreSubscription(page_id, "user", "gnr.chat.msg", True)
         participants.append(user)
@@ -284,8 +324,9 @@ async def test_chat_fired_write_echoes_to_sender_and_recipient(app, register):
                 Bag(dict(msg="ciao", roomId="room1", from_user="alice.chat", in_out=in_out)),
                 fired=True, reason="chat_out",
             )
+    flush()
     for page_id, cookie, in_out in ((page1, cookie1, "out"), (page2, cookie2, "in")):
-        changes = datachanges(await ping(app, page_id, cookie))
+        changes = datachanges(ping(app, page_id, cookie))
         assert len(changes) == 1  # the leaf alone: no autocreate in the envelope
         path, value, attr = changes[0]
         assert path == "gnr.chat.msg.room1"
@@ -294,22 +335,24 @@ async def test_chat_fired_write_echoes_to_sender_and_recipient(app, register):
         assert value["msg"] == "ciao"
         assert value["in_out"] == in_out
         # one-shot: delivered once, nothing on the next pull
-        assert datachanges(await ping(app, page_id, cookie)) == []
+        assert datachanges(ping(app, page_id, cookie)) == []
 
 
-async def test_register_is_served_by_the_worker_machinery(app, register):
+def test_register_is_served_by_the_worker_machinery(app, register, flush):
     """Guard: the register state lives in the worker (registers + index), nowhere else."""
-    page_id, cookie = await open_page(app)
+    page_id, cookie = open_page(app)
     table = unique_table()
     register.subscribeTable(page_id, table=table, subscribe=True)
-    worker = app.commander.worker
-    assert page_id in worker.subscriptions.pages_for(table)
+    worker = app.lane.worker
+    # the subscription lives on the page row itself (the index is the desk's)
+    assert table in worker.page_items.get(page_id)["table_subscriptions"]
     register.notifyDbEvents(
         {table: [{"dbevent": "I", "pkey": "G1"}]},
         register_name="page", origin_page_id=page_id, dbevent_reason="guard",
     )
+    flush()
     # exactly one copy, delivered from the page's own pending list through the ping
-    changes = datachanges(await ping(app, page_id, cookie))
+    changes = datachanges(ping(app, page_id, cookie))
     assert len(changes) == 1
     assert changes[0][0] == "gnr.dbchanges." + table.replace(".", "_")
     # an unserved command is an explicit error, not a silent daemon fallback

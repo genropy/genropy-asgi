@@ -59,6 +59,9 @@ class SiteLane:
             entry_module="never.launched",
         )
         self.worker_handler = WorkerHandler(self.group, WORKER_NAME, **self.group.worker_settings)
+        # start_worker hangs the handler in the group's map; the lane stands in
+        # for it, so it hangs the handler itself — placement reads this map.
+        self.group.worker_handler_map[WORKER_NAME] = self.worker_handler
         self.worker: Any = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
@@ -82,6 +85,9 @@ class SiteLane:
         await self.worker.send_presentation({})
         self._reader_task = asyncio.create_task(self.worker.receive_frames())
         await connector.wait_connected()
+        # The lane stands in for launch_process, so it performs its state
+        # transition too: presented means running, and placement requires it.
+        self.worker_handler.state = "running"
 
     async def _close(self) -> None:
         if self._reader_task is not None:
