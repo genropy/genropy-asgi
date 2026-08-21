@@ -32,8 +32,8 @@ The two installation paths and the valve, overridable per installation:
 - ``GNR_ASGI_IDLE_FREEZE_MINUTES`` — the silence past which a user is
   parked in the freezer. Unset, the worker reads the site's ``<cleanup>``
   section (``connection_max_age`` seconds, 7200 where the site is silent).
-- ``GNR_ASGI_INSPECTOR`` — set to any value, the pool's debug door is mounted
-  on ``_inspect`` as MCP tools: an expression is evaluated inside the
+- ``GNR_ASGI_CONSOLE`` — set to any value, the pool's debug door is mounted
+  on ``_console`` as MCP tools: an expression is evaluated inside the
   commander or inside a named worker, and its ``repr`` comes back. It reads
   the live registers WITHOUT going through the site, so looking does not mint
   a cid nor open a connection — an observer that leaves no trace in what it
@@ -48,7 +48,7 @@ from typing import Any
 
 from genro_bag.resolvers import EnvResolver
 
-from genro_asgi.applications.spa_inspector import SpaInspectorMcpApplication
+from genro_asgi.applications.spa_console import SpaConsoleMcpApplication
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
@@ -83,13 +83,13 @@ class ServerConfiguration(AsgiConfigBuilder):
             mount="",
             app_class=GenropySpaApplication,
         )
-        if os.environ.get("GNR_ASGI_INSPECTOR"):
+        if os.environ.get("GNR_ASGI_CONSOLE"):
             # The first path segment decides the app, so the door answers on
-            # /_inspect while the site keeps every other URL of the root mount.
+            # /_console while the site keeps every other URL of the root mount.
             applications.application(
-                code="inspector",
-                mount="_inspect",
-                app_class=SpaInspectorMcpApplication,
+                code="console",
+                mount="_console",
+                app_class=SpaConsoleMcpApplication,
             )
         commander = front.commander(
             frozen_users_path=frozen_users_path,
