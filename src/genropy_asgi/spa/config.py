@@ -32,6 +32,14 @@ The two installation paths and the valve, overridable per installation:
 - ``GNR_ASGI_IDLE_FREEZE_MINUTES`` — the silence past which a user is
   parked in the freezer. Unset, the worker reads the site's ``<cleanup>``
   section (``connection_max_age`` seconds, 7200 where the site is silent).
+- ``GNR_ASGI_INSPECTOR`` — set to any value, the pool's debug door is mounted
+  on ``_inspect`` as MCP tools: an expression is evaluated inside the
+  commander or inside a named worker, and its ``repr`` comes back. It reads
+  the live registers WITHOUT going through the site, so looking does not mint
+  a cid nor open a connection — an observer that leaves no trace in what it
+  observes. The door is full ``eval`` by construction, so mounting IS the
+  gate (core doctrine): unset here means the door does not exist, and a
+  production environment never sets it.
 """
 
 import os
@@ -40,6 +48,7 @@ from typing import Any
 
 from genro_bag.resolvers import EnvResolver
 
+from genro_asgi.applications.spa_inspector import SpaInspectorMcpApplication
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
@@ -68,11 +77,20 @@ class ServerConfiguration(AsgiConfigBuilder):
         )
         # mount="" IS the site root: a GenroPy site owns its absolute URLs
         # (/_rsrc, /sys, the dojo tree), so it cannot live under a /site prefix.
-        front = cfg.applications().application(
+        applications = cfg.applications()
+        front = applications.application(
             code="site",
             mount="",
             app_class=GenropySpaApplication,
         )
+        if os.environ.get("GNR_ASGI_INSPECTOR"):
+            # The first path segment decides the app, so the door answers on
+            # /_inspect while the site keeps every other URL of the root mount.
+            applications.application(
+                code="inspector",
+                mount="_inspect",
+                app_class=SpaInspectorMcpApplication,
+            )
         commander = front.commander(
             frozen_users_path=frozen_users_path,
             instance_dir=instance_dir,

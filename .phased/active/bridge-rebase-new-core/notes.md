@@ -167,3 +167,52 @@ Execution record (2026-08-21, phase chat):
 - Client stamp boundary: `_local_refresh` converts client datetimes to epoch
   floats (the rows keep the core's stamp type; the freeze valve compares
   floats; the dressing converts back on the way out).
+
+
+## Phase 3
+
+Automated part of the Done: landed first — `test_sticky_cid_survives_a_reload`
+in tests/test_cli_multiworker_e2e.py, green at the first run (suite 117
+passed, 0 skipped). It closes the doubt open since 2026-08-14: the cookie IS
+emitted (one `Set-Cookie: sticky_cid`, HttpOnly, SameSite=Lax), the reload
+carries it back, the front does NOT re-mint, and the connection count does not
+grow — so traffic is no longer anonymous and the wake is reachable from it.
+
+**The debug door, authorised by the owner mid-phase (outside the original
+Done:).** The manual collaudo could not be run honestly with HTTP probes: every
+`curl` on the site mints a cid and opens a connection, so the observer was
+changing what it observed. genro-asgi f860c95 (the same morning) had just added
+`SpaCommander.inspect_target` + `SpaInspectorMcpApplication`: an expression
+evaluated inside the commander or inside a named worker, over the lane the
+commander already holds, answered as a `repr`. config.py now mounts it on
+`_inspect` behind `GNR_ASGI_INSPECTOR` — mounting IS the gate (core doctrine:
+full eval, never in production), and the first path segment decides the app so
+the site keeps every other URL of the root mount. Registered as an MCP server
+for the next chats: `claude mcp add --transport http genro-spa-inspector
+http://127.0.0.1:8099/_inspect`.
+
+Findings of the collaudo so far, none of them a defect of the phase's own
+Done::
+
+- `sys/register_explorer` (URL only — nothing in genropy mounts it any more)
+  serves all three register reads through the bridge: users, connections,
+  pages. Second proof after `subscribed_tables` that the bridge answers the
+  real site. Its refresh is client-side polling: `_timing=4` -> setInterval ->
+  `rpc_update_data` -> the three reads. The activity stamps DO advance (an
+  earlier reading of mine was wrong: the frozen-looking values were abandoned
+  items).
+- **Two families of connection register item coexist.** Ids in base64 style
+  are GenroPy's own connections (they carry IP and browser); ids in 32-hex are
+  the front's `sticky_cid`, registered as connections of their own with
+  `guest_<cid>` as user and no IP. They sum in the population count, which is
+  what `decide_worker` weighs. NOT resurrected frozen users: the freezer on
+  disk was empty, and a fresh server whose registers the door showed empty
+  grew one such guest the moment a still-open browser tab polled it with its
+  old cookie. To be understood; the refinement pass is the natural home.
+- In the PAGES tab the User column is empty for every page register item
+  (the connection id is there): the page register item does not carry the
+  user name. Same family as `subscribed_tables`.
+
+Collaudo method the owner fixed for the rest: one step at a time, from a
+server verified EMPTY through the door (users/connections/pages all `[]`,
+confirmed on the current process), and no probe of mine in the counts.
