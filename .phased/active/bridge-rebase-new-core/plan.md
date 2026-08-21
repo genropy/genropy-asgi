@@ -152,7 +152,8 @@ notes.md, review.md), then the pre_refactoring worker
     test_legacy_e2e, test_cli_multiworker_e2e, test_register_client_units
     and the worker construction tests.
 
-- [ ] **Phase 3**: Browser collaudo — sticky_cid and the four steps
+- [>] **Phase 3**: Browser collaudo — sticky_cid and the four steps
+  > In execution since 2026-08-21T12:57:39+02:00
   - Run: opus / medium
   - Pattern: `../genro-asgi/src/genro_asgi/applications/spa_app_new.py`
     (:85 sticky_cid mint, :349 cookie write, :390 header guarantee);

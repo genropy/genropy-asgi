@@ -120,3 +120,43 @@ def test_metrics_reflects_the_guest_lifecycle(pool_server):
         assert counters["users"] >= 1
         assert counters["connections"] >= 1
         assert counters["pages"] >= 1
+
+
+def test_sticky_cid_survives_a_reload(pool_server):  # wf:phase-3:new
+    """The cookie reaches the browser AND the reload comes back on the same cid.
+
+    The doubt this closes (open since 2026-08-14, never retried): through the
+    bridge the sticky cookie did not reach the client, so every request
+    travelled anonymous — freeze worked and wake was unreachable from traffic.
+    The reload is the proof: no second ``Set-Cookie`` means the front READ the
+    cid it had minted, and a connection count that does not grow means the
+    request landed on the row already there instead of opening a second one.
+    """
+    with httpx.Client(base_url=pool_server, timeout=30.0) as client:
+        first = client.get("/")
+        assert first.status_code == 200
+        stamps = first.headers.get_list("set-cookie")
+        minted = [line for line in stamps if line.startswith("sticky_cid=")]
+        assert len(minted) == 1, f"no sticky_cid minted on the connection's birth: {stamps}"
+        assert "httponly" in minted[0].lower()
+        assert "samesite=lax" in minted[0].lower()
+        cid = client.cookies["sticky_cid"]
+
+        before = read_metrics(client)
+        reload_response = client.get("/")
+        assert reload_response.status_code == 200
+        # the front saw the carried cid: nothing re-minted, nothing rotated
+        assert not [
+            line for line in reload_response.headers.get_list("set-cookie")
+            if line.startswith("sticky_cid=")
+        ]
+        assert client.cookies["sticky_cid"] == cid
+        # ... and the reload stayed on the same connection row
+        assert read_metrics(client)["connections"] == before["connections"]
+
+    # counter-proof: a cookie-less client is a new connection, with its own cid
+    with httpx.Client(base_url=pool_server, timeout=30.0) as other:
+        response = other.get("/")
+        assert response.status_code == 200
+        assert other.cookies["sticky_cid"] != cid
+        assert read_metrics(other)["connections"] >= before["connections"] + 1
