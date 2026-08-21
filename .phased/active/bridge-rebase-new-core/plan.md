@@ -56,6 +56,12 @@ notes.md, review.md), then the pre_refactoring worker
     tests/test_register_client_units.py, tests/test_genropy_spa_application.py,
     tests/test_global_store_rail.py, tests/test_legacy_e2e.py,
     tests/test_cli_multiworker_e2e.py, tests/test_expiry_and_disk.py (deleted)
+  > Files addendum (foreman, 2026-08-21): the phase's first partial commit
+    (8a0eeb6) also swept in the pre-existing unrelated tree changes the plan
+    Notes had left riding — docs/genropy-asgi-for-dummies.html,
+    docs/getting-started.rst, users/admin.json. Recorded here so baseline
+    attribution stays exact; the phase spans five commits
+    (8a0eeb6..899152c, four partials + close) instead of the canonical one.
   > Review: the core's PROCESS_PING_TIMEOUT (10s) doubles as the spawn's
     presentation budget — a heavy site build can exceed it (measured 12s under
     macOS GSS negotiation; 1.7s with PGGSSENCMODE=disable): a separate launch
@@ -118,7 +124,7 @@ notes.md, review.md), then the pre_refactoring worker
     (the shell under sites/ removed 2026-08-21). Disk — connection folders
     removed on the drop verbs (bridge overrides); frozen-expired folders are
     the declared debt (formerly the orphan sweep).
-  - Decisions: OPEN, owner's call at this phase's gate —
+  - Decisions: formerly OPEN, resolved by the gate block above (kept as the record of what planning left open) —
     (a) `sweep_expired` / site `<cleanup>` ages must be remapped onto
     `user_idle_freeze_minutes` + `user_expiry_hours` + `guest_expiry_hours`;
     if the map is not 1:1 the owner decides;
