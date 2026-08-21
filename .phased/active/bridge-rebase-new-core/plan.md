@@ -35,9 +35,35 @@ notes.md, review.md), then the pre_refactoring worker
     exits 0, and `pytest tests/` is green (the existing suite still runs on
     the old bridge).
 
-- [>] **Phase 2**: Rebase the bridge on the new core
-  > In execution since 2026-08-20T18:49:17Z
-  > WIP: done: source rebased + four test files green — worker units 23 (disk-cleanup successors included), register client units 34 (lane harness in tests/lane.py: worker+handler+desk in-process), spa application 12 (REAL pool: spawned child serves the site through the demux; readiness warm-up; PGGSSENCMODE trap fixed in conftest); root-cause fixes on the way: _create_site hands GnrWsgiSite the NAME (path->name, closes the instanceconfig-in-site-folder crash), legacy no-climb drop_page branch restored, peek reads the request slot too, client clock epoch conversion | missing: test_global_store_rail e2e rewrite on store_get, test_expiry_and_disk retirement, legacy_e2e + cli e2e adaptation, full suite green | next: rewrite tests/test_global_store_rail.py e2e half on the lane + store_get | commit: (this)
+- [x] **Phase 2**: Rebase the bridge on the new core
+  > Done: worker on SpaWorker (legacy no-climb drop_page kept per Must-not-break,
+    disk cleanup on the three drop verbs, idle valve from the site's <cleanup>,
+    §7a translating properties, _create_site by NAME with no root.py), front on
+    SpaApplicationNew (pool from the recipe, /metrics population + events),
+    recipe + CLI reworked (commander/group words, GNR_DAEMON_PROVIDER, the
+    single/pool selector removed), client on store_get read-through (peek reads
+    the request slot too; NEW subscribed_tables command served — the genropy
+    #968 write-time gate calls it and every db write crashed without it).
+    `pytest tests/` fully green: 116 passed, 0 skipped — the site resolves via
+    instances/, no site-gated skips left. test_expiry_and_disk.py retired with
+    its subject (successor map in notes.md); tests/lane.py added (worker +
+    real handler + real desk, in-process).
+  > Files: src/genropy_asgi/spa/genropy_worker.py,
+    src/genropy_asgi/spa/genropy_spa_application.py,
+    src/genropy_asgi/spa/config.py, src/genropy_asgi/spa/cli.py,
+    src/genropy_asgi/siteregister/siteregister_client.py, tests/conftest.py,
+    tests/lane.py, tests/test_genropy_worker_units.py,
+    tests/test_register_client_units.py, tests/test_genropy_spa_application.py,
+    tests/test_global_store_rail.py, tests/test_legacy_e2e.py,
+    tests/test_cli_multiworker_e2e.py, tests/test_expiry_and_disk.py (deleted)
+  > Review: the core's PROCESS_PING_TIMEOUT (10s) doubles as the spawn's
+    presentation budget — a heavy site build can exceed it (measured 12s under
+    macOS GSS negotiation; 1.7s with PGGSSENCMODE=disable): a separate launch
+    budget in the core belongs to the refinement pass. The pyproject floor
+    (genro-asgi>=0.34.0) is formally satisfied but the real requirement is
+    0.34.0 + store_get (3dcdeff) + worker_max_number (8af3c46): bump the core
+    version before any release. genropy-asgi issues #2 and #4 are resolved by
+    this phase and can be closed; genropy #1077 with them.
   - Run: opus / high
   - Pattern: `../genro-asgi/src/genro_asgi/spa/orchestration/spa_worker.py`
     (new worker base, hooks at :492 `build_registry`, :505-:523 registers),

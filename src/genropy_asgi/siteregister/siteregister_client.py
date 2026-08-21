@@ -203,7 +203,7 @@ class ServerStore:
         item = self.register_item
         return item.get("data") if item else None
 
-    def getItem(self, path: str, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface  # wf:phase-2:new
+    def getItem(self, path: str, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface
         """Read one path — on the bare global store, a paid ``store_get`` CALL.
 
         A lock-less global read answers the commander's master at the moment it
@@ -819,7 +819,7 @@ class GenropyRegisterClient:
             raise
         lease.__exit__(exc_type, None, None)
 
-    def _global_read(self, path: str, default: Any = None) -> Any:  # wf:phase-2:new
+    def _global_read(self, path: str, default: Any = None) -> Any:
         """One lock-less read of the global store: a ``store_get`` CALL on the lane.
 
         The owner design (2026-08-21): the only copy lives on the commander, so a
@@ -1140,7 +1140,7 @@ class GenropyRegisterClient:
             return list(table_list or [])
         return [table for table in (table_list or []) if table in worker.subscribed_tables]
 
-    def subscribed_tables(self, register_name: Any = None, **kwargs: Any) -> list:  # wf:phase-2:new
+    def subscribed_tables(self, register_name: Any = None, **kwargs: Any) -> list:
         """Every table observed by at least one live page — the write-time gate reads it.
 
         The daemon grew this command with the write-time broadcast gate

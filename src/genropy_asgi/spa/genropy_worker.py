@@ -159,17 +159,17 @@ class GenropyWorker(SpaWorker):
         return self._gnr_site
 
     @property
-    def user_items(self) -> Any:  # wf:phase-2:new
+    def user_items(self) -> Any:
         """The user register under the name the legacy client reads (§7a)."""
         return self.user_register
 
     @property
-    def connection_items(self) -> Any:  # wf:phase-2:new
+    def connection_items(self) -> Any:
         """The connection register under the name the legacy client reads (§7a)."""
         return self.connection_register
 
     @property
-    def page_items(self) -> Any:  # wf:phase-2:new
+    def page_items(self) -> Any:
         """The page register under the name the legacy client reads (§7a)."""
         return self.page_register
 
@@ -256,7 +256,7 @@ class GenropyWorker(SpaWorker):
                     ignore_errors=True,
                 )
 
-    def drop_connection(self, identity: str, session_id: str) -> None:  # wf:phase-2:new
+    def drop_connection(self, identity: str, session_id: str) -> None:
         """The core drop, then the connection's disk folder goes with the row.
 
         The cascaded pages' subfolders live under the connection folder
@@ -265,7 +265,7 @@ class GenropyWorker(SpaWorker):
         super().drop_connection(identity, session_id)
         shutil.rmtree(os.path.join(self.connections_folder, session_id), ignore_errors=True)
 
-    def drop_user(self, user: str) -> None:  # wf:phase-2:new
+    def drop_user(self, user: str) -> None:
         """The core drop, then every connection folder of the user goes too."""
         with self.dispatch_lock:
             connection_ids = [
@@ -278,7 +278,7 @@ class GenropyWorker(SpaWorker):
         for connection_id in connection_ids:
             shutil.rmtree(os.path.join(self.connections_folder, connection_id), ignore_errors=True)
 
-    def exit_process(self) -> None:  # wf:phase-2:new
+    def exit_process(self) -> None:
         """Stop the site first, then the core teardown (wire, pools)."""
         self._gnr_site.on_site_stop()
         super().exit_process()

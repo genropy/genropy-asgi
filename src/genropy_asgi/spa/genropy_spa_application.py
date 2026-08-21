@@ -72,7 +72,7 @@ class GenropySpaApplication(SpaApplicationNew):
             )
         super().__init__(**kwargs)
 
-    async def on_startup(self) -> None:  # wf:phase-2:new
+    async def on_startup(self) -> None:
         """Check the recipe names a site for every group, then build the pool.
 
         Raises:
