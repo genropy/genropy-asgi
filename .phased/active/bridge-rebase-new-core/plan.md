@@ -2,7 +2,7 @@
 Parent: main
 Mode: interactive
 Must not break: site-facing verb semantics stay pre_refactoring — the bridge changes BASE, not semantics (owner rule, 2026-08-19)
-Must not break: genro-asgi pre_refactoring stack (spa/worker.py, spa/commander.py, applications/spa_app.py) and shared modules (register_registry.py, subscription_index.py, global_store.py) stay untouched — sentinel until Macro 6
+Must not break: nothing protects the genro-asgi pre_refactoring stack — the old version dies as soon as the new one works (owner rule, 2026-08-21). The sentinel that reserved spa/worker.py, spa/commander.py, applications/spa_app.py and the shared modules until Macro 6 is void.
 Must not break: the refinement pass (inter-worker delivery, restart liturgy, recycle, observability) consumes this rebase — second pass, strictly after the collaudo
 
 ## Objective
@@ -186,7 +186,8 @@ notes.md, review.md), then the pre_refactoring worker
 - Contract tests at plan time: declined — the existing e2e suite
   (test_legacy_e2e, test_cli_multiworker_e2e) IS the behavioural contract
   that must survive the rebase.
-- Do not touch (source §6): the genro-asgi pre_refactoring stack, the shared
-  modules, the refinements — all listed in `Must not break:` above.
+- Do not touch (source §6): the refinements — see `Must not break:` above. The
+  pre_refactoring stack and the shared modules are NO LONGER reserved: the old
+  version dies as soon as the new one works (owner rule, 2026-08-21).
 - Uncommitted changes predating the workflow ride the tree untouched:
   docs/genropy-asgi-for-dummies.html, docs/getting-started.rst, users/.
