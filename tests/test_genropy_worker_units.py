@@ -10,17 +10,14 @@ through the public API — registry lifecycle calls and real Bag writes —
 never by wiring internal structures by hand.
 """
 
-import asyncio
 import datetime
 import importlib.util
+import os
 import pickle
+import tempfile
+import uuid
 
 import pytest
-from genro_tytx import to_tytx
-
-from genro_asgi.channel.frame import Frame
-from genro_asgi.channel.hub import EVENT_METHOD
-from genro_asgi.spa.global_store import GLOBAL_CHANGES_PATH
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
@@ -292,14 +289,19 @@ def test_login_reattaches_the_user_view_and_redeposits_pending():
 @pytest.fixture(scope="module")
 def worker():
     """One real GnrWsgiSite hosted by a GenropyWorker; skip if the site is missing."""
+    from genro_asgi.spa.orchestration import FreezeHandler
+
     from genropy_asgi.spa.genropy_worker import GenropyWorker
 
+    deposit = tempfile.mkdtemp(prefix="gnr_frozen_")
     try:
-        instance = GenropyWorker("W:test", source=_SITE, debug=False)
+        instance = GenropyWorker(
+            "pool_0001", source=_SITE, debug=False, freeze_handler=FreezeHandler(deposit)
+        )
     except Exception as exc:  # site missing or broken: skip, don't fail
         pytest.skip(f"cannot build the {_SITE} site: {exc}")
     yield instance
-    asyncio.run(instance.shutdown())
+    instance.exit_process()
 
 
 def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
@@ -311,65 +313,114 @@ def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
     assert worker.gnr_site._local_mode is True
 
 
-def test_the_sites_cleanup_ages_become_the_sweeps(worker):
-    # no age was named at construction: the site's own <cleanup> config decides
-    # all THREE ages — the same keys the daemon's setConfiguration read — with
-    # the module defaults where the site is silent (the guest default is
-    # deliberately NOT the daemon's 40: see test_expiry_and_disk)
-    from genropy_asgi.spa.genropy_worker import GUEST_MAX_AGE
-
-    site = worker.gnr_site
-    cleanup = site.custom_config.getAttr("cleanup") or {}
-    assert worker.page_max_age == site.page_max_age
-    assert worker.connection_max_age == site.connection_max_age
-    assert worker.guest_max_age == int(cleanup.get("guest_connection_max_age") or GUEST_MAX_AGE)
-
-
-def test_the_register_client_is_captured_before_the_loop_can_ask(worker):
-    # ``handle_frame`` runs on the event loop and materializes the global pushes
-    # into the register: it must never be the one to BUILD the client (the
-    # site's ``register`` property is lazy, unlocked and reaches db work; the
-    # worker captures it on the init thread). The public proof: a descending
-    # global change handled on the wire lands in the bag the site's own
-    # ``register`` exposes — the rail was wired at construction.
-    change = {
-        "key": {"path": "gnr.captured_at_init", "reason": None, "fired": False},
-        "value": 7,
-        "attributes": None,
-        "delete": False,
-        "change_ts": datetime.datetime.now(datetime.UTC),
-        "change_idx": 0,
-    }
-    frame = Frame(
-        method=EVENT_METHOD, path=GLOBAL_CHANGES_PATH, data=to_tytx([change], "json")
+def test_the_sites_cleanup_age_becomes_the_idle_valve(worker):
+    # no valve was named at construction: the site's <cleanup> decides — the
+    # legacy connection_max_age seconds become the freeze-valve minutes, with
+    # the daemon-parity default (7200s -> 120min) where the site is silent.
+    # page_max_age/guest_max_age have no equivalent on this base by decision
+    # (gate 2026-08-21): a silent tab's row lives until the site drops it or
+    # its user freezes.
+    from genropy_asgi.spa.genropy_worker import (
+        IDLE_FREEZE_DEFAULT_SECONDS,
+        IDLE_FREEZE_LEGACY_KEY,
     )
-    asyncio.run(worker.handle_frame(frame))
-    assert worker.gnr_site.register.global_bag.getItem("gnr.captured_at_init") == 7
-    # leave the module-scoped worker's global bag clean: the removal rides the
-    # same wire path (a descending delete), never a hand-wired mutation
-    removal = dict(change, delete=True, value=None)
-    frame = Frame(
-        method=EVENT_METHOD, path=GLOBAL_CHANGES_PATH, data=to_tytx([removal], "json")
+
+    cleanup = worker.gnr_site.custom_config.getAttr("cleanup") or {}
+    seconds = int(cleanup.get(IDLE_FREEZE_LEGACY_KEY) or IDLE_FREEZE_DEFAULT_SECONDS)
+    assert worker.user_idle_freeze_minutes == seconds / 60.0
+
+
+def test_a_callers_idle_valve_wins_over_the_site(worker):
+    from genro_asgi.spa.orchestration import FreezeHandler
+
+    from genropy_asgi.spa.genropy_worker import GenropyWorker
+
+    deposit = tempfile.mkdtemp(prefix="gnr_frozen_")
+    explicit = GenropyWorker(
+        "pool_0002",
+        source=_SITE,
+        debug=False,
+        freeze_handler=FreezeHandler(deposit),
+        user_idle_freeze_minutes=5.0,
     )
-    asyncio.run(worker.handle_frame(frame))
-    assert worker.gnr_site.register.global_bag.getItem("gnr.captured_at_init") is None
+    try:
+        assert explicit.user_idle_freeze_minutes == 5.0
+    finally:
+        explicit.exit_process()
 
 
-def test_the_app_declares_the_registry_ownership_in_worker_kwargs():
-    # worker_kwargs is inherited verbatim by every spawned child, so True is
-    # given only to the statically frozen pool (workers=0 AND max_workers=0);
-    # any shape that can spawn — at boot or by autoscale — ships False
-    from genropy_asgi.spa import GenropySpaApplication
+def test_the_register_client_is_ours_and_wired_at_construction(worker):
+    # The provider gate (genropy #1070) resolved gnr.web.daemon to this
+    # package, and the worker captured the client on the init thread: the
+    # site's lazy ``register`` property does db-touching work that must not
+    # run on the event loop, so by the time the worker exists the client is
+    # already built and points back at the worker.
+    import gnr.web.daemon.siteregister_client as served
 
-    pool = GenropySpaApplication(source=_SITE, workers=2, local_worker=True)
-    assert pool.commander.worker_kwargs["sole_registry_owner"] is False
-    default = GenropySpaApplication(source=_SITE)  # core default: ONE child
-    assert default.commander.worker_kwargs["sole_registry_owner"] is False
-    frozen = GenropySpaApplication(source=_SITE, workers=0, max_workers=0, local_worker=True)
-    assert frozen.commander.worker_kwargs["sole_registry_owner"] is True
+    import genropy_asgi.siteregister.siteregister_client as ours
+
+    client = worker.gnr_site.register
+    # The served module is OUR file under the legacy name (the provider gate
+    # re-executes it there, so class identity is per-name: compare the file).
+    assert served.__file__ == ours.__file__
+    assert type(client).__name__ == "GenropyRegisterClient"
+    assert client.spa_worker is worker
 
 
-def test_the_single_is_not_a_pool_member(worker):
-    # no channel yet (and a LocalChannel when the single starts): the orphan
-    # folder pass is allowed to read "unknown row" as "nobody's row"
+def test_a_bare_worker_is_not_a_pool_member(worker):
+    # no wire attached: every row it ever made is its own, so the commit gate
+    # may answer from the worker's subscription cache
     assert worker.pool_member is False
+
+
+# ------------------------------------------------------------------
+# Disk cleanup on the drop verbs (the successor of test_expiry_and_disk)
+# ------------------------------------------------------------------
+
+
+def fresh_ids():
+    tag = uuid.uuid4().hex[:8]
+    return f"user_{tag}", f"cid_{tag}", f"page_{tag}"
+
+
+def make_dirs(worker, cid, page_id=None):
+    path = os.path.join(worker.connections_folder, cid, *([page_id] if page_id else []))
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(worker.connections_folder, cid)
+
+
+def test_drop_page_takes_the_emptied_connections_folder(worker):
+    user, cid, page_id = fresh_ids()
+    worker.new_page(user, page_id=page_id, session_id=cid)
+    folder = make_dirs(worker, cid, page_id)
+    worker.drop_page(user, page_id, cascade=False)  # the legacy flag, absorbed
+    assert worker.page_items.get(page_id) is None
+    assert worker.connection_items.get(cid) is None  # last page: the core cascades
+    assert not os.path.exists(folder)
+
+
+def test_a_surviving_sibling_keeps_the_connection_folder(worker):
+    user, cid, page_id = fresh_ids()
+    sibling = f"{page_id}_b"
+    worker.new_page(user, page_id=page_id, session_id=cid)
+    worker.new_page(user, page_id=sibling, session_id=cid)
+    folder = make_dirs(worker, cid, page_id)
+    make_dirs(worker, cid, sibling)
+    worker.drop_page(user, page_id)
+    assert not os.path.exists(os.path.join(folder, page_id))
+    assert os.path.exists(os.path.join(folder, sibling))
+    worker.drop_connection(user, cid)
+    assert not os.path.exists(folder)
+
+
+def test_drop_user_takes_every_connection_folder(worker):
+    user, cid, page_id = fresh_ids()
+    other_cid = f"{cid}_b"
+    worker.new_page(user, page_id=page_id, session_id=cid)
+    worker.new_page(user, page_id=f"{page_id}_b", session_id=other_cid)
+    folder = make_dirs(worker, cid, page_id)
+    other_folder = make_dirs(worker, other_cid)
+    worker.drop_user(user)
+    assert worker.user_items.get(user) is None
+    assert not os.path.exists(folder)
+    assert not os.path.exists(other_folder)

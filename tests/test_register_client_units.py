@@ -14,7 +14,6 @@ same sink ``service_call`` opens — the core's own test convention
 The whole module skips when GenroPy or the site is missing.
 """
 
-import asyncio
 import datetime
 import importlib.util
 import sys
@@ -39,27 +38,29 @@ SPIN_ROUNDS = 400
 
 @contextmanager
 def call_sink(worker):
-    """Open the sinks a CALL would open (the core's own test convention)."""
-    events_token = worker._call_events.set([])
-    tasks_token = worker._call_tasks.set([])
-    try:
-        yield
-    finally:
-        worker._call_events.reset(events_token)
-        worker._call_tasks.reset(tasks_token)
+    """The old base required an open CALL sink around every op; the new base's
+    verbs announce straight onto ``worker_events``. Kept as a no-op so the
+    lifecycle helpers read unchanged across the rebase."""
+    yield
 
 
 @pytest.fixture(scope="module")
-def worker():
-    """One real GnrWsgiSite hosted by a GenropyWorker for the whole module."""
-    from genropy_asgi.spa.genropy_worker import GenropyWorker
+def lane():
+    """One live lane — worker, handler, desk — for the whole module."""
+    from tests.lane import start_site_lane
 
     try:
-        instance = GenropyWorker("W:test", source=_SITE, debug=False)
+        instance = start_site_lane(_SITE)
     except Exception as exc:  # site missing or broken: skip, don't fail
         pytest.skip(f"cannot build the {_SITE} site: {exc}")
     yield instance
-    asyncio.run(instance.shutdown())
+    instance.stop()
+
+
+@pytest.fixture(scope="module")
+def worker(lane):
+    """The lane's GenropyWorker: a real GnrWsgiSite behind the full protocol."""
+    return lane.worker
 
 
 @pytest.fixture()
@@ -199,7 +200,9 @@ def test_refresh_stamps_server_clock_and_client_fields(client, worker):
     user_item = client.refresh(page_id, ts=client_clock, lastRpc=client_clock)
     page = worker.page_items.get(page_id)
     assert page["last_refresh_ts"] >= before  # the server's own clock
-    assert page["last_user_ts"] == client_clock  # the client's, as a plain field
+    # the client's clock, converted datetime -> epoch at the boundary: the row
+    # keeps the core's own stamp type (the freeze valve compares floats)
+    assert page["last_user_ts"] == client_clock.timestamp()
     assert user_item is worker.user_items.get(GUEST_PREFIX + cid)
     assert client.refresh("never_registered") is None
 
@@ -234,14 +237,15 @@ def test_user_store_write_reaches_the_subscribed_page(client, worker):
     guest = GUEST_PREFIX + cid  # the legacy addresses the user store by page.user
     client.setStoreSubscription(page_id, storename="user", client_path="chat", active=True)
     client.set_datachange(guest, "chat.room1", value="ping", register_name="user")
-    # the write landed on the live user store...
-    assert client.user(guest, include_data="lazy")["data"]["chat.room1"] == "ping"
-    # ...and the page's user_view captured it — but the envelope keeps the
-    # daemon contract: only the explicitly written leaf travels, the
-    # autocreated parent stays in the internal capture
+    # the write rides the request slot and is applied at the exchange (the
+    # core's addressed-write design); the pull retires it, the user_view
+    # captures it, and the envelope keeps the daemon contract: only the
+    # explicitly written leaf travels, the autocreated parent stays internal
     changes = client.subscription_storechanges(None, page_id)
     assert [c.path for c in changes] == ["chat.room1"]
     assert changes[0].value == "ping"
+    # ...and by then the write has landed on the live user store
+    assert client.user(guest, include_data="lazy")["data"]["chat.room1"] == "ping"
 
 
 def test_subscribe_table_and_dbevents_dressed_at_the_envelope(client, worker):
@@ -378,11 +382,12 @@ def test_connected_users_reads_a_refreshed_row(client, worker):
 
 
 def test_connected_users_reads_a_freshly_created_row(client, worker):
-    # no ping yet: no last_user_ts, so the legacy falls back to start_ts
+    # the core stamps every row at birth, so even before any ping the legacy
+    # reader finds a dressed datetime and the row reads as just-born
     cid, _ = open_page(client, worker)
     user = login(client, worker, cid, "bruno", user_name="Bruno B")
     arguments = client.users()[user]
-    assert "last_user_ts" not in arguments
+    assert isinstance(arguments["last_user_ts"], datetime.datetime)
     assert connected_users_row(user, arguments)["last_event_age"] == 0
 
 

@@ -1,27 +1,31 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""Tests for GenropySpaApplication — the GenroPy front on the core SpaApplication.
+"""Tests for GenropySpaApplication — the GenroPy front on the core SpaApplicationNew.
 
-The structural half (subclassing, pool defaults, the memory budget derivation)
-needs no GenroPy: the front builds its commander at construction and spawns
-nothing until startup. The BOOT half builds the shipped ``config.py`` recipe —
-the one ``gnrasgiserve`` boots — all the way to an ``AsgiServer``, stopping short
-of ``serve()``: the recipe is what the CLI executes before anything else, so a
-recipe the grammar rejects is a server that never starts. The end-to-end half
-drives a REAL single — the front started with its in-process GenropyWorker
-hosting ``test_invoice_pg`` — through the full ASGI stack: the demux serves
-``/metrics`` natively and forwards the site paths, the sticky cookie is minted on
-the first answer.
+The structural half (subclassing, the root mount, the startup source check)
+needs no GenroPy: the front holds no pool until the server starts. The BOOT
+half builds the shipped ``config.py`` recipe — the one ``gnrasgiserve``
+boots — all the way to an ``AsgiServer``, stopping short of ``serve()``: the
+pool is recipe words now, so a recipe the grammar rejects is a server that
+never starts, and the words must land where the core reads them
+(``commander_kwargs``/``group_kwargs``). The end-to-end half starts the REAL
+pool — the commander spawns one worker subprocess hosting ``test_invoice_pg``
+— and drives the front's own ASGI callable: the demux serves ``/metrics``
+natively and forwards the site paths, the sticky cookie is minted on the
+first answer.
 """
 
 import importlib.util
-import os
+import shutil
+import tempfile
 
 import pytest
 
 from genro_asgi import AsgiServer
-from genro_asgi.applications.spa_app import STICKY_CID_COOKIE, SpaApplication
+from genro_asgi.applications.spa_app_new import STICKY_CID_COOKIE, SpaApplicationNew
+from genro_asgi.config import AsgiConfigBuilder
+
 from genropy_asgi.spa import GenropySpaApplication
 from genropy_asgi.spa.cli import CONFIG
 
@@ -30,96 +34,48 @@ _SITE = "test_invoice_pg"
 
 
 # ------------------------------------------------------------------
-# Structure: the subclass, the pool defaults, the budget derivation
+# Structure: the subclass, the root mount, the startup source check
 # ------------------------------------------------------------------
 
 
-def test_is_spa_application_subclass():
-    assert issubclass(GenropySpaApplication, SpaApplication)
-
-
-def test_requires_a_source():
-    with pytest.raises(ValueError):
-        GenropySpaApplication()
+def test_is_spa_application_new_subclass():
+    assert issubclass(GenropySpaApplication, SpaApplicationNew)
 
 
 def test_a_direct_instantiation_lands_on_the_site_root():
     # without a class-level mount the core would mount the app under its own
     # code — a GenroPy site there answers the first page and 404s every path
     # that page asks for
-    assert GenropySpaApplication(source="some_site").mount == ""
+    assert GenropySpaApplication().mount == ""
     # an explicit empty mount (the shipped recipe writes one) only confirms it,
     # and so does the None a generic caller may pass
-    assert GenropySpaApplication(source="some_site", mount="").mount == ""
-    assert GenropySpaApplication(source="some_site", mount=None).mount == ""
+    assert GenropySpaApplication(mount="").mount == ""
+    assert GenropySpaApplication(mount=None).mount == ""
 
 
 def test_a_non_empty_mount_is_refused():
     with pytest.raises(ValueError):
-        GenropySpaApplication(source="some_site", mount="admin")
+        GenropySpaApplication(mount="admin")
 
 
-def test_pool_defaults_point_at_the_genropy_worker():
-    app = GenropySpaApplication(source="some_site", debug=True)
-    assert app.commander.worker_class == "genropy_asgi.spa.genropy_worker:GenropyWorker"
-    assert app.commander.worker_kwargs == {
-        "source": "some_site",
-        "debug": True,
-        # workers unset is the CORE default of one spawned child, and the pool
-        # can autoscale: the ownership guarantee cannot be given
-        "sole_registry_owner": False,
-    }
+class _SourcelessRecipe(AsgiConfigBuilder):
+    """A pool whose group names no site: the startup check must refuse it."""
+
+    def main(self, root):
+        cfg = root.configuration()
+        cfg.server(host="127.0.0.1", port=8972)
+        front = cfg.applications().application(
+            code="site", mount="", app_class=GenropySpaApplication
+        )
+        commander = front.commander(frozen_users_path="/tmp/gnr_probe_frozen")
+        commander.groups().group(name="pool", entry_module="never.launched")
 
 
-def test_registry_ownership_travels_only_where_the_pool_never_spawns():
-    """``sole_registry_owner`` is a lifetime guarantee, and worker_kwargs is
-    inherited verbatim by every spawned child (core ``spawn_payload``): any
-    config that CAN spawn — at boot or by autoscale (``check_capacity`` widens
-    even a pool of one) — must ship False. True requires the static no-spawn
-    config: ``workers=0`` (explicit — unset is the core default of one child)
-    AND ``max_workers=0`` (the hard ceiling of every scale-up path)."""
-    frozen = GenropySpaApplication(
-        source="some_site", workers=0, max_workers=0, local_worker=True
-    )
-    assert frozen.commander.worker_kwargs["sole_registry_owner"] is True
-    # the plain single: no boot children, but no ceiling — the core may widen it
-    single = GenropySpaApplication(source="some_site", workers=0, local_worker=True)
-    assert single.commander.worker_kwargs["sole_registry_owner"] is False
-    # a pool that spawns at boot: every child would inherit the flag
-    pool = GenropySpaApplication(source="some_site", workers=2)
-    assert pool.commander.worker_kwargs["sole_registry_owner"] is False
-    # workers unset: the core commander defaults to ONE spawned child
-    unset = GenropySpaApplication(source="some_site", max_workers=0)
-    assert unset.commander.worker_kwargs["sole_registry_owner"] is False
-
-
-def test_debug_flag_coerces_from_string():
-    # a worker --app-arg travels as a string; the front coerces it
-    app = GenropySpaApplication(source="some_site", debug="false")
-    assert app.commander.worker_kwargs["debug"] is False
-
-
-def test_memory_limit_is_derived_for_a_pool():
-    app = GenropySpaApplication(source="some_site", workers=3)
-    total_ram = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    assert app.commander.memory_limit_mb == int(total_ram * 0.8 / 2**20 / 3)
-
-
-def test_memory_limit_splits_over_max_workers_when_capped():
-    app = GenropySpaApplication(source="some_site", workers=2, max_workers=8)
-    total_ram = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    assert app.commander.memory_limit_mb == int(total_ram * 0.8 / 2**20 / 8)
-
-
-def test_explicit_memory_limit_always_wins():
-    app = GenropySpaApplication(source="some_site", workers=3, memory_limit_mb=512)
-    assert app.commander.memory_limit_mb == 512
-
-
-def test_the_single_passes_no_memory_limit():
-    # the in-process worker is never recycled by construction
-    app = GenropySpaApplication(source="some_site", workers=0, local_worker=True)
-    assert app.commander.memory_limit_mb is None
+async def test_startup_refuses_a_group_without_a_source():
+    server = AsgiServer(config=_SourcelessRecipe)
+    front = server.applications["site"]
+    with pytest.raises(ValueError, match="names no source"):
+        await front.on_startup()
 
 
 # ------------------------------------------------------------------
@@ -140,6 +96,9 @@ def booted(monkeypatch):
     monkeypatch.setenv("GNR_ASGI_HOST", "0.0.0.0")
     monkeypatch.setenv("GNR_ASGI_PORT", "8971")
     monkeypatch.setenv("GNR_ASGI_DEBUG", "")
+    monkeypatch.setenv("GNR_ASGI_IDLE_FREEZE_MINUTES", "45")
+    monkeypatch.delenv("GNR_ASGI_FROZEN_USERS_PATH", raising=False)
+    monkeypatch.delenv("GNR_ASGI_INSTANCE_DIR", raising=False)
     monkeypatch.delenv("GNR_ASGI_WORKERS", raising=False)
     return AsgiServer(str(CONFIG))
 
@@ -157,52 +116,83 @@ def test_the_recipe_mounts_the_front_on_the_site_root(booted):
     assert front.mount == ""  # a GenroPy site owns its absolute URLs
 
 
-def test_the_recipe_wires_the_commander_for_the_single(booted):
-    commander = booted.application_at("").commander
-    assert commander.worker_class == "genropy_asgi.spa.genropy_worker:GenropyWorker"
-    assert commander.worker_kwargs == {
-        "source": "/tmp/genropy_asgi_recipe_probe",  # the resolved instance path
-        "debug": False,  # --nodebug writes an empty GNR_ASGI_DEBUG
-        # the recipe caps nothing: the core may autoscale the single into a
-        # pool, so the lifetime ownership guarantee cannot be given
-        "sole_registry_owner": False,
-    }
-    assert commander.local_worker is True  # workers == 0: the in-process single
+def test_the_recipe_declares_the_pool_where_the_core_reads_it(booted):
+    # the pool is recipe words: the core's own config door must hand them back
+    commander_kwargs = booted.config.commander_kwargs("site")
+    assert commander_kwargs["frozen_users_path"] == (
+        "/tmp/genropy_asgi_recipe_probe/data/_frozen_users"
+    )
+    groups = booted.config.group_kwargs("site")
+    assert set(groups) == {"pool"}
+    pool = groups["pool"]
+    assert pool["entry_module"] == "genro_asgi.spa.orchestration.worker_entry"
+    assert pool["worker_class"] == "genropy_asgi.spa.genropy_worker:GenropyWorker"
+    assert pool["instance_dir"]  # the sockets root travels to the group
+    worker_kwargs = pool["worker_kwargs"]
+    assert worker_kwargs["source"] == "/tmp/genropy_asgi_recipe_probe"
+    assert worker_kwargs["debug"] is False  # --nodebug writes an empty GNR_ASGI_DEBUG
+    assert worker_kwargs["user_idle_freeze_minutes"] == 45.0  # the env-driven valve
 
 
-def test_the_recipe_wires_a_pool_when_workers_are_asked_for(monkeypatch):
+def test_a_leftover_workers_variable_changes_nothing(monkeypatch):
+    # the single/pool selector is gone: the pool always runs and sizes itself
     monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
     monkeypatch.setenv("GNR_ASGI_WORKERS", "2")
-    commander = AsgiServer(str(CONFIG)).application_at("").commander
-    assert commander.local_worker is False
-    assert commander.target == 2  # the boot target of the pool
+    server = AsgiServer(str(CONFIG))
+    assert set(server.config.group_kwargs("site")) == {"pool"}
 
 
 # ------------------------------------------------------------------
-# End to end: the real single behind the demux
+# End to end: the real pool behind the demux
 # ------------------------------------------------------------------
 
 
 @pytest.fixture()
 async def app():
-    """The front started as a REAL single (in-process GenropyWorker, full protocol).
+    """The front started on the REAL pool: one spawned worker hosting the site.
 
-    Mounted on an ``AsgiServer`` — native dispatch requires the owning server —
-    but driven directly through the app's own ASGI callable.
+    Mounted on an ``AsgiServer`` built from the shipped recipe — native
+    dispatch requires the owning server — and driven directly through the
+    app's own ASGI callable. The paths the pool needs (freezer, sockets) go
+    to a short-lived temp root.
     """
     if not _HAS_GNR:
         pytest.skip("GenroPy not installed")
-    from genro_asgi import AsgiServer
+    import os
 
-    front = GenropySpaApplication(source=_SITE, debug=False, workers=0, local_worker=True)
-    server = AsgiServer(applications=[front])  # wires front.server; held for the fixture's life
-    assert front.server is server
+    from gnr.app.pathresolver import PathResolver
+
+    try:
+        site_path = PathResolver().site_name_to_path(_SITE)
+    except Exception as exc:
+        pytest.skip(f"cannot resolve the {_SITE} site: {exc}")
+    root = tempfile.mkdtemp(prefix="gnrspa_")
+    os.environ["GNR_ASGI_PATH"] = site_path
+    os.environ["GNR_ASGI_DEBUG"] = ""
+    os.environ["GNR_ASGI_FROZEN_USERS_PATH"] = f"{root}/frozen"
+    os.environ["GNR_ASGI_INSTANCE_DIR"] = f"{root}/i"
+    server = AsgiServer(str(CONFIG))
+    front = server.application_at("")
     try:
         await front.on_startup()
     except Exception as exc:  # site missing or broken: skip, don't fail
-        pytest.skip(f"cannot start the {_SITE} single: {exc}")
+        pytest.skip(f"cannot start the {_SITE} pool: {exc}")
+    # Readiness: the reception may still be presenting itself on the wire;
+    # a refusal at boot is the pool's polite 503, so the fixture retries the
+    # first page until the child serves it (the cli e2e convention).
+    import asyncio
+
+    for _ in range(60):
+        try:
+            received = await fire(front, "/")
+        except TimeoutError:
+            received = {"status": None}
+        if received["status"] == 200:
+            break
+        await asyncio.sleep(0.5)
     yield front
     await front.on_shutdown()
+    shutil.rmtree(root, ignore_errors=True)
 
 
 async def fire(app, path, cookies=None):

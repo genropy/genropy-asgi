@@ -218,21 +218,34 @@ class GenropyWorker(SpaWorker):
         return self.stream is not None
 
     def drop_page(self, identity: str, page_id: str, cascade: bool = True) -> None:
-        """The core drop, then the page's disk goes with the row.
+        """Drop a page with the legacy ``cascade`` flag, then its disk with the row.
 
-        The legacy ``cascade`` flag is absorbed (decision D7, 2026-08-20): the
-        core demolition — the page, and the connection and user its departure
-        empties — is the sanctioned semantics. When the connection fell with
-        its last page, the whole connection folder goes; otherwise only the
-        page's subfolder.
+        The flag stays on the bridge and is absorbed here (decision D7,
+        2026-08-20). The DEFAULT the site's own close paths pass is the legacy
+        page semantics: ``cascade=False`` drops the page ALONE, leaving an
+        emptied connection row alive — a closed tab must not take its
+        browser's connection with it, its cookie still routes (Must not
+        break: site-facing semantics). The core drop has no cascade-less
+        form — its climb is unconditional — so this branch composes it from
+        the same pieces: the registry drop and the announcement.
+        ``cascade=True`` is the core drop itself: the page, and the
+        connection and user its departure empties. Either way the disk
+        follows the rows: the whole connection folder when the connection
+        fell, the page's subfolder otherwise.
         """
         with self.dispatch_lock:
             page = self.page_register.get(page_id)
             if page is None:
-                super().drop_page(identity, page_id)
                 return
             connection_id = page["connection_id"]
-            super().drop_page(identity, page_id)
+            if cascade:
+                super().drop_page(identity, page_id)
+            else:
+                user = self.registry.page_user(page_id)
+                self.registry.drop_page(page_id, cascade=False)
+                self.add_worker_event(
+                    "drop_page", user=user, page_id=page_id, session_id=connection_id
+                )
             if self.connection_register.get(connection_id) is None:
                 shutil.rmtree(
                     os.path.join(self.connections_folder, connection_id), ignore_errors=True
@@ -273,11 +286,14 @@ class GenropyWorker(SpaWorker):
     def _create_site(self, source: str, debug: bool) -> Any:
         """Create the ``GnrWsgiSite`` from a site name or a site directory path.
 
-        The branch is deliberate (genropy-asgi#4): a directory travels as the
-        absolute path — the resolver returns an absolute path unchanged, the
-        contract ``gnrasgiserve`` has always exercised — and anything else is
-        a site NAME, resolved by genropy's own two routes (``*/sites/<name>/``,
-        then ``*/instances/<name>/`` with the ``root.py`` marker). No file is
+        ``GnrWsgiSite`` wants the site NAME — every path it needs it re-resolves
+        from the name through genropy's own two routes (``*/sites/<name>/``,
+        then ``*/instances/<name>/`` with the ``root.py`` marker) — so a path
+        is turned into its name deliberately (genropy-asgi#4): the folder's
+        basename, or the instance's name when the folder is the ``site/`` of
+        the instances layout. Handing the path itself through would ride the
+        resolver's join accident into ``get_instanceconfig``, which then reads
+        ``instanceconfig.xml`` INSIDE the site folder and fails. No file is
         required in the site folder: the site is configuration, not code.
 
         The ``gnr`` imports are deferred, transcribed from the pre-rebase
@@ -288,7 +304,12 @@ class GenropyWorker(SpaWorker):
         from gnr.web.gnrwsgisite import GnrWsgiSite
 
         gnr_config = getGnrConfig(set_environment=True)
-        site = os.path.abspath(source) if os.path.isdir(source) else source
+        site = source
+        if os.path.isdir(source):
+            path = os.path.abspath(source)
+            site = os.path.basename(path)
+            if site == "site":
+                site = os.path.basename(os.path.dirname(path))
         options = SimpleNamespace(
             debug=debug,
             noclean=False,
