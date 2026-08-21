@@ -153,7 +153,7 @@ notes.md, review.md), then the pre_refactoring worker
     and the worker construction tests.
 
 - [>] **Phase 3**: Browser collaudo — sticky_cid and the four steps
-  > Testing: awaiting the human's `Verify: now` checks | commit: 648f552
+  > WIP: done: sticky_cid reload scenario green (the Done: is met, 117 passed) + the debug door mounted on `_inspect` behind GNR_ASGI_INSPECTOR, registered as an MCP server | missing: the four `Verify: now` manual steps, one at a time from a server verified empty through the door | next: owner closes the site tabs, restart clean, then step 1 (one request, no login -> exactly one guest, one connection, one page) | commit: 3622318
   > In execution since 2026-08-21T12:57:39+02:00
   - Run: opus / medium
   - Pattern: `../genro-asgi/src/genro_asgi/applications/spa_app_new.py`
