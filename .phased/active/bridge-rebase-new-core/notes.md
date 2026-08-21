@@ -121,3 +121,49 @@ overrides (successor in this phase); orphan-folder sweep + pool-child
 restraint (`sole_registry_owner`) → retired with the sweep, replaced by the
 declared debt above; the two demolition branches equivalence → moot (the
 core has one demolition road).
+
+
+Execution record (2026-08-21, phase chat):
+
+- **First real daemon->fake drift caught live**: genropy #968 (the write-time
+  broadcast gate, in the merge base) added the register command
+  `subscribed_tables(register_name='page')` — `site.allSubscribedTables` calls
+  it on EVERY insert/update/delete. The fake did not serve it: every db write
+  through the bridge crashed. Served now (client `subscribed_tables`: the
+  worker's subscription cache on the wire, the union of page rows on a bare
+  worker). Exhibit #1 for [[contratto-register-daemon-fake]].
+- **tests/lane.py**: the bridge transcription of the core's XT_DeskLane —
+  GenropyWorker + real WorkerHandler on a UDS + real SpaCommander desk,
+  in-process, loop on a background thread. Two seams the lane wires because
+  it stands in for launch_process: the handler state -> "running" and the
+  handler hung in group.worker_handler_map. Used by register client units,
+  the global rail e2e and legacy e2e (register/db stay inspectable).
+- **The request-slot timing is the licensed divergence**: addressed writes
+  ride the writer's own exchange (core design, "no local shortcut"). Tests
+  that wrote from the pytest thread got a `flush` fixture (one exchange on a
+  throwaway page — the end-of-request the thread never had). The PEEK
+  (`ServerStore.datachanges`) now reads the slot too, or the healed
+  serverbatch defect would have returned.
+- **drop_page cascade=False is a real branch, not absorbed-and-ignored**: the
+  contract test (a closed tab keeps its connection: the cookie still routes)
+  is Must-not-break semantics; the bridge composes the no-climb drop from the
+  registry pieces, as the old bridge did on the old core.
+- **_create_site hands GnrWsgiSite the NAME**: passing a path rides the
+  resolver's join accident into get_instanceconfig, which reads
+  instanceconfig.xml INSIDE the site folder and crashes (found live: the
+  spawned child died in 0.7s). Path -> basename (or the instance name for the
+  instances/<name>/site layout).
+- **PGGSSENCMODE=disable in tests/conftest.py**: macOS libpq negotiates
+  GSS/Kerberos ~9s per first connection — the spawned child blew the 10s
+  presentation budget (measured 12s -> 1.7s with the variable).
+- **Finding for the refinement pass**: PROCESS_PING_TIMEOUT (10s) doubles as
+  the spawn's presentation budget; a heavy site build can exceed it and the
+  reception is then abandoned until the group's next round. A separate launch
+  budget in the core would make heavy children first-class.
+- **Version floor**: pyproject says genro-asgi>=0.34.0 but the real
+  requirement is 0.34.0 WITH store_get (3dcdeff) and worker_max_number
+  (8af3c46), committed after the version stamp. A core version bump (0.35.0)
+  before any release of this package.
+- Client stamp boundary: `_local_refresh` converts client datetimes to epoch
+  floats (the rows keep the core's stamp type; the freeze valve compares
+  floats; the dressing converts back on the way out).

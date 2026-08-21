@@ -1,11 +1,12 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""End-to-end: ``gnrasgiserve --workers 1`` — commander + one real worker subprocess.
+"""End-to-end: ``gnrasgiserve`` — the pool booted by the CLI, driven over HTTP.
 
-The pool bridge driven from the outside: the CLI boots a ``GenropySpaApplication``
-whose core commander (``UserStickyCommander``) spawns ONE worker subprocess hosting
-the GenroPy site; the test talks HTTP only. No register daemon anywhere.
+The bridge from the outside: the CLI boots a ``GenropySpaApplication`` whose
+recipe-born commander (``SpaCommander``) spawns the reception worker hosting
+the GenroPy site; the test talks HTTP only. There is no worker count to pass
+— the pool always runs and sizes itself. No register daemon anywhere.
 
 Covers: the recipe's pool shape, the worker spawn, the sticky forward (page served
 by the child through the commander), the child's LOCAL drain of the ping envelope,
@@ -50,14 +51,14 @@ def read_metrics(client: httpx.Client) -> dict[str, int]:
 
 @pytest.fixture(scope="module")
 def pool_server():
-    """gnrasgiserve --workers 1 as a real subprocess; yields its base URL."""
+    """gnrasgiserve as a real subprocess; yields its base URL."""
     port = free_port()
     env = dict(os.environ)
     # macOS: libpq + Kerberos + fork segfaults the forked children without this.
     env.setdefault("PGGSSENCMODE", "disable")
     process = subprocess.Popen(
         [sys.executable, "-m", "genropy_asgi.spa.cli", _SITE, "-p", str(port),
-         "--nodebug", "--workers", "1"],
+         "--nodebug"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

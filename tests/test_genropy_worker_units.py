@@ -389,13 +389,26 @@ def make_dirs(worker, cid, page_id=None):
     return os.path.join(worker.connections_folder, cid)
 
 
-def test_drop_page_takes_the_emptied_connections_folder(worker):
+def test_a_page_close_keeps_the_connection_and_its_folder(worker):
+    # the legacy page semantics: cascade=False drops the page ALONE — a closed
+    # tab never takes its browser's connection (or its folder) with it
     user, cid, page_id = fresh_ids()
     worker.new_page(user, page_id=page_id, session_id=cid)
     folder = make_dirs(worker, cid, page_id)
-    worker.drop_page(user, page_id, cascade=False)  # the legacy flag, absorbed
+    worker.drop_page(user, page_id, cascade=False)
     assert worker.page_items.get(page_id) is None
-    assert worker.connection_items.get(cid) is None  # last page: the core cascades
+    assert worker.connection_items.get(cid) is not None  # its cookie still routes
+    assert not os.path.exists(os.path.join(folder, page_id))
+    assert os.path.exists(folder)
+
+
+def test_an_explicit_cascade_takes_the_emptied_connections_folder(worker):
+    user, cid, page_id = fresh_ids()
+    worker.new_page(user, page_id=page_id, session_id=cid)
+    folder = make_dirs(worker, cid, page_id)
+    worker.drop_page(user, page_id, cascade=True)
+    assert worker.page_items.get(page_id) is None
+    assert worker.connection_items.get(cid) is None  # last page: the chain goes
     assert not os.path.exists(folder)
 
 
