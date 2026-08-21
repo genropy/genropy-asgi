@@ -351,7 +351,7 @@ class GenropyRegisterClient:
         """A new page (browser tab) opens.
 
         Called by ``WebPage._register_new_page`` (gnrwebpage.py) on page registration.
-        The op is user-addressed (``new_page(user, page_id, session_id=cid, ...)``);
+        The op is user-addressed (``new_page(user, page_id, connection_id=cid, ...)``);
         a page with no user named belongs to its connection's user — the name the core
         minted at the ``new_connection`` door (``guest_<cid>`` for an anonymous
         browser), read off the live row, never re-minted here: composing a guest name
@@ -375,7 +375,7 @@ class GenropyRegisterClient:
         if data is not None:
             fields["store"] = data
         fields["start_ts"] = datetime.datetime.now()
-        worker.new_page(user, page_id=page_id, session_id=connection_id, **fields)
+        worker.new_page(user, page_id=page_id, connection_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
     def change_connection_user(self, connection_id: Any, **kwargs: Any) -> dict | None:
@@ -429,7 +429,7 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker.connection_items.get(connection_id) is None:
             return
-        worker.drop_connection(connection_id, session_id=connection_id)
+        worker.drop_connection(connection_id, connection_id=connection_id)
 
     def refresh(self, page_id: Any, ts: Any = None, lastRpc: Any = None, pageProfilers: Any = None) -> dict | None:
         """Bump the last-seen timestamps for a page, up through connection to user.
@@ -489,7 +489,7 @@ class GenropyRegisterClient:
 
         Returns ``{register_item_id: item}`` — the daemon-client contract (``adaptListToDict``):
         the legacy does ``page_id in register.pages(...)`` (Connection.validate_page_id), so
-        the keys must be the page ids. ``connection_id`` reads the ``session_id`` index;
+        the keys must be the page ids. ``connection_id`` reads its own index;
         ``user`` walks the ownership edges (user -> connections -> pages). Called for the
         ``setInClientData`` broadcast (with filters) and by monitoring.
 
@@ -504,7 +504,7 @@ class GenropyRegisterClient:
             return {}
         page_items = worker.page_items
         if connection_id:
-            items = self._live_rows(page_items, page_items.keys_by("session_id", connection_id))
+            items = self._live_rows(page_items, page_items.keys_by("connection_id", connection_id))
             if user:
                 items = [
                     p for p in items

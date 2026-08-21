@@ -235,7 +235,7 @@ def test_registry_rows_hold_legacy_stores_under_legacy_capture():
     from genropy_asgi.spa.legacy_bag import LegacyBagCollector
 
     registry = make_registry()
-    page = registry.new_page("p1", user="bob", session_id="cid1")
+    page = registry.new_page("p1", user="bob", connection_id="cid1")
     assert type(page["store"]) is Bag
     assert isinstance(page["collector"], LegacyBagCollector)
     assert type(registry.user_items.get("bob")["store"]) is Bag
@@ -243,7 +243,7 @@ def test_registry_rows_hold_legacy_stores_under_legacy_capture():
 
 def test_registry_store_survives_pickle_whole():
     registry = make_registry()
-    registry.new_page("p1", user="bob", session_id="cid1")
+    registry.new_page("p1", user="bob", connection_id="cid1")
     registry.subscribe_store_path("p1", "pref")  # a live user_view is attached
     store = registry.user_items.get("bob")["store"]
     store["pref.color"] = "red"
@@ -257,7 +257,7 @@ def test_login_reattaches_the_user_view_and_redeposits_pending():
 
     registry = make_registry()
     registry.new_connection("cid1", user="bob")
-    registry.new_page("p1", user="bob", session_id="cid1")
+    registry.new_page("p1", user="bob", connection_id="cid1")
     registry.subscribe_store_path("p1", "pref")
     store = registry.user_items.get("bob")["store"]
     store["pref.color"] = "red"
@@ -393,7 +393,7 @@ def test_a_page_close_keeps_the_connection_and_its_folder(worker):
     # the legacy page semantics: cascade=False drops the page ALONE — a closed
     # tab never takes its browser's connection (or its folder) with it
     user, cid, page_id = fresh_ids()
-    worker.new_page(user, page_id=page_id, session_id=cid)
+    worker.new_page(user, page_id=page_id, connection_id=cid)
     folder = make_dirs(worker, cid, page_id)
     worker.drop_page(user, page_id, cascade=False)
     assert worker.page_items.get(page_id) is None
@@ -404,7 +404,7 @@ def test_a_page_close_keeps_the_connection_and_its_folder(worker):
 
 def test_an_explicit_cascade_takes_the_emptied_connections_folder(worker):
     user, cid, page_id = fresh_ids()
-    worker.new_page(user, page_id=page_id, session_id=cid)
+    worker.new_page(user, page_id=page_id, connection_id=cid)
     folder = make_dirs(worker, cid, page_id)
     worker.drop_page(user, page_id, cascade=True)
     assert worker.page_items.get(page_id) is None
@@ -415,8 +415,8 @@ def test_an_explicit_cascade_takes_the_emptied_connections_folder(worker):
 def test_a_surviving_sibling_keeps_the_connection_folder(worker):
     user, cid, page_id = fresh_ids()
     sibling = f"{page_id}_b"
-    worker.new_page(user, page_id=page_id, session_id=cid)
-    worker.new_page(user, page_id=sibling, session_id=cid)
+    worker.new_page(user, page_id=page_id, connection_id=cid)
+    worker.new_page(user, page_id=sibling, connection_id=cid)
     folder = make_dirs(worker, cid, page_id)
     make_dirs(worker, cid, sibling)
     worker.drop_page(user, page_id)
@@ -429,8 +429,8 @@ def test_a_surviving_sibling_keeps_the_connection_folder(worker):
 def test_drop_user_takes_every_connection_folder(worker):
     user, cid, page_id = fresh_ids()
     other_cid = f"{cid}_b"
-    worker.new_page(user, page_id=page_id, session_id=cid)
-    worker.new_page(user, page_id=f"{page_id}_b", session_id=other_cid)
+    worker.new_page(user, page_id=page_id, connection_id=cid)
+    worker.new_page(user, page_id=f"{page_id}_b", connection_id=other_cid)
     folder = make_dirs(worker, cid, page_id)
     other_folder = make_dirs(worker, other_cid)
     worker.drop_user(user)

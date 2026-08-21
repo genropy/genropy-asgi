@@ -243,9 +243,7 @@ class GenropyWorker(SpaWorker):
             else:
                 user = self.registry.page_user(page_id)
                 self.registry.drop_page(page_id, cascade=False)
-                self.add_worker_event(
-                    "drop_page", user=user, page_id=page_id, session_id=connection_id
-                )
+                self.add_worker_event("drop_page", user=user, page_id=page_id)
             if self.connection_register.get(connection_id) is None:
                 shutil.rmtree(
                     os.path.join(self.connections_folder, connection_id), ignore_errors=True
@@ -256,14 +254,14 @@ class GenropyWorker(SpaWorker):
                     ignore_errors=True,
                 )
 
-    def drop_connection(self, identity: str, session_id: str) -> None:
+    def drop_connection(self, identity: str, connection_id: str) -> None:
         """The core drop, then the connection's disk folder goes with the row.
 
         The cascaded pages' subfolders live under the connection folder
         removed here, so nothing is left behind.
         """
-        super().drop_connection(identity, session_id)
-        shutil.rmtree(os.path.join(self.connections_folder, session_id), ignore_errors=True)
+        super().drop_connection(identity, connection_id)
+        shutil.rmtree(os.path.join(self.connections_folder, connection_id), ignore_errors=True)
 
     def drop_user(self, user: str) -> None:
         """The core drop, then every connection folder of the user goes too."""
