@@ -67,3 +67,57 @@ sweep-ages remap (the child reports the map is NOT 1:1 — no per-page age in
 the core, both expiries live on the commander and concern a frozen user)
 and memory_limit_mb (no landing place — `worker_memory_max_percent` is a
 share of a share, the D6 derivation dies).
+
+Gate record (2026-08-21, all five owner decisions closed in the phase chat):
+
+1. Test site: the shell `sites/test_invoice_pg` (a regenerable `_static`
+   cache that intercepted resolver route 1) was moved out; the resolver now
+   answers `instances/test_invoice_pg/site` (route 2, root.py marker). The
+   `.local_backup` stays untouched. "Restored" in the Done: is satisfied by
+   resolvability — nothing was copied back.
+2. Global reads: the owner's design — a lock-less read PAYS one RPC. The
+   core gained `store_get` (genro-asgi 3dcdeff; an mmap published-view
+   attempt 780fa13 was reverted for sub-commander topologies: no shared
+   disk guarantee). Bridge: `globalStore().getItem(path)` →
+   `worker.store_get`; write rail unchanged; e2e half of
+   test_global_store_rail.py rewritten on the read-through.
+3. Disk cleanup stays on the bridge: overrides of the three PUBLIC drop
+   verbs (`drop_page`/`drop_connection`/`drop_user`) remove the connection
+   folders after the core mutation. Freeze/transfer paths use internal
+   removers and are deliberately NOT hooked: a frozen or moved user's
+   folders must survive. Frozen-then-expired users leave folders behind —
+   the declared debt that replaces the retired orphan sweep.
+4. Sweep ages: `connection_max_age` (site `<cleanup>` or 7200s) →
+   `user_idle_freeze_minutes` = 120 min, env-driven in the recipe (the core
+   default is infinity: without it the valve never fires and the Phase 3
+   freeze check is unrunnable). `page_max_age`/`guest_max_age`: no
+   equivalent — a silent tab's row lives until site drop or user freeze;
+   guests are distinguished only at the commander expiry (24h frozen).
+5. Memory: core `worker_max_number` (group word, default 6, size divisor,
+   explicit `worker_memory_max_percent` wins; genro-asgi 8af3c46). The
+   front's `derive_memory_limit_mb` + `RAM_SHARE` are removed: their job
+   (auto-sizing a worker) moved into the core; their product
+   (`memory_limit_mb` + a declared worker count) no longer exists in the
+   architecture.
+
+Surfaced scope folded into the phase (grew out of the genropy develop
+alignment, 2026-08-21): genropy PR #1070 gates the `gnr.web.daemon`
+entry-point override on `GNR_DAEMON_PROVIDER` — the CLI and the test
+conftest must set `genropy-asgi`, or the classic Pyro client loads and the
+in-process register never engages (invisible until today only because the
+site tests were skipping). `_create_site` builds the site by name/path with
+no root.py hunt — GnrWsgiSite accepts a name; the root.py requirement was
+the bridge's own error (genropy-asgi#4's accidental-path-resolution is fixed
+by the same rework; closes genropy-asgi#2 too; genropy#1077/PR#1080 were
+based on that false premise, PR closed 2026-08-21 with explanation).
+
+test_expiry_and_disk.py retirement — behaviour map (decision 2 of the
+foreman round): knob defaults/site `<cleanup>` reading → replaced by the
+`user_idle_freeze_minutes` mapping (asserted in the adapted worker units);
+guest-before-logged expiry and page-vs-connection ages → no equivalent
+(commander expiries are contract-tested in genro-asgi); disk cleanup on
+drop_page/drop_connection/logout → NEW dedicated tests on the drop-verb
+overrides (successor in this phase); orphan-folder sweep + pool-child
+restraint (`sole_registry_owner`) → retired with the sweep, replaced by the
+declared debt above; the two demolition branches equivalence → moot (the
+core has one demolition road).
