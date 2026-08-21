@@ -15,6 +15,21 @@ Before you install, confirm each of these:
   points at your GenroPy setup (the same file ``gnrwsgiserve`` needs).
 * **An existing site** — a directory with a ``root.py`` (the same site you serve
   with ``gnrwsgiserve``). genropy-asgi runs your site; it does not create one.
+* **psycopg2**, if the site is on PostgreSQL (GenroPy's ``pgsql`` extra, or
+  ``psycopg2-binary``).
+* **A dedicated virtualenv** — installing genropy-asgi replaces the legacy
+  ``gnr.web.daemon`` module for every program in that environment (that is the
+  daemonless register, see below), so do not install it where you also run the
+  classic daemon-based stack.
+
+.. note::
+
+   ``PGGSSENCMODE=disable`` and ``OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`` are
+   **not** needed here, on macOS or anywhere else. Both guard against ``fork()``,
+   and nothing in this stack forks: a worker is a fresh interpreter, spawned with
+   ``subprocess.Popen([executable, "-m", ...])``, and ``os.fork`` appears nowhere
+   in genro-asgi or genropy-asgi. They belong to the classic GenroPy stack under
+   gunicorn, which does fork its workers.
 
 .. note::
 
@@ -33,11 +48,20 @@ Install it
 entry point (the in-process, daemonless register). Nothing else to configure —
 there is no daemon to start.
 
-The latest development version, straight from GitHub:
+To follow current development, take **both** packages from GitHub:
 
 .. code-block:: console
 
+   $ pip install git+https://github.com/genropy/genro-asgi.git
    $ pip install git+https://github.com/genropy/genropy-asgi.git
+
+.. warning::
+
+   The declared floor is ``genro-asgi>=0.33.0``, so installing genropy-asgi alone
+   resolves the published genro-asgi release. That release predates the live
+   monitor and the fix that makes a protected route lead to the login (both
+   answered ``403`` before). The bridge runs on it — but the monitor described
+   below is not there.
 
 From a checkout, for development:
 
@@ -51,7 +75,7 @@ Serve your site (single process)
 .. code-block:: console
 
    $ gnrasgiserve mysite
-   → site on http://0.0.0.0:8080/index
+   → site on http://127.0.0.1:8000/index
 
 ``mysite`` is the GenroPy instance name (the same you pass to ``gnrwsgiserve``),
 or a path to a site directory. This is the exact drop-in for ``gnrwsgiserve``:
@@ -64,12 +88,17 @@ Change host and port:
    $ gnrasgiserve mysite -p 9000              # a different port
    $ gnrasgiserve mysite -H 127.0.0.1 -p 9000 # host + port
 
-Iterate while you edit, or turn debug off:
+Turn debug off:
 
 .. code-block:: console
 
-   $ gnrasgiserve mysite --reload             # auto-restart on file changes
    $ gnrasgiserve mysite --nodebug            # debug off
+
+.. note::
+
+   ``--reload`` is accepted for surface compatibility with ``gnrwsgiserve`` and
+   then ignored — the core server has no reloader, and it prints a line saying
+   so. Restart the process to pick up code changes.
 
 Run it as a pool
 ----------------
@@ -89,19 +118,28 @@ Verify it runs
 **Single or pool** — open ``http://<host>:<port>/index`` in a browser. The site
 behaves exactly as it does under ``gnrwsgiserve``.
 
-**Pool** — watch the per-worker state. Open the live monitor in a browser:
-
-.. code-block:: text
-
-   http://127.0.0.1:8080/_server/monitor
-
-Or read the same state as JSON, e.g. from a script:
+**Single or pool** — read the site-wide counters, no authentication needed:
 
 .. code-block:: console
 
-   $ curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
+   $ curl -s http://127.0.0.1:8000/metrics
+   genropy_site_counters{counter="users"} 2
+   genropy_site_counters{counter="pages"} 2
+   genropy_site_counters{counter="connections"} 2
 
-Prometheus metrics for the whole pool are on the commander at ``/metrics``.
+**The live monitor** is served by genro-asgi at ``/_server/monitor/`` (the JSON
+it polls is ``/_server/monitor/snapshot``). Every route is gated
+``SERVER_ADMIN``, and the built-in recipe declares no administrator, so out of
+the box both answer ``401``. To open it, launch with a config that declares an
+``authentication.admin_password`` — plus a ``storage_key``, since the user store
+encrypts at rest — then sign in at ``/_server/login_page`` as ``admin``.
+
+.. note::
+
+   The site application renders the monitor's *generic* panel: you see the
+   server, its sections and the mounted app, not a per-worker breakdown. The
+   placement map — which user sits on which worker — lives in the front and is
+   not published over HTTP yet.
 
 Next steps
 ----------

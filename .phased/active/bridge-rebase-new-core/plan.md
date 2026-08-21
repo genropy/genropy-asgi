@@ -37,6 +37,7 @@ notes.md, review.md), then the pre_refactoring worker
 
 - [>] **Phase 2**: Rebase the bridge on the new core
   > In execution since 2026-08-20T18:49:17Z
+  > WIP: done: source rebased — worker on SpaWorker (drop-verb disk cleanup, idle valve from <cleanup>, store_get read-through in the client, _create_site by name/path no root.py), front on SpaApplicationNew (recipe-driven pool, /metrics population+events), recipe+CLI reworked (GNR_DAEMON_PROVIDER, selector removed), conftest provider; lint green, imports green | missing: test suite adaptation (worker units fixtures freeze_handler/exit_process, register client units, spa app structural->recipe tests, global rail e2e rewrite on read-through, expiry file retirement, legacy_e2e + cli e2e rebase on spawned pool) then full-green Done | next: fix tests/test_genropy_worker_units.py fixture (FreezeHandler tmp, exit_process) | commit: (this)
   - Run: opus / high
   - Pattern: `../genro-asgi/src/genro_asgi/spa/orchestration/spa_worker.py`
     (new worker base, hooks at :492 `build_registry`, :505-:523 registers),
