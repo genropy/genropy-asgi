@@ -1,7 +1,7 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""Tests for GenropySpaApplication — the GenroPy front on the core SpaApplicationNew.
+"""Tests for GenropySpaApplication — the GenroPy front on the core SpaApplication.
 
 The structural half (subclassing, the root mount, the startup source check)
 needs no GenroPy: the front holds no pool until the server starts. The BOOT
@@ -23,7 +23,7 @@ import tempfile
 import pytest
 
 from genro_asgi import AsgiServer
-from genro_asgi.applications.spa_app_new import SPA_CONNECTION_ID_COOKIE, SpaApplicationNew
+from genro_asgi.applications.spa_app import SPA_CONNECTION_ID_COOKIE, SpaApplication
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa import GenropySpaApplication
@@ -39,7 +39,7 @@ _SITE = "test_invoice_pg"
 
 
 def test_is_spa_application_new_subclass():
-    assert issubclass(GenropySpaApplication, SpaApplicationNew)
+    assert issubclass(GenropySpaApplication, SpaApplication)
 
 
 def test_a_direct_instantiation_lands_on_the_site_root():

@@ -5,7 +5,7 @@
 
 These REQUIRE GenroPy and the ``test_invoice_pg`` site; they skip cleanly when
 either is missing. No register daemon anywhere: the front is
-``GenropySpaApplication`` (the core ``SpaApplicationNew``) attached to the live
+``GenropySpaApplication`` (the core ``SpaApplication``) attached to the live
 lane of ``tests/lane.py`` — the GenropyWorker with its real handler and a real
 commander desk, all in this process so the register and the db stay
 inspectable — and every request crosses the demux, the ``http`` CALL forward,

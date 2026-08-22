@@ -1,7 +1,7 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""GenropySpaApplication — the GenroPy front on the core ``SpaApplicationNew``.
+"""GenropySpaApplication — the GenroPy front on the core ``SpaApplication``.
 
 The core front owns the whole serving machinery: the pool born from the
 recipe at startup (``SpaCommander`` and its groups), the two-stage demux
@@ -34,7 +34,7 @@ from typing import Any
 
 from genro_routes import route
 
-from genro_asgi.applications.spa_app_new import SpaApplicationNew
+from genro_asgi.applications.spa_app import SpaApplication
 
 __all__ = ["GenropySpaApplication"]
 
@@ -46,8 +46,8 @@ METRIC_PREFIX = "genropy_site_counters"
 EVENTS_PREFIX = "genropy_site_events"
 
 
-class GenropySpaApplication(SpaApplicationNew):
-    """The GenroPy legacy front: a ``SpaApplicationNew`` whose workers host a site.
+class GenropySpaApplication(SpaApplication):
+    """The GenroPy legacy front: a ``SpaApplication`` whose workers host a site.
 
     Mounted at the ROOT by design (``mount = ""``): a GenroPy site builds its own
     absolute URLs — ``/_ping``, ``/_rpc``, every static and resource path — so a
