@@ -1,6 +1,6 @@
 """Scaling probe — N DISTINCT users log in sequentially, watch the pool grow.
 
-Each user gets one persistent keep-alive connection (the sticky_cid cookie pins
+Each user gets one persistent keep-alive connection (the spa_connection_id cookie pins
 the worker). Credentials are injected BOTH in the flat user=/password= fields
 (login_checkAvatar) AND inside the Bag XML of the `login` parameter of
 login_doLogin (<user>...</user> / <password>...</password>) — the flat

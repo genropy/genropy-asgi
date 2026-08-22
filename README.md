@@ -71,7 +71,7 @@ stores — is served **in-process**, not by a daemon.
 - **Pool** (the same `GenropySpaApplication` with `workers=N`): its commander
   supervises N spawned workers (`GenropyWorker`, one site each), forwards every
   request to the right worker by an
-  opaque `sticky_cid` cookie, and grows the pool on measured worker occupancy
+  `spa_connection_id` cookie — the connection id the site itself creates — and grows the pool on measured worker occupancy
   (cpu + executor), not head counts. Datachanges live locally on the page's own worker (the *switch
   model*); cross-worker changes arrive via the commander. The legacy
   `globalStore()` is eventually coherent via the framework's global-store rail —
