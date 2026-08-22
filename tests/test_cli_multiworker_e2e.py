@@ -100,8 +100,8 @@ def test_page_served_by_the_pool_through_the_commander(pool_server):
         match = re.search(r"page_id:'([\w-]+)'", response.text)
         assert match, "no page bootstrap in the forwarded response"
         page_id = match.group(1)
-        # the commander minted its sticky cookie on the connection's birth
-        assert "sticky_cid" in response.cookies
+        # the connection the site created came back as the routing cookie
+        assert "spa_connection_id" in response.cookies
         # the ping crosses the rail: commander forward -> child handle_ping ->
         # LOCAL pending-list drain on the child -> envelope
         answer = client.get("/_ping", params={"page_id": page_id})
@@ -122,35 +122,36 @@ def test_metrics_reflects_the_guest_lifecycle(pool_server):
         assert counters["pages"] >= 1
 
 
-def test_sticky_cid_survives_a_reload(pool_server):  # wf:phase-3:new
+def test_the_routing_cookie_survives_a_reload(pool_server):  # wf:phase-3:new
     """The cookie reaches the browser AND the reload comes back on the same cid.
 
     The doubt this closes (open since 2026-08-14, never retried): through the
-    bridge the sticky cookie did not reach the client, so every request
+    bridge the routing cookie did not reach the client, so every request
     travelled anonymous — freeze worked and wake was unreachable from traffic.
-    The reload is the proof: no second ``Set-Cookie`` means the front READ the
-    cid it had minted, and a connection count that does not grow means the
-    request landed on the row already there instead of opening a second one.
+    The reload is the proof: no second ``Set-Cookie`` means the site reused the
+    connection the cookie named, and a connection count that does not grow means
+    the request landed on the row already there instead of opening a second one.
     """
     with httpx.Client(base_url=pool_server, timeout=30.0) as client:
         first = client.get("/")
         assert first.status_code == 200
         stamps = first.headers.get_list("set-cookie")
-        minted = [line for line in stamps if line.startswith("sticky_cid=")]
-        assert len(minted) == 1, f"no sticky_cid minted on the connection's birth: {stamps}"
+        minted = [line for line in stamps if line.startswith("spa_connection_id=")]
+        assert len(minted) == 1, f"the connection's birth named no cookie: {stamps}"
         assert "httponly" in minted[0].lower()
         assert "samesite=lax" in minted[0].lower()
-        cid = client.cookies["sticky_cid"]
+        assert "max-age=86400" in minted[0].lower()
+        cid = client.cookies["spa_connection_id"]
 
         before = read_metrics(client)
         reload_response = client.get("/")
         assert reload_response.status_code == 200
-        # the front saw the carried cid: nothing re-minted, nothing rotated
+        # the site reused the connection the cookie named: nothing rewritten
         assert not [
             line for line in reload_response.headers.get_list("set-cookie")
-            if line.startswith("sticky_cid=")
+            if line.startswith("spa_connection_id=")
         ]
-        assert client.cookies["sticky_cid"] == cid
+        assert client.cookies["spa_connection_id"] == cid
         # ... and the reload stayed on the same connection row
         assert read_metrics(client)["connections"] == before["connections"]
 
@@ -158,5 +159,5 @@ def test_sticky_cid_survives_a_reload(pool_server):  # wf:phase-3:new
     with httpx.Client(base_url=pool_server, timeout=30.0) as other:
         response = other.get("/")
         assert response.status_code == 200
-        assert other.cookies["sticky_cid"] != cid
+        assert other.cookies["spa_connection_id"] != cid
         assert read_metrics(other)["connections"] >= before["connections"] + 1

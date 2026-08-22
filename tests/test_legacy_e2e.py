@@ -19,7 +19,8 @@ parents the legacy capture records stay internal), each with its ``fired``
 flag verbatim, delivered once — the drain is destructive.
 
 Scenario coverage:
-- page open -> the site's connection cookie AND the front's sticky_cid minted,
+- page open -> the site's connection cookie AND the routing cookie, both
+  carrying the SAME connection id,
   ``page_id`` in the bootstrap HTML
 - ping -> empty envelope when no changes are pending
 - subscribeTable + notifyDbEvents -> delivered once on ping (collect is
@@ -141,8 +142,9 @@ def merge_cookies(received, cookies=None):
     """Fold the response's set-cookie headers into the request cookie string.
 
     The new single answers with TWO cookies — the site's own (named after the
-    site) and the front's ``sticky_cid`` — and the client must present both:
-    the site cookie is the legacy session, the sticky one is the routing key.
+    site) and the front's ``spa_connection_id`` — and the client must present
+    both: the site cookie is the legacy session, the other is the routing key,
+    and they carry the same connection id.
     """
     jar = {}
     if cookies:
@@ -202,10 +204,12 @@ def test_page_open_mints_both_cookies_and_the_page(app, register):
     page_id, cookie = open_page(app)
     jar = dict(pair.split("=", 1) for pair in cookie.split("; "))
     assert _SITE in jar  # the site's own legacy session cookie
-    assert "sticky_cid" in jar  # the front's routing cookie
+    assert "spa_connection_id" in jar  # the routing cookie
     page_item = register.page(page_id)
     assert page_item is not None
     assert page_item["register_item_id"] == page_id
+    # ONE identity: what routes is the connection the site itself created.
+    assert jar["spa_connection_id"] == page_item["connection_id"]
 
 
 def test_ping_with_no_changes_returns_empty_envelope(app):

@@ -5,7 +5,8 @@
 
 The core front owns the whole serving machinery: the pool born from the
 recipe at startup (``SpaCommander`` and its groups), the two-stage demux
-(native routes vs the hosted site), the ``sticky_cid`` cookie mint and the
+(native routes vs the hosted site), the ``spa_connection_id`` routing
+cookie — the connection id the site itself creates, no mint — and the
 ``http`` CALL forward. The pool is not configured here: its words live in
 the recipe, under ``applications.<code>.commander`` — see
 ``genropy_asgi.spa.config`` for the recipe this package ships. This

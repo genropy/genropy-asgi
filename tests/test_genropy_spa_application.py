@@ -12,8 +12,8 @@ never starts, and the words must land where the core reads them
 (``commander_kwargs``/``group_kwargs``). The end-to-end half starts the REAL
 pool — the commander spawns one worker subprocess hosting ``test_invoice_pg``
 — and drives the front's own ASGI callable: the demux serves ``/metrics``
-natively and forwards the site paths, the sticky cookie is minted on the
-first answer.
+natively and forwards the site paths, and the first answer carries the
+connection the site named as the routing cookie.
 """
 
 import importlib.util
@@ -23,7 +23,7 @@ import tempfile
 import pytest
 
 from genro_asgi import AsgiServer
-from genro_asgi.applications.spa_app_new import STICKY_CID_COOKIE, SpaApplicationNew
+from genro_asgi.applications.spa_app_new import SPA_CONNECTION_ID_COOKIE, SpaApplicationNew
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa import GenropySpaApplication
@@ -231,10 +231,12 @@ async def test_a_site_path_is_forwarded_end_to_end(app):
     assert len(received["body"]) > 0
 
 
-async def test_the_first_answer_mints_the_sticky_cookie(app):
+async def test_the_first_answer_carries_the_connection_the_site_named(app):
+    """The site creates its connection while serving, and that id — nothing
+    minted by the front — is what the routing cookie is written with."""
     received = await fire(app, "/")
     cookies = header_values(received, "set-cookie")
-    assert any(STICKY_CID_COOKIE in cookie for cookie in cookies)
+    assert any(SPA_CONNECTION_ID_COOKIE in cookie for cookie in cookies)
 
 
 async def test_metrics_is_served_natively_by_the_demux(app):
