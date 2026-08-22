@@ -1,6 +1,17 @@
 Pool internals
 ==============
 
+.. warning::
+
+   **SUPERSEDED (2026-08-22).** This page describes the pre-rebase front
+   (the ``--workers``/``--config`` selector, ``memory_limit_mb``,
+   ``GNR_ASGI_WORKERS``), all removed by the ``bridge-rebase-new-core``
+   workflow: the pool always runs, born from the recipe in
+   ``genropy_asgi/spa/config.py``, sized by the core's ``worker_max_number``.
+   Until this page is rewritten, trust ``gnrasgiserve --help`` and
+   ``spa/config.py`` — not what follows.
+
+
 .. note::
 
    Internal / design notes — not part of the published (Read the Docs) tutorial.

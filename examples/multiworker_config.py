@@ -1,7 +1,12 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""Benchmark config: the elastic pool with its occupancy knobs exposed to the environment.
+"""SUPERSEDED (2026-08-22): this example configures the pre-rebase front
+(workers=, memory_limit_mb) whose API no longer exists. The pool is now
+configured by the recipe in genropy_asgi/spa/config.py. Kept only as a
+historical reference until removal is decided.
+
+Benchmark config: the elastic pool with its occupancy knobs exposed to the environment.
 
 The shipped recipe (``genropy_asgi.spa.config``) reads only the worker count; this one
 exposes the pool's decision knobs as well, each overridable from the environment, so a
