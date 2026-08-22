@@ -152,9 +152,33 @@ notes.md, review.md), then the pre_refactoring worker
     test_legacy_e2e, test_cli_multiworker_e2e, test_register_client_units
     and the worker construction tests.
 
-- [>] **Phase 3**: Browser collaudo — sticky_cid and the four steps
-  > WIP: done: sticky_cid reload scenario green (the Done: is met, 117 passed) + the debug door mounted on `_inspect` behind GNR_ASGI_INSPECTOR, registered as an MCP server | missing: the four `Verify: now` manual steps, one at a time from a server verified empty through the door | next: owner closes the site tabs, restart clean, then step 1 (one request, no login -> exactly one guest, one connection, one page) | commit: 3622318
-  > In execution since 2026-08-21T12:57:39+02:00
+- [x] **Phase 3**: Browser collaudo — sticky_cid and the four steps
+  > Done: the routing-cookie reload scenario is green
+    (`test_the_routing_cookie_survives_a_reload`), the full suite passes
+    (117 passed, ruff clean), and the debug door is mounted on `_inspect`
+    behind `GNR_ASGI_INSPECTOR`, registered as an MCP server. In the same
+    phase the identity was reworked: the routing cookie became the site's
+    own `connection_id` (`spa_connection_id`), the core rename to
+    `SpaApplication` was followed, and the docs describing the dead front
+    were purged or banner-marked.
+  > Files: src/genropy_asgi/spa/config.py,
+    src/genropy_asgi/spa/genropy_spa_application.py,
+    src/genropy_asgi/spa/genropy_worker.py,
+    src/genropy_asgi/siteregister/siteregister_client.py,
+    tests/test_cli_multiworker_e2e.py, tests/test_genropy_spa_application.py,
+    tests/test_genropy_worker_units.py, tests/test_legacy_e2e.py,
+    pyproject.toml, CLAUDE.md, README.md, examples/multiworker_config.py,
+    benchmarks/load_harness.py, benchmarks/scaling_probe.py,
+    docs/cli-reference.rst, docs/configuration.rst, docs/faq.rst,
+    docs/internal/architecture.rst, docs/internal/pool-internals.rst,
+    docs/genropy-asgi-for-dummies.html,
+    .phased/active/bridge-rebase-new-core/plan.md,
+    .phased/active/bridge-rebase-new-core/notes.md
+  > Verify: deferred: needs the comparison bench — the four manual browser
+    steps below are delegated to the legacy/bridge comparison bench
+    (`temp/startdoc_test_parallelo_2026-08-22.md`, v1.4), which records them
+    as traces instead of eyeballing them once. Owner decision, 2026-08-22;
+    rationale in notes.md under `## Phase 3`.
   - Run: opus / medium
   - Pattern: `../genro-asgi/src/genro_asgi/applications/spa_app_new.py`
     (:85 sticky_cid mint, :349 cookie write, :390 header guarantee);
@@ -169,12 +193,15 @@ notes.md, review.md), then the pre_refactoring worker
     end-to-end scenario. Then the manual collaudo below.
   - Done: the end-to-end scenario asserting Set-Cookie emission and cid
     persistence across reload passes.
-  - Verify: now — the site opens and logs in
-  - Verify: now — navigation updates data (datachanges via collect_page)
-  - Verify: now — a commit on a subscribed table reaches the page (dbevents)
-  - Verify: now — idle → freeze → a new request wakes the user and the page
-    still receives user-store updates (Phase 12 fix; contract-tested in
-    genro-asgi but seen from the browser here)
+  - Verify: deferred: needs the comparison bench — the site opens and logs in
+  - Verify: deferred: needs the comparison bench — navigation updates data
+    (datachanges via collect_page)
+  - Verify: deferred: needs the comparison bench — a commit on a subscribed
+    table reaches the page (dbevents)
+  - Verify: deferred: needs the comparison bench — idle → freeze → a new
+    request wakes the user and the page still receives user-store updates
+    (Phase 12 fix; contract-tested in genro-asgi but seen from the browser
+    here)
 
 ## Notes
 

@@ -216,3 +216,23 @@ Done::
 Collaudo method the owner fixed for the rest: one step at a time, from a
 server verified EMPTY through the door (users/connections/pages all `[]`,
 confirmed on the current process), and no probe of mine in the counts.
+
+## Phase 3
+
+- **The four manual `Verify: now` steps are delegated, not skipped** (owner
+  decision, 2026-08-22). Login, datachanges, dbevents and freeze/wake were
+  authored as manual browser checks. They become the collaudo sequence of the
+  legacy/bridge comparison bench — startdoc
+  `temp/startdoc_test_parallelo_2026-08-22.md` (v1.4) — which records HTTP
+  exchanges and register calls as traces instead of eyeballing them once. The
+  bench is the next workflow; its Campaign A builds the instruments on the
+  legacy stack alone, its Campaign B records the owner's real session. The
+  phase's own `Done:` was met and re-verified at close (117 passed, ruff
+  clean), so the marker is `[x]`: the delegation changes who performs the
+  checks, not whether the phase's machine contract passed.
+- **The identity rework rode this phase** (P7 in
+  `temp/problemi_ponte_2026-08-22.md`): the routing cookie became the site's
+  own `connection_id` under the name `spa_connection_id`, and the core rename
+  `SpaApplicationNew` → `SpaApplication` was followed. Both are recorded in
+  the phase's `> Done:` because they landed inside its window, not because the
+  plan asked for them.

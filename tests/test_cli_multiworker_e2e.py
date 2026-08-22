@@ -122,7 +122,7 @@ def test_metrics_reflects_the_guest_lifecycle(pool_server):
         assert counters["pages"] >= 1
 
 
-def test_the_routing_cookie_survives_a_reload(pool_server):  # wf:phase-3:new
+def test_the_routing_cookie_survives_a_reload(pool_server):
     """The cookie reaches the browser AND the reload comes back on the same cid.
 
     The doubt this closes (open since 2026-08-14, never retried): through the
