@@ -241,7 +241,8 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     the legacy stack only.
   - Done: with the reference session performed, every line of
     `register_trace.jsonl` carries an `exchange_id` that exists in
-    `http_trace.jsonl` — or the exchange explicitly absent, for the calls the
+    `http_trace.jsonl` — as a full record, or as the id-only stub of an exchange
+    the filter kept out, or with the exchange explicitly absent for the calls the
     master makes at startup — and one chosen RPC exchange shows in order the
     register calls it made, calls on the client and calls on a store alike, the
     latter naming their register and item
