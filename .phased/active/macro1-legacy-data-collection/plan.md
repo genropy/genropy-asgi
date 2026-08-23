@@ -80,7 +80,7 @@ timings are not read, so the instrumentation may be as heavy as it needs.
 
 - [>] **Phase 2**: the HTTP recorder
   > In execution since 2026-08-23T07:28:58Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: bc01408
+  > Testing: awaiting the human's `Verify: now` checks | commit: dfe306c
   - Run: opus / medium
   - Pattern: `benchmarks/capture_proxy.py` (ancestor of the record format),
     `benchmarks/gunicorn_count.conf.py` (the `post_worker_init` install point)
@@ -110,9 +110,12 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     the way `capture_proxy.py` already does. Whole bodies, **no truncation
     anywhere** — instead, certain exchanges are not recorded at all (owner,
     2026-08-23: a filter, not a cut): static assets, recognised by the response
-    content type plus `favicon.ico`, and pings whose answer is an empty Bag. A
-    ping carrying a datachange IS recorded — that Bag is the register answering,
-    and it is material the macro-phase 2 diff needs. A failure inside the
+    content type plus `favicon.ico`, and pings that rendered nothing — the bare
+    envelope `<GenRoBag><result _T="NN"></result></GenRoBag>`, which is what
+    `handle_ping` returns when there is nothing to deliver
+    (`gnr/web/daemon/siteregister.py:928`); an empty Bag, the first guess, never
+    occurs on the wire. A ping carrying a datachange IS recorded — that Bag is
+    the register answering, and it is material the macro-phase 2 diff needs. A failure inside the
     recorder is recorded and never propagates to the response. Traces are
     written under `temp/`.
   - Done: a hand-driven session produces `http_trace.jsonl` where every exchange
