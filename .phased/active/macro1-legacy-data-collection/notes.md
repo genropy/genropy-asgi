@@ -242,3 +242,55 @@
 - **The slug keeps `macro1`.** A branch name is a historical address, not a
   claim about vocabulary; renaming it mid-workflow would rewrite every reference
   for no gain.
+- **`attempts` is counted on the Pyro proxy, and this is why.** The plan asked for
+  the number of attempts and the error class, and neither is observable from
+  outside the legacy funnel: the retry loop lives inside the closure
+  `SiteRegisterClient.__getattr__` builds, and its `except Exception` neither logs
+  nor re-raises, so a fourfold failure comes back indistinguishable from a
+  legitimate `None`. The proxy is therefore wrapped as well — but it writes no
+  line of its own: it deposits the count and the error class into the call in
+  flight on that thread. Two properties matter more than the number. One line per
+  call the SITE made, never one per wire round trip. And the same line shape on
+  both stacks: on the bridge `client.siteregister` returns the client itself and
+  there is no per-call retry, so `attempts` is honestly 1 there — a real
+  difference between the stacks rather than an artefact of the instrument, which
+  is exactly the distinction macro-phase 2 has to be able to make.
+- **The guard is `inspect.isroutine`, not `callable`.**
+  `site.register.locked_exception` is a class (`GnrDaemonLocked`), so it is
+  callable: a wrapper that wrapped it would return a function, and the `except`
+  clause using it would stop matching — silently, in a path that only runs once
+  something has already gone wrong. `callable()` was the first guard written and
+  the isolation check is what caught it. Pyro's proxy is not callable, so
+  `DataCollector(self.register.siteregister)` at site boot was never at risk.
+- **Bags had to become XML, and that was found on the live trace, not by
+  reading.** The plan says Bags serialise as truncated `repr`; taken literally
+  that produces `<gnr.core.gnrbag.Bag object at 0x10fcb0ce0>` — no content, and a
+  memory address that changes at every run, so two runs of the same session would
+  differ on every line carrying a Bag. Against a comparison that is STRUCTURAL by
+  the owner's rule, that is not a detail: it is noise indistinguishable from a
+  divergence. Bags now go in as `toXml()`, and any other repr has its address
+  stripped.
+- **A store's internal call is not recorded twice, on purpose.** A `ServerStore`
+  keeps the client it was built from, so `set_datachange` on a store delegates to
+  the real client and produces the store line only. The recorded line is the call
+  the site made; the delegation is mechanical. The alternative — building the
+  store ourselves so its delegation passes through the wrapper — would double
+  every store call and duplicate one line of genropy's own logic.
+- **A store's register reads are properties, so they are recorded by name.**
+  `data`, `register_item`, `datachanges` and `subscribed_paths` cannot be
+  intercepted as calls: reading the attribute IS the register read. Four names in
+  a tuple, which is the one place the recorder needs to know a name — everywhere
+  else it stays ignorant of which methods the class declares.
+- **A property that raises AttributeError falls through to `__getattr__`.** Found
+  while writing the isolation check: a fake client without `remotebag_uri` made
+  `ServerStore.register_item` raise AttributeError inside the property, and Python
+  turned that into a lookup on `ServerStore.__getattr__`, which reported
+  "register_item has no attribute 'register_item'". Genropy's behaviour, not
+  ours, and worth knowing before anyone debugs a store read.
+- **The isolation check runs on the bench venv**, unlike Phase 2's, because the
+  recorder imports genropy. It builds the real `SiteRegisterClient` past its
+  `__init__` with a fake proxy in place of the wire, so the retry loop under test
+  is genropy's own and not a copy of it.
+- **Names**: `RegisterRecorder` stands in place of the client, `StoreRecorder` in
+  place of one store, `WireCounter` in place of the Pyro proxy, `TraceWriter`
+  appends the lines. Bench scaffolding, not package surface.

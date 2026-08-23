@@ -145,6 +145,7 @@ same declaration.
 |---|---|
 | Stack | legacy: standalone sitedaemon + gunicorn |
 | Processes / threads | 1 process, 16 threads (`-w 1 -k gthread --threads 16`) |
+| Recorders | both, installed by `serve_legacy.py` + the `-c` config; a run with neither uses step 5's plain command |
 | Debug | **off** |
 | Register at start | **empty** — daemon restarted and `siteregister_data.pik` deleted |
 | Database | `test_invoice_pg`, postgres localhost:5432 |
@@ -188,10 +189,10 @@ leftovers of the browser, not divergences between the two implementations. Obser
 
 - **HTTP recorder** — `http_recorder.py`, a WSGI middleware wrapping the app.
   Built. Writes `temp/http_trace.jsonl`.
-- **Register recorder** — a wrapper around `SiteRegisterClient`, patched by name
-  in the `gnr.web.gnrwsgisite` namespace. Not built yet — Phase 3. Will write
-  `temp/register_trace.jsonl`, every line carrying the `exchange_id` of the
-  exchange that caused the call.
+- **Register recorder** — `register_recorder.py`, a wrapper object standing in
+  place of `SiteRegisterClient`, patched by name in the `gnr.web.gnrwsgisite`
+  namespace. Built. Writes `temp/register_trace.jsonl`, every line carrying the
+  `exchange_id` of the exchange that caused the call.
 
 Both are **installed by a plain call**, never by logic living inside a gunicorn
 hook: the bridge has no gunicorn, and the same two recorders have to install
@@ -231,20 +232,42 @@ Register calls made outside any request — service threads, or anything after t
 end-of-dispatch cleanup — carry no `exchange_id`. That is information, not a
 loss: in the trace they appear as calls belonging to no exchange.
 
-### Running with the HTTP recorder
+### Running with both recorders
 
-Add the recorders' gunicorn config to the launch of step 5, from the repository
-root:
+A recorded run replaces the command of step 5 with the launcher, from the
+repository root. Step 5's plain command stays valid and is the declared
+condition of a run **without** recorders:
 
 ```bash
-PGGSSENCMODE=disable temp/legacy_venv/bin/gnr web serveprod test_invoice_pg_legacy \
+PGGSSENCMODE=disable temp/legacy_venv/bin/python \
+    benchmarks/compare/serve_legacy.py test_invoice_pg_legacy \
     -b 127.0.0.1:8099 -w 1 -k gthread --threads 16 \
     -c benchmarks/compare/gunicorn_recorders.conf.py
 ```
 
-`post_worker_init` runs right after gunicorn's own `load_wsgi()`, so
+Everything after the script is genropy's own `serveprod` command line: the
+launcher adds nothing and takes nothing away.
+
+**Two recorders, two install points, one command.** The HTTP recorder installs
+from `post_worker_init`, which runs right after gunicorn's own `load_wsgi()`, so
 `worker.wsgi` is already the site application and one line wraps it (verified on
-gunicorn 26.1.0).
+gunicorn 26.1.0). The register recorder cannot use any hook, and this is not a
+preference:
+
+- `gnrserveprod.main()` builds `GnrWsgiSite` **before** it reads the `-c` file,
+  and hands an already-built application to gunicorn, whose `load()` only returns
+  it;
+- `GnrWsgiSite.__init__` forces the register into existence, under genropy's own
+  comment "this is needed, don't remove";
+- so the client exists in the **master** process before any hook runs and before
+  the fork. Measured: master and worker hold one inherited socket to the
+  sitedaemon, same descriptor, same address pair.
+
+Patching the name from the configuration file would therefore be a no-op on the
+instance the site already holds. The launcher assigns the name before genropy's
+entry point runs — one plain assignment, which is what makes the same recorder
+installable on the bridge, where the call goes wherever the worker builds its
+site.
 
 **Hygiene: delete the old traces before a run.**
 
@@ -256,11 +279,13 @@ The recorders open the trace in append mode and never truncate it — truncating
 at install would mean the second worker erasing the first one's lines. A trace
 left over from a previous run silently mixes two sessions.
 
-**Delete before starting, never while the server runs.** The recorder holds the
-file open: removing it mid-run unlinks the inode the recorder still writes to,
-so the session goes on being recorded into a file nobody can see and the visible
-trace stays empty. If it happens, restart gunicorn — there is nothing to
-recover.
+**Delete before starting, never while the server runs.** The HTTP recorder holds
+the file open: removing it mid-run unlinks the inode the recorder still writes
+to, so the session goes on being recorded into a file nobody can see and the
+visible trace stays empty. If it happens, restart gunicorn — there is nothing to
+recover. The register trace survives the same mistake, because its writer opens
+the file per write, but the run is then missing everything written before the
+deletion and is no longer a reference.
 
 ### What lands in the trace, and what does not
 
@@ -313,12 +338,104 @@ The `X-Gnr*` headers only arrive on the page-serving path — they are set by
 statics are not recorded anyway. With debug off, `X-GnrSqlTime` and
 `X-GnrSqlCount` arrive as `0`; see the declared conditions above.
 
+### What the register trace carries
+
+One JSONL line per call **the site made** — never one per wire round trip. Three
+surfaces, and the line says which one it was intercepted on:
+
+| Surface | What it means |
+|---|---|
+| `client` | a method declared on `SiteRegisterClient` (`get_item`, `page`, `new_page`, `refresh`, the four `*Store` builders, …) |
+| `passthrough` | a name the legacy class's `__getattr__` forwards to the register (`drop_page`, `setInClientData`, `handle_ping`, …) |
+| `store` | a call on a `ServerStore` handed back by one of the `*Store` builders |
+
+The wrapper is an **object** standing in place of the client, not a patch on
+`__getattr__`. That funnel is bypassed by about 26 methods declared on the class,
+and the bridge's own client has no `__getattr__` at all — a recorder built on the
+funnel would record nothing there.
+
+| Field | What |
+|---|---|
+| `exchange_id` | the join key with the HTTP trace. **Absent** when the call belongs to no exchange |
+| `ordinal` | position within its exchange, from 1 |
+| `surface`, `verb` | where it was intercepted, and the name called |
+| `args`, `kwargs` | the arguments |
+| `result` | the answer |
+| `attempts` | wire calls the call caused: `0` when it never left the process, `1` normally, up to `MAX_RETRY_ATTEMPTS` when the legacy loop retried |
+| `wire_error` | the error class the legacy retry loop swallowed, when it swallowed one |
+| `error` | the exception that reached the site, when one did |
+| `duration_ms`, `ts`, `thread`, `pid` | timing and provenance |
+| `register_name`, `register_item_id` | store lines only: which register and which item |
+| `recorder_error` | present only when the recorder itself failed on that call |
+
+**`attempts` is counted on the Pyro proxy, not guessed.** The legacy retry loop
+lives inside the closure `SiteRegisterClient.__getattr__` builds, and its
+`except Exception` neither logs nor re-raises: from outside that funnel a
+fourfold failure is indistinguishable from a legitimate `None`. Counting on the
+wire and attributing to the call in flight on that thread is what makes the
+number true, and it keeps one line per call. The two groups behave differently
+and the trace shows it rather than hiding it: a `passthrough` verb can carry
+`attempts: 4` with a `wire_error` and a `null` result, while a `client` method
+raises and carries an `error`. On the bridge there is no per-call retry at all,
+so `attempts` is honestly `1` there — a real difference between the stacks, not
+an artefact of how it was measured.
+
+**The calls with no exchange are recorded, not filtered.** The register client is
+born in the master process, so the site's own boot makes real register calls
+before any exchange exists: those lines simply have no `exchange_id` key. An
+absent exchange is absent — never faked, never inherited from whatever ran last
+on that thread. They are material the replica will want, since the bridge boots
+its registers too.
+
+**What is deliberately not recorded twice**: the call a store makes internally on
+the client. A store keeps the client it was built from, so `set_datachange` on a
+store produces the store line and no client line. A line is a call the site made.
+
+**Values are written to be comparable between runs.** A Bag goes in as its XML:
+the default `repr` carries no content and a memory address that changes at every
+run would read as a divergence. Anything else goes in as its `repr` with the
+address stripped. Long values are truncated with their real length appended.
+
+The trace writer **opens the file per write**. The wrapper is born in the master,
+and a handle inherited across the fork would let two processes interleave
+mid-line — the same class of invisible defect as a recorder fault reaching the
+response.
+
+## The reference session
+
+What this phase produces is a **reference**: the two traces of one session
+performed in the browser, and the recipe to make them again. There is no script
+beside them — in the replica shape the recorded trace *is* the script the replica
+reads, and a hand-written sequence next to it would be a second source of truth
+free to drift.
+
+**The traces are never committed.** They carry whole bodies: the login exchange
+with the bench password, the session cookies. This repository is public. They
+live in `temp/`, gitignored, which is why macro-phase 2 must never depend on an
+archived reference — only on the ability to produce one on demand, from here.
+
+The session, under the declared conditions above and starting from an empty
+register:
+
+1. hygiene as in step 3 — no stale process, and the register empty: stop
+   gunicorn and the sitedaemon, delete `siteregister_data.pik` from the site
+   folder, delete the two traces;
+2. start the sitedaemon (step 4), then the launcher above;
+3. in the browser, log in with an account from `benchmarks/usernames.txt`,
+   password `a`;
+4. open one table page and let the grid load;
+5. open one record, change one field, save it.
+
+Then the two traces are the reference: every register line joins an HTTP exchange
+by `exchange_id`, except the boot calls, which have no exchange by construction.
+
 ### Exercising the recorder without a browser
 
 Two scripts in this folder, both runnable from the repository root.
 
 ```bash
 python3 benchmarks/compare/http_recorder_check.py
+temp/legacy_venv/bin/python benchmarks/compare/register_recorder_check.py
 python3 benchmarks/compare/drive_login.py [username]
 ```
 
@@ -327,6 +444,18 @@ wrapping it, and 19 assertions over the filters, the whole bodies and the two
 guarantees about failure. It is the machine evidence that a fault inside the
 recorder never reaches the response — kept versioned rather than in a scratch
 file, because evidence that gets deleted is not evidence.
+
+`register_recorder_check.py` needs nothing running either, but it does need the
+bench venv, because the recorder imports genropy: 33 assertions over the two
+client surfaces, the store and its lock, the legacy retry loop (the real one —
+the client is built past its `__init__` with a fake proxy in place of the wire),
+the absent exchange, the comparable values, and the promise that a fault inside
+the recorder never reaches the site. Among them, one guards a trap worth naming:
+`register.locked_exception` is a **class**, so it is callable, and a wrapped
+class stops matching the `except` clause that uses it — silently, in a path that
+only runs once something has already gone wrong. The wrapper hands back anything
+that is not a routine untouched, and `inspect.isroutine` is the guard, not
+`callable`.
 
 `drive_login.py` replays a real login against the running site over HTTP, no
 browser involved: it reuses `replay_a1.build_plan` to pull the two login
