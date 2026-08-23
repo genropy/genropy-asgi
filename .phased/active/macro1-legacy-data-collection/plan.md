@@ -4,14 +4,23 @@ Mode: interactive
 Must not break: both recorders install on the bridge too, where there is no gunicorn hook — installation is a call, not a hook (Macro 2)
 Must not break: every HTTP record carries the RPC method and the payload — Macro 2 pairs exchanges by RPC method plus payload shape
 Must not break: every HTTP record carries its duration and the `X-Gnr*` breakdown, or Macro 3 has to re-instrument from scratch
-Must not break: the reference session is reproducible ON DEMAND from the recipe in `benchmarks/compare/README.md` — the traces are never committed (whole bodies, login, cookies, public repository), so macro-phase 2 depends on producing one, never on reading a stored one
+Must not break: the reference session is reproducible ON DEMAND from the recipe in `benchmarks/compare/README.md` — the traces are never committed (whole bodies, login, cookies, public repository), so macro-phase 2 reads them only from the out-of-tree archive Phase 4 builds
+Must not break: the RECORD SHAPE is identical on both stacks even though the mechanisms differ — wrapper object on legacy, mixin on the bridge; the comparison reads lines, never the way they were obtained
 
 ## Objective
-From the classic GenroPy stack, make it possible to take a single HTTP request
-and read which site-register calls it caused, in which order, with which
-answers. Two recorders write two JSONL traces linked by one column, the
-`exchange_id`. This is macro-phase 1 of `.phased/roadmap.md`: fidelity work,
-timings are not read, so the instrumentation may be as heavy as it needs.
+Make it possible to take a single HTTP request and read which site-register calls
+it caused, in which order, with which answers — on the classic GenroPy stack
+first (Phases 1-3, done) and then on the genropy-asgi bridge (Phase 5), with both
+reference sessions kept in a durable archive (Phase 4). Two recorders write two
+JSONL traces linked by one column, the `exchange_id`. This is macro-phase 1 of
+`.phased/roadmap.md`: fidelity work, timings are not read, so the instrumentation
+may be as heavy as it needs.
+
+The bridge collection was moved here from macro-phase 2 (owner, 2026-08-23) for a
+reason that outlives the convenience: the replica cannot be designed before the
+bridge's own trace exists, because only that trace shows how far the identifiers
+actually diverge and what "adapting them" means. The replica and the convergence
+loop stay in macro-phase 2.
 
 ## Work Plan
 - [x] **Phase 1**: the classic stack up and serving
@@ -294,6 +303,89 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     latter naming their register and item
   - Verify: now — take one RPC call and read what it did to the register: it
     makes sense
+
+- [ ] **Phase 4**: the run archive, and the legacy reference re-performed into it
+  - Run: opus / medium
+  - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
+  - Files: `benchmarks/compare/archive_run.py`,
+    `benchmarks/compare/archive_run_check.py`,
+    `benchmarks/compare/README.md`
+  - Decisions: the recorders keep writing JSONL — an append is one syscall that
+    cannot fail halfway, and on the bridge the workers are separate processes, so
+    a shared database in the write path would mean lock contention inside the
+    instrument (owner, 2026-08-23). Archiving is a SEPARATE step run after a
+    session, never inside a recorder. One SQLite file per run, OUTSIDE the git
+    tree (whole bodies, login, cookies, public repository). The table is ONE JSON
+    column holding the whole line plus promoted columns, each promoted because it
+    has a job: `exchange_id` and the run id to JOIN, the stack to SEPARATE,
+    timestamp and thread to ORDER, the line kind and the verb or path and the
+    status to FILTER. A promoted column is a COPY of what the JSON holds, never
+    the only place a value lives — otherwise the blob stops being the record and
+    this is a schema again. A field is promoted only once it is queried often; an
+    occasional query reads inside the JSON.
+  - Details: the archiver takes the two JSONL traces of a finished run plus the
+    declared conditions, and writes one SQLite file into a per-run folder outside
+    the tree. The run's conditions live in the file as data — stack, debug, worker
+    and thread counts, db, the git commit of the bench, the genropy and
+    genro-asgi versions — instead of as prose in a README. Loading is
+    re-runnable: a change to the record shape means re-loading, never migrating,
+    which is the no-versioning rule carried down to storage. The archive exists
+    because the reference is otherwise unrecoverable: the clean-restart recipe
+    deletes the traces at every run, and the reference session of 2026-08-23 was
+    lost exactly that way — its census survived in the README, its data did not.
+    The phase closes by re-performing the legacy reference session and archiving
+    it, so the loss is repaired rather than merely prevented.
+  - Done: the legacy reference session is archived — one SQLite file outside the
+    tree whose run row carries the declared conditions, whose line count matches
+    the two JSONL files, and where the join written as a query returns zero
+    register lines without an HTTP exchange; deleting the JSONL files afterwards
+    loses nothing the archive cannot answer
+  - Verify: now — the archive answers a question you would actually ask: pick one
+    RPC exchange and read its register conversation out of the SQLite file
+
+- [ ] **Phase 5**: the two recorders on the bridge, and its reference session
+  - Run: opus / high
+  - Pattern: `benchmarks/compare/register_recorder.py` and
+    `benchmarks/compare/http_recorder.py` (the record shape is the contract),
+    `src/genropy_asgi/spa/config.py:108` (where the worker class is named)
+  - Files: `benchmarks/compare/bridge_recipe.py`,
+    `benchmarks/compare/recording_worker.py`,
+    `benchmarks/compare/register_recorder_mixin.py`,
+    `benchmarks/compare/bridge_coverage_check.py`,
+    `benchmarks/compare/README.md`
+  - Decisions: the install rides the RECIPE, not a patch (owner's own proposal,
+    2026-08-23, verified). The pool names its worker as an import STRING —
+    `"genropy_asgi.spa.genropy_worker:GenropyWorker"` in `spa/config.py:108` —
+    resolved by the worker process itself when it is spawned. A bench recipe
+    naming a recording subclass therefore installs both recorders in every
+    worker with no environment variable, no sitecustomize and no seam added to
+    genro-asgi. On the register side the mechanism is a MIXIN overriding the
+    client's explicit methods and delegating to the parent, which fits the bridge
+    the way the wrapper object fitted legacy: there the client had a generic
+    funnel, here every method is declared. Neither genro-asgi nor genropy-asgi is
+    modified: everything lives in `benchmarks/compare/`.
+  - Details: the recording worker installs the HTTP recorder around the WSGI app
+    it hosts and the register recorder on its client, before the site is built
+    (`genropy_worker.py:302`). The record shape is copied from the legacy
+    recorders unchanged — that is the `Must not break:` line, and the comparison
+    reads lines, never mechanisms. A mixin over explicit methods is a list of
+    names that can silently fall behind, which the legacy wrapper never could
+    because it caught everything: hence the coverage check, which compares the
+    client's public methods against those the mixin covers and FAILS when they
+    diverge, in the spirit of the tripwire that already guards the daemon
+    contract. `wire_calls` is honestly 1 on the bridge — the register lives in
+    the worker's own process, there is no wire — and that is a real difference
+    between the stacks, not an artefact of measurement. If anything here turns
+    out to need a change inside genro-asgi, it is reported to the mother session
+    and NOT done from this workflow.
+  - Done: a reference session performed on the bridge produces the two traces
+    with the same record shape as the legacy ones, every register line naming an
+    exchange the HTTP trace contains (or the exchange explicitly absent), the
+    coverage check green against the current client, and the run archived by
+    Phase 4's archiver alongside the legacy one
+  - Verify: now — open the two archived runs side by side and read the same RPC
+    call on both stacks: the shapes are comparable and the differences are the
+    stacks', not the instruments'
 
 ## Notes
 - genropy is never modified: everything lives in the venv and in

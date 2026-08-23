@@ -15,8 +15,10 @@ site register (verb, arguments, answer).
 - Mini-scope: `legacy_venv` + twin instance `test_invoice_pg_legacy` on the
   same db; an HTTP recorder and a register interceptor, both installed from
   the gunicorn `post_worker_init` hook; genropy itself untouched.
-- Ends at: a browser session driven by hand produces two aligned traces —
-  every register call attributable to the HTTP exchange that caused it.
+- Ends at: a session performed by hand produces, on BOTH stacks, two traces in
+  which every register call is attributable to the HTTP exchange that caused it,
+  each run archived out of tree. (Extended on 2026-08-23: the bridge half and the
+  archive were moved here from macro-phase 2 — see there for why.)
 
 ## Macro-phase 2 — The replica, and converging the two stacks
 
@@ -68,9 +70,14 @@ first one.
   hand in a browser does not reproduce identically, and the clean-restart recipe
   deletes the traces at every run. Measured and unrecoverable a minute later was
   observed on 2026-08-23. So the reference is kept, outside git, never committed.
-- Mini-scope: the recorders' install point on the bridge (no gunicorn there, so
-  the install is the plain call macro-phase 1 built); the replica; the structural
-  comparison; the db copy; the JSONL-to-SQLite loader and the archive.
+- **Two pieces moved OUT of here into macro-phase 1's workflow** (owner,
+  2026-08-23): the recorders' install point on the bridge, and the archive with
+  its loader. The reason outlives the convenience — the replica cannot be
+  designed before the bridge's own trace exists, because only that trace shows
+  how far the identifiers actually diverge and what adapting them means. So
+  macro-phase 1 now ends with BOTH stacks recorded and both references archived,
+  and this macro-phase starts with two traces in hand instead of one.
+- Mini-scope: the replica; the structural comparison; the db copy.
 - Ends at: the owner's reference session replicated on the bridge with no
   divergence left unexplained, the known ones (S1/S2/S3/S5) recognised rather
   than discovered.
