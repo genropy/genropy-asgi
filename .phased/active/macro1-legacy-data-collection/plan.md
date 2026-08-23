@@ -309,12 +309,16 @@ loop stay in macro-phase 2.
   > In execution since 2026-08-23T23:58:00
   > WIP: done: `run_archive.py` with `RunArchive` (one JSON column plus the
     promoted ones), both recorders writing into it instead of JSONL,
-    `serve_legacy.py` minting the run and publishing it in `GNR_BENCH_RUN`,
-    three checks green (http 24, register 35, archive 17) and ruff clean |
-    missing: the README rewritten from JSONL to the archive, and the legacy
-    reference session re-performed into a run archive with its census |
-    next: rewrite the README sections that describe the traces |
-    commit: 3feabe3
+    `serve_legacy.py` minting the run and publishing it in `GNR_BENCH_RUN`, the
+    README rewritten around the archive, three checks green (http 24,
+    register 35, archive 17), ruff clean, and the stack up on a clean restart
+    recording into `~/genro_bench/runs/legacy-20260823T232924.sqlite` — verified
+    live: both kinds of line in one file, join clean, 2 boot calls with a NULL
+    exchange, zero recorder_error |
+    missing: the reference session itself, performed in the browser by the
+    owner, and the census of that archive written into the README |
+    next: the owner performs the session; then run the census queries |
+    commit: 6b0f38d
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
   - Files: `benchmarks/compare/run_archive.py`,
