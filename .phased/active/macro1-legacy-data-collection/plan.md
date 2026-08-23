@@ -399,6 +399,12 @@ loop stay in macro-phase 2.
     stacks', not the instruments'
 
 ## Notes
+- **Phases 1-3 are records of what happened and keep their wording**, including
+  the JSONL traces under `temp/` they genuinely produced. Phase 4 replaces that
+  storage with the per-run SQLite archive and rewrites the code and the README
+  together; until it runs, `benchmarks/compare/README.md` correctly documents
+  JSONL, because that is what the bench does today. Changing the README before
+  the code would make it describe software that does not exist.
 - genropy is never modified: everything lives in the venv and in
   `benchmarks/compare/`. The genropy working copy is on `develop` at `9e39fe9c1`
   and stays untouched (owner's rule: changes only through an approved PR).
