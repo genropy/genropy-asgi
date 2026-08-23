@@ -14,9 +14,21 @@ answers. Two recorders write two JSONL traces linked by one column, the
 timings are not read, so the instrumentation may be as heavy as it needs.
 
 ## Work Plan
-- [>] **Phase 1**: the classic stack up and serving
-  > In execution since 2026-08-23T06:52:29Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: cfa88ff
+- [x] **Phase 1**: the classic stack up and serving
+  > Done: the classic stack serves the twin instance `test_invoice_pg_legacy` on
+    `http://127.0.0.1:8099` — clean venv `temp/legacy_venv` (genropy 26.08.19.1
+    with the `pgsql` extra, gunicorn 26.1.0, no genro_asgi), twin instance
+    carrying configuration only against the same db `test_invoice_pg`, standalone
+    sitedaemon on 40004, gunicorn at one process and 16 threads. The bring-up
+    recipe, the declared run conditions and the login trap are written down in
+    `benchmarks/compare/README.md`, which also makes `benchmarks/compare/` the
+    home the two recorders need in Phase 2 and Phase 3.
+  > Files: benchmarks/compare/README.md,
+    .phased/active/macro1-legacy-data-collection/plan.md,
+    .phased/active/macro1-legacy-data-collection/notes.md.
+    Outside git: temp/legacy_venv/ (gitignored) and the twin instance
+    ~/Sviluppo/Genropy/genropy/projects/test_invoice/instances/test_invoice_pg_legacy/
+    (untracked in the genropy working copy, never committed there)
   > Verified: site answers 200 on http://127.0.0.1:8099; login replayed for
     `alexander.king` (benchmarks/usernames.txt, password `a`) returns the real
     avatar from the db on `login_checkAvatar` and a clean `login_doLogin`, no
@@ -24,7 +36,8 @@ timings are not read, so the instrumentation may be as heavy as it needs.
   > Verify: now — open http://127.0.0.1:8099 in the browser, log in with a user
     from `benchmarks/usernames.txt` (password `a`): the application page appears.
     Login-gated, so the login is the human's by rule — an agent-driven browser
-    pass would not remove the human from this check.
+    pass would not remove the human from this check. PERFORMED by the owner,
+    2026-08-23, confirmed.
   - Run: opus / low
   - Pattern: `benchmarks/gunicorn_count.conf.py` (the launch recipe)
   - Files: `benchmarks/compare/README.md`, `temp/legacy_venv/` (not committed),
