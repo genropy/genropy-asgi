@@ -74,6 +74,35 @@ lsof -nP -iTCP:8098 -iTCP:8099 -iTCP:40004 -sTCP:LISTEN
 Must come back empty. An old server left standing falsifies everything
 downstream — and on 40004 it silently prevents the sitedaemon from starting.
 
+**Every run starts from an empty register, and that means restarting the
+sitedaemon too, not only gunicorn.** The reason is comparability: on the bridge
+a restart wipes the registers unless a soft reset says otherwise, so a legacy
+run whose register survived from an earlier session does not start from the same
+state and the two traces are not comparable.
+
+Restarting the daemon is not enough by itself: it **saves its status on stop**
+(`gnr/web/daemon/siteregister.py:1057`) and **restores it on start** whenever the
+pickle is there (`:1087`). The file has to go:
+
+```bash
+SITE=~/Sviluppo/Genropy/genropy/projects/test_invoice/instances/test_invoice_pg_legacy/site
+rm -f "$SITE/siteregister_data.pik" "$SITE/siteregister_data_loaded.pik"
+rm -f temp/http_trace.jsonl temp/register_trace.jsonl
+```
+
+So the full clean restart is, in order: stop gunicorn, stop the sitedaemon,
+delete the pickle and the traces, start the sitedaemon, start gunicorn. Gunicorn
+last, and always after the daemon: `SiteRegisterClient` reads the Pyro URIs out
+of `sitedaemon.xml` when it is built, so a worker started before a new daemon
+holds addresses that no longer answer.
+
+**A surviving register keeps you logged in.** The site cookie carries the user
+and the `connection_id`; if the register still knows that connection, the browser
+walks straight into the application and the trace contains no login at all. Seen
+on 2026-08-23: a session from an earlier run reappeared after a gunicorn-only
+restart, because gunicorn holds no session state — the cookie plus the daemon's
+register are the whole identity.
+
 ### 4. The sitedaemon, in the foreground
 
 ```bash
@@ -115,6 +144,7 @@ same declaration.
 | Stack | legacy: standalone sitedaemon + gunicorn |
 | Processes / threads | 1 process, 16 threads (`-w 1 -k gthread --threads 16`) |
 | Debug | **off** |
+| Register at start | **empty** — daemon restarted and `siteregister_data.pik` deleted |
 | Database | `test_invoice_pg`, postgres localhost:5432 |
 | genropy | 26.08.19.1 (working copy on `develop`, untouched) |
 | Python / gunicorn | 3.12.12 / 26.1.0 |
@@ -144,6 +174,13 @@ captured user.
   (`<user>…</user>`, `<password>…</password>`).
 
 `inject_identity()` in `benchmarks/scaling_probe.py` rewrites both.
+
+**Cookies are not scoped by port.** Both stacks live on `127.0.0.1`, so a
+browser used against one sends its cookies to the other as well — a legacy trace
+recorded in that browser carries the bridge's cookies among the request headers,
+and the other way round. In the macro-phase 2 diff those are leftovers of the
+browser, not divergences between the two implementations. Observed on
+2026-08-23: a `sticky_cid` from the bridge arrived on a legacy request.
 
 ## The two recorders
 

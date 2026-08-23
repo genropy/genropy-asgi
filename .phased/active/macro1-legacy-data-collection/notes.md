@@ -76,3 +76,21 @@
 - **`X-GnrSqlTime` / `X-GnrSqlCount` arrive as `0`, not empty**, with debug off —
   measured on a real exchange. Phase 1's README wording said "empty" and was
   corrected.
+- **Every run starts from an empty register** (owner, 2026-08-23), which means
+  restarting the sitedaemon at every restart, not only gunicorn: on the bridge a
+  restart wipes the registers unless a soft reset says otherwise, so a legacy run
+  inheriting a live register is not comparable. And restarting the daemon is not
+  enough on its own — it saves its status on stop
+  (`gnr/web/daemon/siteregister.py:1057`) and restores it on start when the
+  pickle exists (`:1087`), so `siteregister_data.pik` has to be deleted. Gunicorn
+  starts last: `SiteRegisterClient` reads the Pyro URIs from `sitedaemon.xml`
+  when it is built.
+- **Gunicorn holds no session state.** After a gunicorn-only restart the owner
+  found himself still logged in: the identity is the signed site cookie (it
+  carries `user` and `connection_id`) plus the daemon's register, and neither was
+  touched. Recording a login therefore requires the clean restart above, or a
+  logout, or a private window.
+- **Cookies are not scoped by port**, and both stacks run on `127.0.0.1`: a
+  browser used against one sends its cookies to the other too. A `sticky_cid`
+  from the bridge was observed arriving on a legacy request. In the macro-phase 2
+  diff those are browser leftovers, not divergences between the stacks.
