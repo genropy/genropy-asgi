@@ -200,3 +200,39 @@
   is exactly what macro-phase 2 will want to compare between the two stacks.
 - **The `attempts` field and the surface it was intercepted on live in
   `Details:`**, with the rest of the record shape — no separate plan line needed.
+- **Foreman ruling on the third `clarify?` of 2026-08-23 — `macros/` disappears
+  with nothing in its place.** The owner has retired the word and, with it, the
+  idea of a hand-written sequence to be replayed: the concept is REPLICA — he
+  performs a session in a browser and the replica reproduces it, then compares
+  the frontier register calls and the responses by STRUCTURE (same sequence of
+  verbs, same shape of arguments and answers; a different customer read in the
+  two runs is not a divergence). In that shape the recorded trace IS the script:
+  the replica derives what to do from the exchanges it reads, so a written
+  sequence would be a second source of truth for the same thing, free to drift
+  from the first.
+- **What Phase 3 owes instead is the reference, and the recipe to remake it.**
+  Not a stored artifact: the traces carry whole bodies, including the login
+  exchange with the bench password and the session cookies, and this repository
+  is PUBLIC — they stay in `temp/`, gitignored, as the README already declares.
+  So macro-phase 2 must never depend on an archived reference trace; it depends
+  on the ability to PRODUCE one on demand. Phase 3 therefore closes with the two
+  recorders working plus a README section stating, in plain words, what the
+  reference session did and under which declared conditions — reproducible by
+  recipe, never committed as data.
+- **The replica and the structural comparison stay in macro-phase 2.** Phase 3 is
+  legacy-only collection: it cannot own a mechanism that drives both stacks.
+- **The bridge side runs on a database copied on the fly** (owner, 2026-08-23): a
+  test cycle begins by copying the db for the genropy-asgi server, so writes are
+  allowed from the start on that side. This supersedes the last bullet of
+  `## Phase 2`, which had the loop starting read-only with a db copy as a later
+  run condition. It is a macro-phase 2 run condition and belongs in the roadmap
+  rewrite, not in this phase.
+- **Three documents are the foreman's to amend, not the phase's**, and they are
+  held together awaiting the owner's ok: Phase 1's step-by-step (the Postgres
+  extra, the sitedaemon port, and now the second launch command), the roadmap's
+  naming line — which still ratifies `macros/` and is now contradicted — and the
+  roadmap's macro-phase 2, still describing the offline diff instead of the
+  convergence loop.
+- **The slug keeps `macro1`.** A branch name is a historical address, not a
+  claim about vocabulary; renaming it mid-workflow would rewrite every reference
+  for no gain.
