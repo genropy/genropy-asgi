@@ -314,7 +314,7 @@ loop stay in macro-phase 2.
     missing: the README rewritten from JSONL to the archive, and the legacy
     reference session re-performed into a run archive with its census |
     next: rewrite the README sections that describe the traces |
-    commit: 67d4ccf
+    commit: 3feabe3
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
   - Files: `benchmarks/compare/run_archive.py`,
