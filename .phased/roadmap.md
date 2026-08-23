@@ -44,16 +44,16 @@ first one.
 - **Both recorders matter MORE here, not less**: at each stop, the register trace
   is what says whether the bridge reached the same answer through the same calls,
   which the HTTP layer cannot see.
-- **The traces are written as JSONL and archived in SQLite** (owner,
-  2026-08-23). The recorders keep appending JSONL lines: an append is one syscall
-  that cannot fail halfway beyond a partial line, the bridge's workers are
-  separate processes so a shared database would mean write contention and lock
-  retries INSIDE the instrument — the instrument-induced divergence this bench
-  exists to avoid — and a fixed schema would fight the no-versioning rule, since
-  the record shape changed three times while macro-phase 1 was being built.
-  A finished run is then loaded into SQLite by a separate tool, one file per run,
-  kept OUTSIDE the git tree: that file is the durable archive, and the run's
-  declared conditions live in it as data instead of as prose in a README.
+- **The recorders write straight into a per-run SQLite file** (owner,
+  2026-08-23, reversing the JSONL-plus-loader shape decided earlier the same day).
+  A truncated JSONL line is possible when a process dies mid-write; a half-written
+  SQLite row is not. Lock contention between the bridge's worker processes is real
+  as mechanics but harmless where it happens: WAL serialises writers, and the two
+  fidelity macro-phases do not read timings — macro-phase 3 does, and runs with
+  collection off. What decided it is that a separate load step can be forgotten,
+  and the reference session of 2026-08-23 was lost exactly in the window between
+  the run and its archiving. One file per run, outside the git tree, on a local
+  filesystem (WAL does not work over network mounts), one connection per process.
 - **The archive table is one JSON column plus a few promoted ones** (owner,
   2026-08-23), each promoted because it has a job: `exchange_id` and the run id
   to JOIN, the stack to SEPARATE, timestamp and thread to ORDER, the line kind

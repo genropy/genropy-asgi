@@ -12,7 +12,8 @@ Make it possible to take a single HTTP request and read which site-register call
 it caused, in which order, with which answers — on the classic GenroPy stack
 first (Phases 1-3, done) and then on the genropy-asgi bridge (Phase 5), with both
 reference sessions kept in a durable archive (Phase 4). Two recorders write two
-JSONL traces linked by one column, the `exchange_id`. This is macro-phase 1 of
+traces linked by one column, the `exchange_id`, written straight into a per-run
+SQLite file. This is macro-phase 1 of
 `.phased/roadmap.md`: fidelity work, timings are not read, so the instrumentation
 may be as heavy as it needs.
 
@@ -304,18 +305,21 @@ loop stay in macro-phase 2.
   - Verify: now — take one RPC call and read what it did to the register: it
     makes sense
 
-- [ ] **Phase 4**: the run archive, and the legacy reference re-performed into it
+- [ ] **Phase 4**: the recorders write into a per-run archive, and the legacy reference re-performed into it
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
-  - Files: `benchmarks/compare/archive_run.py`,
-    `benchmarks/compare/archive_run_check.py`,
+  - Files: `benchmarks/compare/run_archive.py`,
+    `benchmarks/compare/run_archive_check.py`,
+    `benchmarks/compare/http_recorder.py`,
+    `benchmarks/compare/register_recorder.py`,
+    `benchmarks/compare/http_recorder_check.py`,
+    `benchmarks/compare/register_recorder_check.py`,
     `benchmarks/compare/README.md`
-  - Decisions: the recorders keep writing JSONL — an append is one syscall that
-    cannot fail halfway, and on the bridge the workers are separate processes, so
-    a shared database in the write path would mean lock contention inside the
-    instrument (owner, 2026-08-23). Archiving is a SEPARATE step run after a
-    session, never inside a recorder. One SQLite file per run, OUTSIDE the git
-    tree (whole bodies, login, cookies, public repository). The table is ONE JSON
+  - Decisions: **the archive IS the recording target** (owner, 2026-08-23,
+    reversing the JSONL-plus-loader shape this plan carried for a day — see the
+    reasoning below; the earlier decision is superseded, not merely refined). One
+    SQLite file per run, OUTSIDE the git tree, on a LOCAL filesystem (WAL does not
+    work over network mounts), one connection per process. The table is ONE JSON
     column holding the whole line plus promoted columns, each promoted because it
     has a job: `exchange_id` and the run id to JOIN, the stack to SEPARATE,
     timestamp and thread to ORDER, the line kind and the verb or path and the
@@ -323,23 +327,30 @@ loop stay in macro-phase 2.
     the only place a value lives — otherwise the blob stops being the record and
     this is a schema again. A field is promoted only once it is queried often; an
     occasional query reads inside the JSON.
-  - Details: the archiver takes the two JSONL traces of a finished run plus the
-    declared conditions, and writes one SQLite file into a per-run folder outside
-    the tree. The run's conditions live in the file as data — stack, debug, worker
-    and thread counts, db, the git commit of the bench, the genropy and
-    genro-asgi versions — instead of as prose in a README. Loading is
-    re-runnable: a change to the record shape means re-loading, never migrating,
-    which is the no-versioning rule carried down to storage. The archive exists
-    because the reference is otherwise unrecoverable: the clean-restart recipe
-    deletes the traces at every run, and the reference session of 2026-08-23 was
-    lost exactly that way — its census survived in the README, its data did not.
-    The phase closes by re-performing the legacy reference session and archiving
-    it, so the loss is repaired rather than merely prevented.
+  - Details: three arguments were weighed and the JSONL-then-load shape lost all
+    three. A truncated JSONL line IS possible when a process dies mid-write while
+    a half-written SQLite row is not, so durability favours the db. The
+    fixed-schema objection dissolved with the one-JSON-column design, which takes
+    any shape without a migration. Lock contention between the bridge's worker
+    processes is real as mechanics but harmless here: WAL serialises writers, and
+    macro-phases 1 and 2 do not read timings — macro-phase 3, which does, runs
+    with collection switched off. What decided it is the fourth argument, already
+    paid for: a separate load step is a step that can be forgotten, and the
+    reference session of 2026-08-23 was lost precisely in the window between the
+    run and its archiving. Writing into the archive removes the window.
+    So both recorders take a writer instead of a file handle. The writer owns the
+    run — its id, the declared conditions as data (stack, debug, worker and thread
+    counts, db, the bench commit, the genropy and genro-asgi versions) — and opens
+    its connection lazily per pid, the same rule the JSONL writer already had for
+    the fork. A failure inside the writer is recorded and never reaches the
+    request, which is what the two isolation checks assert and must keep
+    asserting. The phase closes by re-performing the legacy reference session,
+    which now lands in the archive by construction.
   - Done: the legacy reference session is archived — one SQLite file outside the
-    tree whose run row carries the declared conditions, whose line count matches
-    the two JSONL files, and where the join written as a query returns zero
-    register lines without an HTTP exchange; deleting the JSONL files afterwards
-    loses nothing the archive cannot answer
+    tree whose run row carries the declared conditions, where the join written as
+    a query returns zero register lines without an HTTP exchange, and where the
+    counts match what the session's own census reports; both isolation checks
+    still green, including a forced writer failure that leaves the response intact
   - Verify: now — the archive answers a question you would actually ask: pick one
     RPC exchange and read its register conversation out of the SQLite file
 
@@ -378,8 +389,8 @@ loop stay in macro-phase 2.
     between the stacks, not an artefact of measurement. If anything here turns
     out to need a change inside genro-asgi, it is reported to the mother session
     and NOT done from this workflow.
-  - Done: a reference session performed on the bridge produces the two traces
-    with the same record shape as the legacy ones, every register line naming an
+  - Done: a reference session performed on the bridge produces its own archive
+    file with the same record shape as the legacy one, every register line naming an
     exchange the HTTP trace contains (or the exchange explicitly absent), the
     coverage check green against the current client, and the run archived by
     Phase 4's archiver alongside the legacy one
