@@ -17,12 +17,15 @@ the bridge has no gunicorn and installs the same recorder the same way:
 
     worker.wsgi = HttpRecorder(worker.wsgi)
 
-What is NOT recorded: static assets, recognised by the response content type
+What carries no content: static assets, recognised by the response content type
 (javascript, css, images, fonts) plus `favicon.ico`; and pings that rendered
-nothing — the bare envelope, a null `result` and no `dataChanges`. Everything
-else is recorded whole, with no truncation anywhere: a ping carrying a
-datachange is a recorded exchange like any other, because that Bag is the
-register answering.
+nothing — the bare envelope, a null `result` and no `dataChanges`. Those get an
+id-only STUB line — what the exchange was and why it was filtered, never a body
+— because the register recorder stamps those exchanges too, and without the stub
+their register calls would name an exchange this trace does not contain.
+Everything else is recorded whole, with no truncation anywhere: a ping carrying
+a datachange is a full record like any other, because that Bag is the register
+answering.
 
 A failure inside the recorder is written to the trace as `recorder_error` and
 never reaches the response.
@@ -82,10 +85,13 @@ class HttpRecorder:
         return self.relay_body(body, record, reply, started)
 
     def relay_body(self, body, record, reply, started):
-        # buffering is skipped for what will not be written anyway; the skip
-        # decision itself belongs to write_record, which sees the whole body.
-        # A failure here must not reach the response: buffer, and let
-        # write_record hit the same failure where it is recorded.
+        # A static's body is never written, not even in its stub, so it is not
+        # buffered either. Every exchange still reaches write_record, which
+        # decides between the full record and the id-only stub — a static that
+        # skipped it would leave its register calls naming an exchange this
+        # trace does not contain. A failure in the buffering decision must not
+        # reach the response: buffer, and let write_record hit the same failure
+        # where it is recorded.
         try:
             buffered = not self.is_static(record.get("path"),
                                           reply.get("headers") or [])
@@ -100,8 +106,7 @@ class HttpRecorder:
         finally:
             if hasattr(body, "close"):
                 body.close()
-            if buffered:
-                self.write_record(record, reply, chunks, started)
+            self.write_record(record, reply, chunks, started)
 
     def start_record(self, environ, exchange_id):
         record = {"exchange_id": exchange_id,
@@ -152,9 +157,11 @@ class HttpRecorder:
             body = b"".join(chunks)
             headers = reply.get("headers") or []
             path = record.get("path")
-            if self.is_static(path, headers) or self.is_empty_ping(path, body):
-                return
             status = reply.get("status") or ""
+            filtered = self.filtered_reason(path, headers, body)
+            if filtered:
+                self.append_record(self.stub_record(record, status, filtered))
+                return
             record.update(status=int(status.split(" ", 1)[0]) if status else None,
                           resp_headers=[[k, v] for k, v in headers],
                           resp_body=body.decode("utf-8", "replace"),
@@ -165,6 +172,32 @@ class HttpRecorder:
             self.append_record(record)
         except Exception as exc:
             self.append_error(record.get("exchange_id"), exc)
+
+    def filtered_reason(self, path, headers, body):
+        """Why this exchange carries no content, or None when it carries some."""
+        if self.is_static(path, headers):
+            return "static"
+        if self.is_empty_ping(path, body):
+            return "empty_ping"
+        return None
+
+    def stub_record(self, record, status, reason):
+        """The id-only line of a filtered exchange: what it was, never a body.
+
+        The register recorder stamps every call with the exchange that caused
+        it, filtered exchanges included, so without this line those calls would
+        name an exchange the HTTP trace does not contain — and a ping's register
+        conversation could only be recognised by guessing from its verbs.
+        """
+        return {"exchange_id": record.get("exchange_id"),
+                "ts": record.get("ts"),
+                "thread": record.get("thread"),
+                "method": record.get("method"),
+                "path": record.get("path"),
+                "query": record.get("query"),
+                "rpc_method": record.get("rpc_method"),
+                "status": int(status.split(" ", 1)[0]) if status else None,
+                "filtered": reason}
 
     def is_static(self, path, headers):
         if (path or "").endswith("favicon.ico"):

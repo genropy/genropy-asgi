@@ -168,7 +168,7 @@ timings are not read, so the instrumentation may be as heavy as it needs.
 
 - [>] **Phase 3**: the register interceptor and the reference session
   > In execution since 2026-08-23T09:05:32Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: 058d499
+  > Testing: awaiting the human's `Verify: now` checks | commit: 058d499, stub at HEAD
   > Verify: now — perform the reference session in the browser on the stack
     started by the launcher, with the register empty and the traces cleared:
     log in with an account from `benchmarks/usernames.txt` (password `a`), open

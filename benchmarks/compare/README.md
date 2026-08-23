@@ -289,11 +289,26 @@ deletion and is no longer a reference.
 
 ### What lands in the trace, and what does not
 
-**Not recorded at all** — the line does not exist:
+**Filtered — one id-only stub line, never a body**:
 
 - static assets, recognised by the **response content type** (javascript, css,
   images, fonts) plus `favicon.ico`;
 - pings that rendered nothing.
+
+A stub carries `exchange_id`, `ts`, `thread`, `method`, `path`, `query`,
+`rpc_method`, `status` and `filtered` — the reason, `static` or `empty_ping`.
+Nothing else: no bodies, no headers.
+
+**Why a stub and not silence** (owner, 2026-08-23, amending his own filter). The
+register recorder stamps every call with the exchange that caused it, filtered
+exchanges included, so with no line at all those calls named an exchange this
+trace did not contain: measured on the first reference session, 531 register
+lines over 240 exchanges. And the ping is the carrier of the datachange half of
+the register conversation — the half the bridge's emulation has no upstream test
+suite for — so on the register side those exchanges are the material
+macro-phase 2 most needs. Recognising them by guessing from their verbs is how an
+artefact comes to read as a divergence. The rule the filter was built on is
+intact: nothing recorded is ever cut, because a stub has no body to cut.
 
 Recognition is by content type and never by path, except `favicon.ico`: the
 decision is taken when the answer is known, with no guessing from the URL.
@@ -311,7 +326,7 @@ idle answer is the bare envelope:
 That shape — a null `result` and nothing else — is what the filter matches. As
 soon as `dataChanges` appears the exchange is recorded.
 
-**Recorded, whole, with no truncation anywhere**: everything else. RPC calls,
+**Recorded whole, with no truncation anywhere**: everything else. RPC calls,
 pages, XML, JSON — and the pings that *do* carry a datachange, because that Bag
 is the register answering, and it is what the replica compares in macro-phase 2.
 
@@ -320,6 +335,7 @@ One JSONL line per exchange, with these fields:
 | Field | What |
 |---|---|
 | `exchange_id` | the join key with the register trace |
+| `filtered` | present only on a stub: `static` or `empty_ping`. A stub carries none of the fields below except `status` |
 | `ts`, `thread` | wall clock and thread ident (16 threads interleave) |
 | `method`, `path`, `query` | the request line |
 | `req_headers`, `req_body`, `req_len` | whole request |
@@ -356,7 +372,7 @@ funnel would record nothing there.
 
 | Field | What |
 |---|---|
-| `exchange_id` | the join key with the HTTP trace. **Absent** when the call belongs to no exchange |
+| `exchange_id` | the join key with the HTTP trace — a full record or a stub. **Absent** when the call belongs to no exchange |
 | `ordinal` | position within its exchange, from 1 |
 | `surface`, `verb` | where it was intercepted, and the name called |
 | `args`, `kwargs` | the arguments |
@@ -426,8 +442,9 @@ register:
 4. open one table page and let the grid load;
 5. open one record, change one field, save it.
 
-Then the two traces are the reference: every register line joins an HTTP exchange
-by `exchange_id`, except the boot calls, which have no exchange by construction.
+Then the two traces are the reference: every register line joins an HTTP
+exchange by `exchange_id` — a full record or the stub of a filtered one — except
+the boot calls, which have no exchange by construction.
 
 ### Exercising the recorder without a browser
 
@@ -440,8 +457,8 @@ python3 benchmarks/compare/drive_login.py [username]
 ```
 
 `http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder
-wrapping it, and 19 assertions over the filters, the whole bodies and the two
-guarantees about failure. It is the machine evidence that a fault inside the
+wrapping it, and 22 assertions over the filters, the stub of a filtered
+exchange, the whole bodies and the two guarantees about failure. It is the machine evidence that a fault inside the
 recorder never reaches the response — kept versioned rather than in a scratch
 file, because evidence that gets deleted is not evidence.
 

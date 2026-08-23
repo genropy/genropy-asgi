@@ -107,10 +107,20 @@ serve(rec, "/_ping", content_type="text/xml",
       answer=b"<?xml version='1.0' encoding='UTF-8'?>\n<GenRoBag><result _T=\"NN\">"
              b"</result><dataChanges><sc_0>x</sc_0></dataChanges></GenRoBag>")
 recorded = lines()
-check("statics, favicon and every empty ping shape are not recorded",
-      len(recorded) == 1)
-check("the ping carrying a datachange is recorded",
-      recorded and "dataChanges" in recorded[0]["resp_body"])
+stubs = [line for line in recorded if line.get("filtered")]
+full = [line for line in recorded if not line.get("filtered")]
+check("statics, favicon and every empty ping shape are filtered",
+      len(stubs) == 5 and len(full) == 1)
+check("a filtered exchange still names itself",
+      all(line["exchange_id"] and line["path"] for line in stubs))
+check("a filtered exchange carries no body and no headers",
+      all("resp_body" not in line and "req_body" not in line
+          and "resp_headers" not in line for line in stubs))
+check("the filter reason is on the stub",
+      [line["filtered"] for line in stubs]
+      == ["static", "static", "empty_ping", "empty_ping", "empty_ping"])
+check("the ping carrying a datachange is recorded whole",
+      len(full) == 1 and "dataChanges" in full[0]["resp_body"])
 
 # 3. the X-Gnr* breakdown
 rec = fresh()
