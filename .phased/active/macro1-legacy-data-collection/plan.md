@@ -78,7 +78,9 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     `benchmarks/usernames.txt` succeeds
   - Verify: now — open the browser, log in, the application page appears
 
-- [ ] **Phase 2**: the HTTP recorder
+- [>] **Phase 2**: the HTTP recorder
+  > In execution since 2026-08-23T07:28:58Z
+  > Testing: awaiting the human's `Verify: now` checks | commit: bc01408
   - Run: opus / medium
   - Pattern: `benchmarks/capture_proxy.py` (ancestor of the record format),
     `benchmarks/gunicorn_count.conf.py` (the `post_worker_init` install point)
@@ -93,14 +95,26 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     plain call the gunicorn config invokes, never logic living in the hook: the
     bridge has no gunicorn.
   - Details: a WSGI middleware wrapping the app, installed from
-    `post_worker_init`. It mints the `exchange_id` and deposits it in a
-    thread-local — that is the seam Phase 3 reads, and it is a contract, not an
-    internal detail. One line per exchange: method, path, query, request headers,
+    `post_worker_init`. It mints the `exchange_id` and injects it into the
+    request as the `X-Bench-Exchange-Id` header — that is the seam Phase 3
+    reads, and it is a contract, not an internal detail. (Owner, 2026-08-23:
+    supersedes the thread-local this field first named. The site already keeps
+    the current request per thread, `GnrWsgiSite.currentRequest`, a
+    `ThreadedDict` filled for the whole dispatch — statics and `_ping`
+    included, unlike `currentPage` — and the register client holds the site.
+    So no global state of ours, the join key is visible in the trace among the
+    request headers, and the two recorders share only a header name instead of
+    importing each other.) One line per exchange: method, path, query, request headers,
     request body, status, response headers, response body, the `X-Gnr*` headers,
     thread id, timestamp, duration, and the RPC method plus form payload parsed
-    the way `capture_proxy.py` already does. Whole bodies, no truncation beyond
-    what keeps a single line sane. A failure inside the recorder is recorded and
-    never propagates to the response. Traces are written under `temp/`.
+    the way `capture_proxy.py` already does. Whole bodies, **no truncation
+    anywhere** — instead, certain exchanges are not recorded at all (owner,
+    2026-08-23: a filter, not a cut): static assets, recognised by the response
+    content type plus `favicon.ico`, and pings whose answer is an empty Bag. A
+    ping carrying a datachange IS recorded — that Bag is the register answering,
+    and it is material the macro-phase 2 diff needs. A failure inside the
+    recorder is recorded and never propagates to the response. Traces are
+    written under `temp/`.
   - Done: a hand-driven session produces `http_trace.jsonl` where every exchange
     carries whole request and response bodies and a distinct `exchange_id`; an
     error forced inside the recorder leaves the response intact
@@ -123,7 +137,10 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     *macros*; the roadmap's stages are *macro-phases* (owner, 2026-08-23).
   - Details: the wrapper builds the real client and records every call: verb,
     arguments, answer, number of attempts, error class, ordinal within the
-    exchange, `exchange_id` read from the thread-local, thread id. The legacy
+    exchange, `exchange_id` read with
+    `self.site.currentRequest.headers.get('X-Bench-Exchange-Id')` — the seam
+    Phase 2 built, superseding the thread-local this field first named (owner,
+    2026-08-23) — thread id. The legacy
     funnel retries up to `MAX_RETRY_ATTEMPTS` and then returns `None` without
     re-raising, so attempts and error class must be recorded or a failing
     register becomes invisible. Bags serialise as truncated `repr`, never pickle.

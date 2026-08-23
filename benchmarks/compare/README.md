@@ -124,9 +124,9 @@ site in werkzeug's debugging middleware, which the bridge does not have: on
 error responses it would introduce a divergence produced by the instrument
 rather than by the two stacks. The cost is that the SQL counters stay at zero —
 they only increment when the site runs in debug — so `X-GnrSqlTime` and
-`X-GnrSqlCount` arrive empty. The recorders collect the `X-Gnr*` headers either
-way; a debug run is the variant to declare when those two fields have to carry
-real numbers.
+`X-GnrSqlCount` arrive as `0` (measured, not empty: the headers are present and
+carry a zero). The recorders collect the `X-Gnr*` headers either way; a debug
+run is the variant to declare when those two fields have to carry real numbers.
 
 `--debug` does **not** reduce concurrency: it forces `workers=1` (already the
 case) and its `threads` override never lands, so 16 threads survive.
@@ -147,15 +147,12 @@ captured user.
 
 ## The two recorders
 
-Not built yet — Phase 2 and Phase 3 of the current workflow.
-
-- **HTTP recorder** — a WSGI middleware wrapping the app. It mints the
-  `exchange_id` and deposits it in a thread-local; that thread-local is the seam
-  the register recorder reads, and it is a contract, not an internal detail.
-  Writes `temp/http_trace.jsonl`.
+- **HTTP recorder** — `http_recorder.py`, a WSGI middleware wrapping the app.
+  Built. Writes `temp/http_trace.jsonl`.
 - **Register recorder** — a wrapper around `SiteRegisterClient`, patched by name
-  in the `gnr.web.gnrwsgisite` namespace. Writes `temp/register_trace.jsonl`,
-  every line carrying the `exchange_id` of the exchange that caused the call.
+  in the `gnr.web.gnrwsgisite` namespace. Not built yet — Phase 3. Will write
+  `temp/register_trace.jsonl`, every line carrying the `exchange_id` of the
+  exchange that caused the call.
 
 Both are **installed by a plain call**, never by logic living inside a gunicorn
 hook: the bridge has no gunicorn, and the same two recorders have to install
@@ -164,3 +161,111 @@ there in macro-phase 2.
 The 16 threads in one process interleave the calls, so every line of both traces
 carries a thread id as well as the `exchange_id`. That is why the two recorders
 are designed together.
+
+### The seam between them: a request header
+
+The HTTP recorder mints the `exchange_id` and injects it into the request as the
+**`X-Bench-Exchange-Id`** header. The register recorder reads it back through
+`site.currentRequest.headers`.
+
+`GnrWsgiSite.currentRequest` is GenroPy's own per-thread request — a
+`ThreadedDict` filled in `dispatcher` (`gnrwsgisite.py:1155`) and cleared at the
+end (`:1446`), so it covers the **whole** dispatch, statics and `_ping`
+included. `currentPage` would not: it is only set later, at `:1347`, and during
+a ping it is still `None`. The register client has the site in hand —
+`SiteRegisterClient.__init__(self, site)` stores it.
+
+Three things follow, and they are why the seam is a header and not a
+thread-local of ours:
+
+- no global state in the bench code, and no reimplementation of per-thread
+  affinity — GenroPy's own is used;
+- the join key is **visible in the trace**, among the recorded request headers:
+  the file carries the key it is joined on;
+- the two recorders never import each other. They share the name of a header,
+  nothing else — which is what makes the pair installable on the bridge.
+
+Register calls made outside any request — service threads, or anything after the
+end-of-dispatch cleanup — carry no `exchange_id`. That is information, not a
+loss: in the trace they appear as calls belonging to no exchange.
+
+### Running with the HTTP recorder
+
+Add the recorders' gunicorn config to the launch of step 5, from the repository
+root:
+
+```bash
+PGGSSENCMODE=disable temp/legacy_venv/bin/gnr web serveprod test_invoice_pg_legacy \
+    -b 127.0.0.1:8099 -w 1 -k gthread --threads 16 \
+    -c benchmarks/compare/gunicorn_recorders.conf.py
+```
+
+`post_worker_init` runs right after gunicorn's own `load_wsgi()`, so
+`worker.wsgi` is already the site application and one line wraps it (verified on
+gunicorn 26.1.0).
+
+**Hygiene: delete the old traces before a run.**
+
+```bash
+rm -f temp/http_trace.jsonl temp/register_trace.jsonl
+```
+
+The recorders open the trace in append mode and never truncate it — truncating
+at install would mean the second worker erasing the first one's lines. A trace
+left over from a previous run silently mixes two sessions.
+
+### What lands in the trace, and what does not
+
+**Not recorded at all** — the line does not exist:
+
+- static assets, recognised by the **response content type** (javascript, css,
+  images, fonts) plus `favicon.ico`;
+- pings that rendered nothing.
+
+Recognition is by content type and never by path, except `favicon.ico`: the
+decision is taken when the answer is known, with no guessing from the URL.
+
+**The ping that rendered nothing is not an empty Bag** — that was the wrong
+guess, and it made the filter never fire. `handle_ping` builds
+`Bag(dict(result=None))` and adds a `dataChanges` node only when there is
+something to deliver (`gnr/web/daemon/siteregister.py:928`), so on the wire the
+idle answer is the bare envelope:
+
+```xml
+<GenRoBag><result _T="NN"></result></GenRoBag>
+```
+
+That shape — a null `result` and nothing else — is what the filter matches. As
+soon as `dataChanges` appears the exchange is recorded.
+
+**Recorded, whole, with no truncation anywhere**: everything else. RPC calls,
+pages, XML, JSON — and the pings that *do* carry a datachange, because that Bag
+is the register answering, which is prime material for the macro-phase 2 diff.
+
+One JSONL line per exchange, with these fields:
+
+| Field | What |
+|---|---|
+| `exchange_id` | the join key with the register trace |
+| `ts`, `thread` | wall clock and thread ident (16 threads interleave) |
+| `method`, `path`, `query` | the request line |
+| `req_headers`, `req_body`, `req_len` | whole request |
+| `rpc_method`, `form` | the RPC method and the form payload, parsed as `capture_proxy.py` does (`method` or `_M`) |
+| `status`, `resp_headers`, `resp_body`, `resp_len` | whole response; headers as a list of pairs, so a repeated `Set-Cookie` survives |
+| `gnr_headers` | the `X-Gnr*` breakdown: `X-GnrTime`, `X-GnrSqlTime`, `X-GnrSqlCount`, `X-GnrXMLTime`, `X-GnrXMLSize` |
+| `duration_ms` | entry to end of the body, measured by the recorder |
+| `recorder_error` | present only when the recorder itself failed on that exchange |
+
+A failure inside the recorder is written as `recorder_error` and **never**
+reaches the response: the response is served intact and the trace says the line
+is incomplete.
+
+The `X-Gnr*` headers only arrive on the page-serving path — they are set by
+`setResultInResponse` (`gnrwsgisite.py:1371`). Statics would not have them, and
+statics are not recorded anyway. With debug off, `X-GnrSqlTime` and
+`X-GnrSqlCount` arrive as `0`; see the declared conditions above.
+
+Wrapping the app costs the `wsgi.file_wrapper` fast path: gunicorn only takes it
+when the application returns a file wrapper, and the recorder returns a
+generator. Irrelevant for fidelity work, worth knowing before anyone reads
+timings off a recorded run.

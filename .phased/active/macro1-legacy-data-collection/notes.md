@@ -29,3 +29,50 @@
 - **A stale multi-site `gnrdaemon` (from 2026-08-19) was holding 40004** and
   would have silently prevented the sitedaemon from starting. Terminated with
   the owner's approval; the hygiene check in the README exists for this.
+
+## Phase 2
+
+- **The seam is a request header, not a thread-local of ours** (owner's own
+  proposal, 2026-08-23, adopted after verification). The site already keeps the
+  current request per thread: `GnrWsgiSite.currentRequest`, a `ThreadedDict`
+  filled in `dispatcher` (`gnrwsgisite.py:1155`) and cleared at `:1446`, so it
+  spans the whole dispatch — statics and `_ping` included. `currentPage` would
+  not have worked: it is only set at `:1347`, and during a ping it is still
+  `None`, which is precisely an exchange whose register calls must be
+  attributable. The register client holds the site
+  (`SiteRegisterClient.__init__(self, site)`). Three gains over the thread-local
+  the plan first named: no global state in the bench code, the join key visible
+  in the trace among the recorded request headers, and two recorders that share
+  only a header name instead of importing each other — which is what makes the
+  pair installable on the bridge.
+- **A filter, not a truncation** (owner, 2026-08-23). Statics and empty pings
+  produce no line at all, so nothing that IS recorded is ever cut. The
+  alternative — a uniform cap — was rejected because macro-phase 2 diffs bodies,
+  and a divergence past the cap would be invisible.
+- **The idle ping is not an empty Bag.** First guess, and it made the filter
+  never fire on the live stack: `handle_ping` builds `Bag(dict(result=None))`
+  and only adds `dataChanges` when there is something to deliver
+  (`gnr/web/daemon/siteregister.py:928`), so the wire shape is
+  `<GenRoBag><result _T="NN"></result></GenRoBag>`. Caught by looking at a real
+  recorded ping, not by reading the code — worth remembering as the cheaper
+  order of operations.
+- **`__file__` does not exist in a gunicorn config file here.** genropy's own
+  `load_config_file` (`gnr/web/cli/gnrserveprod.py:39`) does `exec(code, config)`
+  into a bare dict, unlike gunicorn's loader — which is why the ancestor
+  `benchmarks/gunicorn_count.conf.py` hardcoded an absolute path. The config
+  recovers the path from the frame instead
+  (`inspect.currentframe().f_code.co_filename`, the path genropy compiled), so
+  any `-c` argument works from any working directory.
+- **A recorder failure did reach the response, once.** The buffering decision in
+  `relay_body` sat outside the try block, so an exception there propagated after
+  `start_response` had already fired. Found by the isolation check, not by
+  reading. Now the decision is guarded and defaults to buffering; the same
+  failure recurs inside `write_record`, where it is recorded as
+  `recorder_error`.
+- **Wrapping the app costs the `wsgi.file_wrapper` fast path**: gunicorn only
+  takes it when the application returns a file wrapper, and the recorder returns
+  a generator. Irrelevant to fidelity, relevant to anyone reading timings off a
+  recorded run.
+- **`X-GnrSqlTime` / `X-GnrSqlCount` arrive as `0`, not empty**, with debug off —
+  measured on a real exchange. Phase 1's README wording said "empty" and was
+  corrected.
