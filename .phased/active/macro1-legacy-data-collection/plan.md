@@ -410,7 +410,9 @@ loop stay in macro-phase 2.
   - Verify: now — the archive answers a question you would actually ask: pick one
     RPC exchange and read its register conversation out of the SQLite file
 
-- [ ] **Phase 5**: the two recorders on the bridge, and its reference session
+- [>] **Phase 5**: the two recorders on the bridge, and its reference session
+  > In execution since 2026-08-23T22:12:55Z
+  > WIP: done: the four bench modules exist and pass 22 isolation checks (coverage, the recipe transcription, one line per site call, the store wrapped) | missing: the bridge served with the recorders on, and the reference session archived | next: bring the bridge up on 8098 with serve_bridge.py and read the archive | commit: 4fb1f6a
   - Run: opus / high
   - Pattern: `benchmarks/compare/register_recorder.py` and
     `benchmarks/compare/http_recorder.py` (the record shape is the contract),
