@@ -461,6 +461,35 @@ Then the two traces are the reference: every register line joins an HTTP
 exchange by `exchange_id` — a full record or the stub of a filtered one — except
 the boot calls, which have no exchange by construction.
 
+**Recorded evidence, run of 2026-08-23** under the declared conditions above
+(debug off, 1 process and 16 threads, register empty at start, both recorders,
+db `test_invoice_pg`). The session was login, one table page with its grid, one
+record opened, one field changed and saved:
+
+| | |
+|---|---|
+| HTTP exchanges | 256 — 22 full records, 234 stubs |
+| Stub reasons | 223 `static`, 11 `empty_ping` |
+| Register calls | 2046, on 12 threads |
+| Unjoinable register lines | 0 |
+| Calls with the exchange absent | 2, both the master's boot |
+| `recorder_error` | 0 |
+| Register calls per RPC exchange | 25 minimum, 33 median, 92 maximum |
+
+**The filtered exchanges are not free, which is why they get a stub.** Their
+register traffic, measured on this run:
+
+| Filtered exchange | Count | Register calls each | Verbs |
+|---|---|---|---|
+| `static` | 223 | 2 | `globalStore`, `getItem` on the global register |
+| `empty_ping` | 11 | 5 | `globalStore` and `getItem` twice, then `handle_ping` |
+
+501 register calls on exchanges the HTTP trace would otherwise not have
+mentioned. And the split is only knowable *because* of the stub: before it,
+both shapes were exchanges with no HTTP line, and a two-line one could not be
+told from a ping — the earlier run of the same session showed 223 and 17 of them
+with no way to say which was which.
+
 ### Exercising the recorder without a browser
 
 Two scripts in this folder, both runnable from the repository root.
