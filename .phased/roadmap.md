@@ -42,9 +42,35 @@ first one.
 - **Both recorders matter MORE here, not less**: at each stop, the register trace
   is what says whether the bridge reached the same answer through the same calls,
   which the HTTP layer cannot see.
+- **The traces are written as JSONL and archived in SQLite** (owner,
+  2026-08-23). The recorders keep appending JSONL lines: an append is one syscall
+  that cannot fail halfway beyond a partial line, the bridge's workers are
+  separate processes so a shared database would mean write contention and lock
+  retries INSIDE the instrument — the instrument-induced divergence this bench
+  exists to avoid — and a fixed schema would fight the no-versioning rule, since
+  the record shape changed three times while macro-phase 1 was being built.
+  A finished run is then loaded into SQLite by a separate tool, one file per run,
+  kept OUTSIDE the git tree: that file is the durable archive, and the run's
+  declared conditions live in it as data instead of as prose in a README.
+- **The archive table is one JSON column plus a few promoted ones** (owner,
+  2026-08-23), each promoted because it has a job: `exchange_id` and the run id
+  to JOIN, the stack to SEPARATE, timestamp and thread to ORDER, the line kind
+  and the verb or path and the status to FILTER. Everything else stays inside the
+  JSON, so a line of a new shape breaks nothing and needs no migration — the
+  no-versioning rule carried down to the storage layer. An occasional query on a
+  field that is not a column reads inside the JSON; a field is promoted only once
+  it is queried often. One invariant: a promoted column is a COPY of what the JSON
+  holds, never the only place a value lives — otherwise the blob stops being the
+  record and this is a schema again.
+- **Why the archive is needed at all**: macro-phase 1 declared that no macro-phase
+  depends on a stored reference trace, only on the ability to produce one. That
+  holds for the RECIPE but not for the reference itself — a session performed by
+  hand in a browser does not reproduce identically, and the clean-restart recipe
+  deletes the traces at every run. Measured and unrecoverable a minute later was
+  observed on 2026-08-23. So the reference is kept, outside git, never committed.
 - Mini-scope: the recorders' install point on the bridge (no gunicorn there, so
   the install is the plain call macro-phase 1 built); the replica; the structural
-  comparison; the db copy.
+  comparison; the db copy; the JSONL-to-SQLite loader and the archive.
 - Ends at: the owner's reference session replicated on the bridge with no
   divergence left unexplained, the known ones (S1/S2/S3/S5) recognised rather
   than discovered.
