@@ -137,7 +137,7 @@ check("an explicit method is recorded on the client surface",
       and recorded[0]["verb"] == "get_item")
 check("its arguments and answer are in the line",
       recorded[0]["args"] == ["p1"] and "register_item_id" in recorded[0]["result"])
-check("one wire attempt is counted", recorded[0]["attempts"] == 1)
+check("one round trip is counted", recorded[0]["wire_calls"] == 1)
 check("the exchange is on the line", recorded[0]["exchange_id"] == "ex1")
 check("the ordinal starts at one", recorded[0]["ordinal"] == 1)
 check("a successful call records no error",
@@ -156,8 +156,8 @@ site.enter_exchange("ex3")
 check("the legacy funnel swallows the failure and answers None",
       rec.drop_page("p9") is None)
 recorded = lines()[0]
-check(f"the {MAX_RETRY_ATTEMPTS} attempts are counted",
-      recorded["attempts"] == MAX_RETRY_ATTEMPTS)
+check(f"the {MAX_RETRY_ATTEMPTS} retried round trips are counted",
+      recorded["wire_calls"] == MAX_RETRY_ATTEMPTS)
 check("the swallowed error class is recorded",
       recorded["wire_error"].startswith("ConnectionError"))
 

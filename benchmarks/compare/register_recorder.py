@@ -27,13 +27,19 @@ the wire attempts and the error class, the ordinal within its
 exchange, the duration, thread and pid. Store lines carry as well the
 `register_name` and `register_item_id` of the store the call happened on.
 
-`attempts` is counted on the Pyro proxy, not guessed: the legacy retry loop
-lives inside the closure `SiteRegisterClient.__getattr__` builds, and its
-`except Exception` neither logs nor re-raises, so from outside that funnel a
-fourfold failure is indistinguishable from a legitimate `None`. Counting on the
-wire and attributing to the call in flight keeps ONE line per call the site
-made — never one per round trip — which is the shape the bridge produces too,
-where there is no per-call retry loop at all.
+`wire_calls` counts the round trips one call cost, and it is counted on the Pyro
+proxy rather than guessed: the legacy retry loop lives inside the closure
+`SiteRegisterClient.__getattr__` builds, and its `except Exception` neither logs
+nor re-raises, so from outside that funnel a fourfold failure is
+indistinguishable from a legitimate `None`. Counting on the wire and attributing
+to the call in flight keeps ONE line per call the site made — never one per round
+trip.
+
+The field is NOT called `attempts`, and the name was changed after it misled its
+first reader: a store's Bag read shows `wire_calls: 2` because
+`ServerStore.data` evaluates `self.register_item` twice, each evaluation a round
+trip of its own — measured, not a retry. A retry shows as more round trips than
+the call's shape costs, together with a `wire_error`.
 
 Only non-routine attributes are handed back untouched, and the guard is
 `inspect.isroutine`, not `callable`: `register.locked_exception` is a class, so
@@ -117,7 +123,7 @@ class WireCounter:
 
     def counting(self, attribute):
         def counted(*args, **kwargs):
-            self.recorder.record_attempt()
+            self.recorder.record_wire_call()
             try:
                 return attribute(*args, **kwargs)
             except Exception as exc:
@@ -192,7 +198,7 @@ class RegisterRecorder:
 
     def run_recorded(self, target, verb, surface, fields, args, kwargs):
         previous = getattr(self.flight, "state", None)
-        self.flight.state = {"attempts": 0, "wire_error": None}
+        self.flight.state = {"wire_calls": 0, "wire_error": None}
         started = time.time()
         try:
             answer = target(*args, **kwargs)
@@ -215,10 +221,10 @@ class RegisterRecorder:
             return StoreRecorder(answer, self)
         return answer
 
-    def record_attempt(self):
+    def record_wire_call(self):
         state = getattr(self.flight, "state", None)
         if state is not None:
-            state["attempts"] += 1
+            state["wire_calls"] += 1
 
     def record_wire_error(self, exc):
         state = getattr(self.flight, "state", None)
@@ -263,7 +269,7 @@ class RegisterRecorder:
                       "kwargs": {key: self.readable(value)
                                  for key, value in kwargs.items()},
                       "result": self.readable(answer),
-                      "attempts": state["attempts"],
+                      "wire_calls": state["wire_calls"],
                       "wire_error": state["wire_error"],
                       "error": f"{type(exc).__name__}: {exc}" if exc else None,
                       "duration_ms": round((time.time() - started) * 1000, 3)}

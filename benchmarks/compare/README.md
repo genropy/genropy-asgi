@@ -377,24 +377,39 @@ funnel would record nothing there.
 | `surface`, `verb` | where it was intercepted, and the name called |
 | `args`, `kwargs` | the arguments |
 | `result` | the answer |
-| `attempts` | wire calls the call caused: `0` when it never left the process, `1` normally, up to `MAX_RETRY_ATTEMPTS` when the legacy loop retried |
+| `wire_calls` | round trips the call cost: `0` when it never left the process, `1` normally, more when the shape costs more or the legacy loop retried |
 | `wire_error` | the error class the legacy retry loop swallowed, when it swallowed one |
 | `error` | the exception that reached the site, when one did |
 | `duration_ms`, `ts`, `thread`, `pid` | timing and provenance |
 | `register_name`, `register_item_id` | store lines only: which register and which item |
 | `recorder_error` | present only when the recorder itself failed on that call |
 
-**`attempts` is counted on the Pyro proxy, not guessed.** The legacy retry loop
+**`wire_calls` is counted on the Pyro proxy, not guessed.** The legacy retry loop
 lives inside the closure `SiteRegisterClient.__getattr__` builds, and its
 `except Exception` neither logs nor re-raises: from outside that funnel a
 fourfold failure is indistinguishable from a legitimate `None`. Counting on the
 wire and attributing to the call in flight on that thread is what makes the
 number true, and it keeps one line per call. The two groups behave differently
 and the trace shows it rather than hiding it: a `passthrough` verb can carry
-`attempts: 4` with a `wire_error` and a `null` result, while a `client` method
-raises and carries an `error`. On the bridge there is no per-call retry at all,
-so `attempts` is honestly `1` there — a real difference between the stacks, not
-an artefact of how it was measured.
+`wire_calls: 4` with a `wire_error` and a `null` result, while a `client` method
+raises and carries an `error`.
+
+**The field is not called `attempts`, and the name was changed after it misled
+its first reader** into taking a routine number for a retry. What one call costs
+on the wire is a property of its shape, measured on the fake wire:
+
+| Call | Round trips |
+|---|---|
+| `pageStore(...)` and the other `*Store` builders | 0 — the store is built in process |
+| `store.register_item` | 1 |
+| `store.data` | 2 — `ServerStore.data` evaluates `self.register_item` twice |
+| `store.getItem(path)` | those 2, plus one on the remotebag proxy, which is not counted here |
+
+So a Bag read through a store shows `wire_calls: 2` and has retried nothing. A
+retry shows as more round trips than the shape costs, together with a
+`wire_error`. On the bridge there is no per-call retry and no wire at all, so the
+numbers will differ by nature — which is a real difference between the stacks and
+not an artefact of the instrument.
 
 **The calls with no exchange are recorded, not filtered.** The register client is
 born in the master process, so the site's own boot makes real register calls
