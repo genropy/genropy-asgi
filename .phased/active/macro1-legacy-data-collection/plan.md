@@ -200,14 +200,21 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     **replica** of a session the owner performs (owner, 2026-08-23, retiring the
     word); the roadmap's stages are *macro-phases*.
   - Details: the wrapper builds the real client and records every call: verb,
-    arguments, answer, number of attempts, error class, ordinal within the
+    arguments, answer, the round trips the call cost on the wire, error class,
+    ordinal within the
     exchange, `exchange_id` read with
     `self.site.currentRequest.headers.get('X-Bench-Exchange-Id')` — the seam
     Phase 2 built, superseding the thread-local this field first named (owner,
     2026-08-23) — thread id. The legacy
     funnel retries up to `MAX_RETRY_ATTEMPTS` and then returns `None` without
-    re-raising, so attempts and error class must be recorded or a failing
-    register becomes invisible. Bags serialise as truncated `repr`, never pickle.
+    re-raising, so the round trips and the error class must be recorded or a
+    failing register becomes invisible. The field counts ROUND TRIPS, not
+    attempts, and the name says so: a retry shows as more round trips than the
+    call's own shape costs, together with an error. Naming it `attempts` fooled
+    this plan's own author within an hour of the field existing — a routine read
+    costing two round trips read as a retrying register, and the two are the
+    reading of `ServerStore.data`, which evaluates its `register_item` property
+    twice and pays a round trip each time, on a perfectly healthy register. Bags serialise as truncated `repr`, never pickle.
     The install point is a versioned launcher, `benchmarks/compare/serve_legacy.py`:
     it calls the install and then `gnrserveprod.main()`. A gunicorn hook cannot
     serve here — `main()` builds the site before it reads the `-c` file, and
