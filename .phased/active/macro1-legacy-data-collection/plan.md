@@ -168,6 +168,13 @@ timings are not read, so the instrumentation may be as heavy as it needs.
 
 - [>] **Phase 3**: the register interceptor and the reference session
   > In execution since 2026-08-23T09:05:32Z
+  > Testing: awaiting the human's `Verify: now` checks | commit: 058d499
+  > Verify: now — perform the reference session in the browser on the stack
+    started by the launcher, with the register empty and the traces cleared:
+    log in with an account from `benchmarks/usernames.txt` (password `a`), open
+    one table page and let the grid load, open one record, change one field and
+    save it. Then take one RPC exchange and read what it did to the register:
+    it makes sense.
   - Run: opus / high
   - Pattern: `benchmarks/sr_counter.py` (valid as design only — its code is
     expired: it patches a module that no longer exists)
