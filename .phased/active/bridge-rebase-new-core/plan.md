@@ -218,3 +218,7 @@ notes.md, review.md), then the pre_refactoring worker
   version dies as soon as the new one works (owner rule, 2026-08-21).
 - Uncommitted changes predating the workflow ride the tree untouched:
   docs/genropy-asgi-for-dummies.html, docs/getting-started.rst, users/.
+
+## Quality check
+
+> Quality check: 2026-08-23T05:25:52Z — commit bd2bde4 — review extended, QA none, findings 4 confirmed, 0 dismissed
