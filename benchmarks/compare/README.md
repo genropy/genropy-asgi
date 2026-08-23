@@ -523,6 +523,16 @@ Then that archive is the reference: every register line joins an HTTP exchange b
 `exchange_id` — a full record or the stub of a filtered one — except the boot
 calls, which have no exchange by construction.
 
+**Close the run before reading it.** Stop gunicorn, then the sitedaemon — while
+they run, the browser's idle pings keep landing in the archive and any census
+taken earlier stops matching. Then fold the WAL into the file itself, so the
+`.sqlite` alone is the whole archive and nobody loses the tail by copying it
+without its `-wal` companion:
+
+```bash
+sqlite3 ~/genro_bench/runs/<run_id>.sqlite 'PRAGMA wal_checkpoint(TRUNCATE);'
+```
+
 **Reading it back.** The join, and the census that says whether the run is whole:
 
 ```sql
@@ -548,36 +558,51 @@ SELECT json_extract(line, '$.ordinal'), surface, subject,
  ORDER BY json_extract(line, '$.ordinal');
 ```
 
-**Recorded evidence, run of 2026-08-23** under the declared conditions above
-(debug off, 1 process and 16 threads, register empty at start, both recorders,
-db `test_invoice_pg`). The session was login, one table page with its grid, one
-record opened, one field changed and saved:
+**Recorded evidence, reference run `legacy-20260823T232924`** under the declared
+conditions above (debug off, 1 process and 16 threads, register empty at start,
+both recorders, db `test_invoice_pg`), performed in a private window so the login
+is really in the archive. The session was login, one table page with its grid,
+one record opened, one field changed and saved:
 
 | | |
 |---|---|
-| HTTP exchanges | 260 — 23 full records, 237 stubs |
-| Stub reasons | 224 `static`, 13 `empty_ping` |
-| Register calls | 1918, on 13 threads — 903 `client`, 948 `store`, 67 `passthrough` |
+| HTTP exchanges | 266 — 32 full records, 234 stubs |
+| Stub reasons | 223 `static`, 11 `empty_ping` |
+| Register calls | 1788, on 17 threads — 833 `client`, 878 `store`, 77 `passthrough` |
 | Unjoinable register lines | 0 |
 | Calls with the exchange absent | 2, both the master's boot |
 | `recorder_error` | 0 |
-| Register calls per RPC exchange | 6 minimum, 32 median, 92 maximum |
-| RPC methods in the run | `login_checkAvatar`, `login_doLogin`, `main`, `getRemoteTranslation`, `app.dbSelect`, `app.getSelection`, `app.checkFreezedSelection`, `loadRecordCluster`, `saveRecordCluster` |
+| Register calls per RPC exchange | 25 exchanges: 5 minimum, 25 median, 92 maximum |
+| RPC methods in the run | `*|login:LoginComponent;login_checkAvatar`, `*|login:LoginComponent;login_doLogin`, `main`, `getRemoteTranslation`, `app.dbSelect`, `app.getSelection`, `app.checkFreezedSelection`, `loadRecordCluster`, `saveRecordCluster` |
+
+The two login calls arrive with their component prefix in the `method` field —
+that is what the wire carries when the login page is a component, and the flat
+`user=`/`password=` fields plus the XML Bag of the login trap are unchanged
+underneath.
 
 **The filtered exchanges are not free, which is why they get a stub.** Their
 register traffic, measured on this run:
 
 | Filtered exchange | Count | Register calls each | Verbs |
 |---|---|---|---|
-| `static` | 224 | 2 | `globalStore`, `getItem` on the global register |
-| `empty_ping` | 13 | 5 | `globalStore` and `getItem` twice, then `handle_ping` |
+| `static` | 223 | 2 | `globalStore`, `getItem` on the global register |
+| `empty_ping` | 11 | 5 | `globalStore` and `getItem` twice, then `handle_ping` |
 
-513 register calls on exchanges the HTTP trace would otherwise not have
+501 register calls on exchanges the HTTP lines would otherwise not have
 mentioned. And the split is only knowable *because* of the stub: before it, both
 shapes were exchanges with no HTTP line, and a two-line one could not be told
 from a ping — an earlier run of the same session showed 223 two-line and 17
-five-line exchanges with no way to say which was which, and the guess made at the
-time (all of it ping traffic) was wrong: the two-line ones are statics.
+five-line exchanges with no way to say which was which, and the guess made at
+the time (all of it ping traffic) was wrong: the two-line ones are statics.
+
+**What one RPC exchange looks like read out of the archive.** `saveRecordCluster`
+in the reference run, its 32 ordinals unbroken: the identity reads on the global,
+connection and page stores, then `get_dbenv`, then `subscribed_tables` →
+`filter_subscribed_tables` → `notifyDbEvents` on `invc.customer`, then
+`subscription_storechanges`, then the page lock — `__enter__`, `get`, `setItem`,
+`__exit__` — around the write. Every `getItem` on a store costs `wire_calls: 2`
+for the reason given above, and every `*Store` builder costs 0: the store is
+built in process.
 
 ### Exercising the recorders without a browser
 

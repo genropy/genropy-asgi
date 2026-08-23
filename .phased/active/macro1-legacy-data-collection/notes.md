@@ -353,3 +353,60 @@
   50ms, the recorded duration stays under it. It mattered because macro-phase 3
   reads these numbers and the inflation was invisible — a plausible value, just
   wrong, and worst exactly on the calls that carry the biggest Bags.
+
+## Phase 4
+
+- **The channel between the two recorders is the environment, and that is a
+  choice about Phase 5.** The register recorder is born in the master and the
+  HTTP recorder in the forked worker, so they have to agree on one archive file.
+  An inherited Python object would have worked here — gunicorn forks — and would
+  have failed on the bridge, where the pool names its worker as an import string
+  and the worker process is started fresh: nothing crosses. So the launcher
+  publishes the archive path in `GNR_BENCH_RUN` and every recorder attaches to
+  it. The register recorder is additionally handed the object itself through a
+  `functools.partial`, because genropy builds its client as
+  `SiteRegisterClient(site)` with no room for a second argument, and a
+  module-level global would have been the alternative.
+- **`subject` is the name of the column that carries the path for an HTTP line
+  and the verb for a register one.** Chosen by this session under the owner's
+  Phase 3 delegation of the names of this instrument; the candidates offered
+  were `subject`, `name` and `about`. It reads as what it is — what the line is
+  about — and it is the column a person filters on when reading the archive by
+  hand, which is why it earned a promotion out of the JSON.
+- **`stack` is the one declared exception to the copy rule.** Every other
+  promoted column repeats a value the record JSON still holds; `stack` repeats
+  the run row's declared condition instead. Putting it into the record would
+  change a record shape that the first `Must not break:` line requires to be
+  identical on both stacks, and one file is one run is one stack anyway — the
+  column exists so a query over several attached archives can separate them.
+- **A SQLite connection opened in a forked child SEGFAULTS with sqlite 3.51.0 in
+  WAL mode.** Measured on this machine's pyenv python 3.12.9: SIGSEGV inside the
+  C call, nothing to catch, the child dead before its first line. The bench venv
+  carries 3.50.4 and does it cleanly, which is why the recorded stack is
+  unaffected and why `run_archive_check.py` runs on the venv python even though
+  it imports no genropy. Same family as the libpq/Kerberos segfault behind
+  `PGGSSENCMODE=disable`. It cost half an hour of bisecting a check that looked
+  like a bug in the archive and was a property of the interpreter running it —
+  and it is a live trap for whoever moves the bench to a newer python, where the
+  gunicorn worker would die on its first recorded line.
+- **One implementation assertion was removed with the implementation it
+  photographed**: `sorted(rec.trace.__dict__) == ["lock", "path"]`, which pinned
+  `TraceWriter` holding no open file between writes. `TraceWriter` no longer
+  exists; the same property — the connection is never inherited across a fork —
+  is now asserted where it lives, in `run_archive_check.py`, with a real fork.
+  Declared here in the same change, per the plan's rule on the two kinds of test.
+- **The WAL has to be folded in when a run ends.** Nothing on the legacy stack
+  gets a "run finished" hook — gunicorn is killed — so the archive file can be
+  left with its tail in the `-wal` companion. A reader opening the `.sqlite`
+  sees everything, but anyone copying the file alone loses the tail. The README
+  now closes the recipe with `PRAGMA wal_checkpoint(TRUNCATE)`.
+- **Stop the servers before taking a census.** Between the census and the stop,
+  two more idle pings landed in the archive and moved four of the numbers. The
+  documented figures are the ones measured after the stop, and the README says
+  to stop first for exactly this reason. Harmless here, silently wrong in a
+  document that gets compared later.
+- **The login RPC method carries its component prefix** in this run:
+  `*|login:LoginComponent;login_checkAvatar`, where the Phase 3 README recorded
+  the bare name. It is what the `method` field carries when the login page is a
+  component; the identity itself still travels in the two places the login trap
+  describes, flat fields and the XML Bag.
