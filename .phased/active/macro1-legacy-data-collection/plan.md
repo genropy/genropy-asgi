@@ -14,7 +14,8 @@ answers. Two recorders write two JSONL traces linked by one column, the
 timings are not read, so the instrumentation may be as heavy as it needs.
 
 ## Work Plan
-- [ ] **Phase 1**: the classic stack up and serving
+- [>] **Phase 1**: the classic stack up and serving
+  > In execution since 2026-08-23T06:52:29Z
   - Run: opus / low
   - Pattern: `benchmarks/gunicorn_count.conf.py` (the launch recipe)
   - Files: `benchmarks/compare/README.md`, `temp/legacy_venv/` (not committed),
