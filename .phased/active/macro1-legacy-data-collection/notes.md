@@ -127,3 +127,36 @@
   says whether the bridge reached the same answer through the same calls, which
   the HTTP layer cannot see. Open: whether this becomes Phase 4 of this workflow
   (the bridge already exists, no waiting) or a rewritten Macro 2 on the roadmap.
+
+## Phase 3
+
+- **Foreman decision on the `clarify?` of 2026-08-23 — the interception point is
+  a wrapper OBJECT, not the legacy `__getattr__`.** The phase's `Decisions:` line
+  called `__getattr__` the class's single funnel; that is wrong, verified at the
+  source in the bench venv: `SiteRegisterClient` declares about 26 explicit
+  methods found on the class — `new_page`, `new_connection`, `pages`,
+  `connections`, `users`, `counters`, `refresh`, `get_item`, `page`, `connection`,
+  `user`, `make_store`, the four `*Store` builders, `dump`, `load` — which reach
+  the Pyro proxy directly and never touch `__getattr__`. Patching that funnel
+  would record the residue and miss the lifecycle. The decision is not a
+  preference: the plan's first `Must not break:` line requires the same pair of
+  recorders to install on the bridge, and the bridge's `GenropyRegisterClient`
+  has no `__getattr__` at all (the one at line 220 of
+  `src/genropy_asgi/siteregister/siteregister_client.py` belongs to its
+  `ServerStore`, whose class starts at 93 while the client's starts at 245). A
+  recorder built on the funnel would therefore record NOTHING on the bridge. The
+  wrapper object also needs no knowledge of which names are explicit, which is
+  what keeps it installable on both stacks.
+- **Store traffic is in scope for this phase**, tagged with the store's
+  `register_name` and `register_item_id`. `ServerStore.__init__` keeps the client
+  it was built from, so a store handed back unwrapped takes its whole
+  conversation — `set_datachange`, `subscribe_path`, `reset_datachanges`,
+  `drop_datachanges`, the lock in `__enter__`/`__exit__` — outside the recorder.
+  A register comparison that cannot see `set_datachange` is not a register
+  comparison: the datachange half is precisely where the bridge's emulation has
+  no upstream test suite, so the trace is the only place a divergence would
+  surface. Both stacks have a `ServerStore` with its own `__getattr__`, so the
+  surface stays comparable in macro-phase 2, and the phase's own `Pattern:`
+  (`benchmarks/sr_counter.py`) wrapped the store on purpose. Consequence for the
+  record shape: a recorded line is a call on the client OR a call on a store, and
+  the store lines carry which register and which item they belong to.

@@ -154,7 +154,8 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     identity travels (flat fields on `login_checkAvatar`, the XML Bag in the
     `login` field on `login_doLogin`)
 
-- [ ] **Phase 3**: the register interceptor and the first macro
+- [>] **Phase 3**: the register interceptor and the first macro
+  > In execution since 2026-08-23T09:05:32Z
   - Run: opus / high
   - Pattern: `benchmarks/sr_counter.py` (valid as design only — its code is
     expired: it patches a module that no longer exists)
