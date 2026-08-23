@@ -109,3 +109,21 @@
 - **Deleting the trace with the server up is a mistake easy to repeat** — made
   twice in this phase, the second time minutes after documenting it. The README
   warning is worth its space.
+- **Naming review: accept all** (owner, 2026-08-23). Twelve new names, no
+  minimality flags. Two with a single caller were kept separate on purpose:
+  `is_empty_ping`, because it carries the wire-shape rule where it can be read,
+  and `append_error`, because it keeps `write_record` legible.
+- **Macro 2 is going to change shape** (owner, 2026-08-23, decided during this
+  phase and NOT yet written into the roadmap): instead of recording the bridge
+  and diffing the traces offline, drive both stacks and stop at the first
+  divergence, then fix genro-asgi, genropy-asgi or the tester until the two
+  agree. The objection that killed the naive version — a divergence
+  contaminating everything downstream — dissolves precisely because nobody walks
+  past the first one. Identifiers still have to be adapted per stack (each has
+  its own session, page_id, connection_id), which the owner accepts as iterative
+  work. The doubled database only becomes a problem when a macro writes, so the
+  loop starts read-only and a db copy is a later run condition. Both recorders
+  survive this change and matter MORE: at each stop, the register trace is what
+  says whether the bridge reached the same answer through the same calls, which
+  the HTTP layer cannot see. Open: whether this becomes Phase 4 of this workflow
+  (the bridge already exists, no waiting) or a rewritten Macro 2 on the roadmap.

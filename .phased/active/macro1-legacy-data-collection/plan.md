@@ -78,9 +78,38 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     `benchmarks/usernames.txt` succeeds
   - Verify: now — open the browser, log in, the application page appears
 
-- [>] **Phase 2**: the HTTP recorder
-  > In execution since 2026-08-23T07:28:58Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: dfe306c
+- [x] **Phase 2**: the HTTP recorder
+  > Done: `HttpRecorder`, a WSGI middleware wrapping the site application,
+    installed by one call from `post_worker_init`. It mints the `exchange_id`,
+    injects it as the `X-Bench-Exchange-Id` request header — the seam Phase 3
+    reads back through `site.currentRequest.headers` — and appends one JSONL
+    line per recorded exchange to `temp/http_trace.jsonl`: method, path, query,
+    whole request and response bodies, headers, the `X-Gnr*` breakdown, RPC
+    method and form payload, thread id, timestamp, duration. Statics, favicon
+    and the pings that rendered nothing produce no line at all, so nothing that
+    IS recorded is ever truncated. A recorder failure is written as
+    `recorder_error` and never reaches the response. Two versioned helpers ship
+    with it: `http_recorder_check.py` (19 isolation checks, no server needed)
+    and `drive_login.py` (replays a login over HTTP, no browser).
+  > Files: benchmarks/compare/http_recorder.py,
+    benchmarks/compare/gunicorn_recorders.conf.py,
+    benchmarks/compare/http_recorder_check.py,
+    benchmarks/compare/drive_login.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro1-legacy-data-collection/plan.md,
+    .phased/active/macro1-legacy-data-collection/notes.md
+  > Verified: `python3 benchmarks/compare/http_recorder_check.py` — 19 checks
+    green, covering the filters, the whole bodies, the `X-Gnr*` harvest and both
+    failure paths (response intact, failure recorded). `ruff check
+    benchmarks/compare/` clean. On the live legacy stack: a login driven over
+    HTTP by `drive_login.py` produced a trace whose exchanges all carry distinct
+    `exchange_id`s, the header matching the id on every line, four interleaved
+    thread ids, zero `recorder_error`.
+  > Verify: now — PERFORMED twice, 2026-08-23, confirmed: by the owner in the
+    browser and by the session over HTTP. Both show the identity in its two
+    places — flat `user=alexander.king` / `password=a` on `login_checkAvatar`,
+    and the same values inside the XML Bag in the `login` field on
+    `login_doLogin`.
   - Run: opus / medium
   - Pattern: `benchmarks/capture_proxy.py` (ancestor of the record format),
     `benchmarks/gunicorn_count.conf.py` (the `post_worker_init` install point)

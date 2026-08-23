@@ -57,7 +57,7 @@ EMPTY_PING_ANSWER = re.compile(
     r"|<GenRoBag>\s*(<result\s+_T=\"NN\"\s*(/>|></result>))?\s*</GenRoBag>)$")
 
 
-class HttpRecorder:  # wf:phase-2:new
+class HttpRecorder:
     """WSGI middleware writing one JSONL line per recorded HTTP exchange."""
 
     def __init__(self, application, trace_path=TRACE_PATH):
@@ -81,7 +81,7 @@ class HttpRecorder:  # wf:phase-2:new
         body = self.application(environ, recording_start_response)
         return self.relay_body(body, record, reply, started)
 
-    def relay_body(self, body, record, reply, started):  # wf:phase-2:new
+    def relay_body(self, body, record, reply, started):
         # buffering is skipped for what will not be written anyway; the skip
         # decision itself belongs to write_record, which sees the whole body.
         # A failure here must not reach the response: buffer, and let
@@ -103,7 +103,7 @@ class HttpRecorder:  # wf:phase-2:new
             if buffered:
                 self.write_record(record, reply, chunks, started)
 
-    def start_record(self, environ, exchange_id):  # wf:phase-2:new
+    def start_record(self, environ, exchange_id):
         record = {"exchange_id": exchange_id,
                   "ts": datetime.now().isoformat(),
                   "thread": threading.get_ident(),
@@ -120,7 +120,7 @@ class HttpRecorder:  # wf:phase-2:new
             record["recorder_error"] = f"{type(exc).__name__}: {exc}"
         return record
 
-    def read_body(self, environ):  # wf:phase-2:new
+    def read_body(self, environ):
         length = int(environ.get("CONTENT_LENGTH") or 0)
         if not length:
             return b""
@@ -128,7 +128,7 @@ class HttpRecorder:  # wf:phase-2:new
         environ["wsgi.input"] = io.BytesIO(body)
         return body
 
-    def get_request_headers(self, environ):  # wf:phase-2:new
+    def get_request_headers(self, environ):
         headers = {}
         for key, value in environ.items():
             if key.startswith("HTTP_"):
@@ -138,7 +138,7 @@ class HttpRecorder:  # wf:phase-2:new
                 headers[key.replace("_", "-").title()] = environ[key]
         return headers
 
-    def get_rpc_payload(self, environ, body):  # wf:phase-2:new
+    def get_rpc_payload(self, environ, body):
         content_type = (environ.get("CONTENT_TYPE") or "").lower()
         if not body or "x-www-form-urlencoded" not in content_type:
             return {"rpc_method": None, "form": None}
@@ -147,7 +147,7 @@ class HttpRecorder:  # wf:phase-2:new
         return {"rpc_method": (parsed.get("method") or parsed.get("_M") or [None])[0],
                 "form": {k: (v[0] if len(v) == 1 else v) for k, v in parsed.items()}}
 
-    def write_record(self, record, reply, chunks, started):  # wf:phase-2:new
+    def write_record(self, record, reply, chunks, started):
         try:
             body = b"".join(chunks)
             headers = reply.get("headers") or []
@@ -166,7 +166,7 @@ class HttpRecorder:  # wf:phase-2:new
         except Exception as exc:
             self.append_error(record.get("exchange_id"), exc)
 
-    def is_static(self, path, headers):  # wf:phase-2:new
+    def is_static(self, path, headers):
         if (path or "").endswith("favicon.ico"):
             return True
         content_type = ""
@@ -175,19 +175,19 @@ class HttpRecorder:  # wf:phase-2:new
                 content_type = value.lower()
         return any(token in content_type for token in STATIC_CONTENT_TYPES)
 
-    def is_empty_ping(self, path, body):  # wf:phase-2:new
+    def is_empty_ping(self, path, body):
         if "_ping" not in (path or "").split("/"):
             return False
         answer = XML_DECLARATION.sub("", body.decode("utf-8", "replace").strip())
         return bool(EMPTY_PING_ANSWER.match(answer.strip()))
 
-    def append_record(self, record):  # wf:phase-2:new
+    def append_record(self, record):
         line = json.dumps(record, ensure_ascii=False)
         with self.lock:
             self.trace.write(line + "\n")
             self.trace.flush()
 
-    def append_error(self, exchange_id, exc):  # wf:phase-2:new
+    def append_error(self, exchange_id, exc):
         try:
             self.append_record({"exchange_id": exchange_id,
                                 "ts": datetime.now().isoformat(),
