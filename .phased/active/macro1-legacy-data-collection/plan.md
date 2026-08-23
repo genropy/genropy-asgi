@@ -4,7 +4,7 @@ Mode: interactive
 Must not break: both recorders install on the bridge too, where there is no gunicorn hook — installation is a call, not a hook (Macro 2)
 Must not break: every HTTP record carries the RPC method and the payload — Macro 2 pairs exchanges by RPC method plus payload shape
 Must not break: every HTTP record carries its duration and the `X-Gnr*` breakdown, or Macro 3 has to re-instrument from scratch
-Must not break: the written macro is re-runnable identically on the bridge, or the two traces are not comparable (Macro 2)
+Must not break: the reference session is reproducible ON DEMAND from the recipe in `benchmarks/compare/README.md` — the traces are never committed (whole bodies, login, cookies, public repository), so macro-phase 2 depends on producing one, never on reading a stored one
 
 ## Objective
 From the classic GenroPy stack, make it possible to take a single HTTP request
@@ -156,7 +156,7 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     `handle_ping` returns when there is nothing to deliver
     (`gnr/web/daemon/siteregister.py:928`); an empty Bag, the first guess, never
     occurs on the wire. A ping carrying a datachange IS recorded — that Bag is
-    the register answering, and it is material the macro-phase 2 diff needs. A failure inside the
+    the register answering, and it is what the replica compares in macro-phase 2. A failure inside the
     recorder is recorded and never propagates to the response. Traces are
     written under `temp/`.
   - Done: a hand-driven session produces `http_trace.jsonl` where every exchange
@@ -166,20 +166,30 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     identity travels (flat fields on `login_checkAvatar`, the XML Bag in the
     `login` field on `login_doLogin`)
 
-- [>] **Phase 3**: the register interceptor and the first macro
+- [>] **Phase 3**: the register interceptor and the reference session
   > In execution since 2026-08-23T09:05:32Z
   - Run: opus / high
   - Pattern: `benchmarks/sr_counter.py` (valid as design only — its code is
     expired: it patches a module that no longer exists)
   - Files: `benchmarks/compare/register_recorder.py`,
     `benchmarks/compare/gunicorn_recorders.conf.py`,
-    `benchmarks/compare/macros/`, `benchmarks/compare/README.md`
+    `benchmarks/compare/serve_legacy.py`, `benchmarks/compare/README.md`
   - Decisions: the patch point is the name `SiteRegisterClient` in the
     `gnr.web.gnrwsgisite` namespace (imported at line 45, instantiated by the
     `register` property at line 178) — genropy itself is never modified. The
-    wrapper goes through the class's single funnel, `__getattr__`
-    (`gnr/web/daemon/siteregister_client.py:326`). Browser sequences are called
-    *macros*; the roadmap's stages are *macro-phases* (owner, 2026-08-23).
+    recorder is a wrapper OBJECT standing in place of the client: it builds the
+    real client, holds it, and catches every attribute through its own
+    `__getattr__` — explicit methods included. NOT the legacy class's
+    `__getattr__`: that funnel is bypassed by about 26 methods declared on
+    `SiteRegisterClient` (`new_page`, `new_connection`, `pages`, `connections`,
+    `users`, `counters`, `refresh`, `get_item`, `page`, `make_store`, the four
+    `*Store` builders, `dump`, `load` and more), and the bridge's own
+    `GenropyRegisterClient` has no `__getattr__` at all — a recorder built on the
+    funnel would record nothing there, breaking the first `Must not break:` line.
+    The wrapper needs no list of which names are explicit. The stores it hands
+    back are wrapped too (see Details). There are no *macros*: the concept is a
+    **replica** of a session the owner performs (owner, 2026-08-23, retiring the
+    word); the roadmap's stages are *macro-phases*.
   - Details: the wrapper builds the real client and records every call: verb,
     arguments, answer, number of attempts, error class, ordinal within the
     exchange, `exchange_id` read with
@@ -189,13 +199,43 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     funnel retries up to `MAX_RETRY_ATTEMPTS` and then returns `None` without
     re-raising, so attempts and error class must be recorded or a failing
     register becomes invisible. Bags serialise as truncated `repr`, never pickle.
-    Also born here: `benchmarks/compare/macros/` holding ONE minimal macro
-    written down — login, one navigation, one save — with its run conditions
-    declared. More macros will follow in Macro 2; the folder exists so they have
-    a home.
-  - Done: with the minimal macro executed, every line of `register_trace.jsonl`
-    carries an `exchange_id` that exists in `http_trace.jsonl`, and one chosen
-    RPC exchange shows in order the register calls it made
+    The install point is a versioned launcher, `benchmarks/compare/serve_legacy.py`:
+    it calls the install and then `gnrserveprod.main()`. A gunicorn hook cannot
+    serve here — `main()` builds the site before it reads the `-c` file, and
+    `GnrWsgiSite.__init__` forces the register into existence, so the client
+    already exists in the master process before any hook runs and before the fork
+    (measured: master and worker share one inherited socket to the sitedaemon).
+    The launcher keeps installation a plain call, which is what the first
+    `Must not break:` line requires. Because the wrapper is born in the master,
+    two things follow — the trace writer opens per write or lazily per pid, never
+    a handle inherited across the fork, and the register calls the master makes
+    before any exchange exists are recorded with the exchange explicitly absent,
+    not filtered and never carrying a stale id.
+    The stores the client hands back are wrapped as well: `ServerStore.__init__`
+    keeps the client it was built from, so an unwrapped store takes its whole
+    conversation — `set_datachange`, `subscribe_path`, `reset_datachanges`,
+    `drop_datachanges`, the lock taken in `__enter__`/`__exit__` — outside the
+    recorder. A store line carries, besides everything a client line carries, the
+    `register_name` and `register_item_id` of the store it happened on. Both
+    stacks have a `ServerStore` with its own `__getattr__`, so the surface stays
+    comparable in macro-phase 2.
+    No sequence is written down. The concept is a REPLICA of a session the owner
+    performs in the browser (owner, 2026-08-23), and in that shape the recorded
+    trace is itself the script the replica reads — a hand-written sequence beside
+    it would be a second source of truth for the same session, free to drift.
+    What this phase produces is the reference and the recipe to remake it: the two
+    traces of one session the owner performs, and a README section stating in
+    plain words what that session did and under which declared conditions. The
+    traces are NOT committed, so macro-phase 2 never depends on an archived
+    reference, only on the ability to produce one on demand. The replica itself
+    and the structural comparison belong to macro-phase 2: this phase collects on
+    the legacy stack only.
+  - Done: with the reference session performed, every line of
+    `register_trace.jsonl` carries an `exchange_id` that exists in
+    `http_trace.jsonl` — or the exchange explicitly absent, for the calls the
+    master makes at startup — and one chosen RPC exchange shows in order the
+    register calls it made, calls on the client and calls on a store alike, the
+    latter naming their register and item
   - Verify: now — take one RPC call and read what it did to the register: it
     makes sense
 
@@ -205,10 +245,11 @@ timings are not read, so the instrumentation may be as heavy as it needs.
   and stays untouched (owner's rule: changes only through an approved PR).
 - The bridge is touched only from the mother session: if the bench reveals a
   bridge defect, report it, do not fix it here.
-- Debug on or off is a *declared condition* of the run, not a dilemma: macro-phases
-  1 and 2 do not read timings. The SQL counters only increment when the site runs
-  in debug, so a debug run populates the `X-Gnr*` SQL fields and a non-debug one
-  does not — whichever is used, the README says which.
+- Debug is OFF in the standard declared run (owner, 2026-08-23): `--debug` wraps
+  the site in werkzeug's debugging middleware, which the bridge has no equivalent
+  of, so error responses would diverge because of the instrument rather than the
+  stacks. Cost: `X-GnrSqlTime` and `X-GnrSqlCount` arrive as `0`. A debug run is
+  the declared variant for when those two must carry real numbers.
 - The 16 threads in one process interleave the calls: every line carries thread id
   and `exchange_id`, or the trace is unreadable. That is why the two recorders are
   designed together even though they land in two phases.

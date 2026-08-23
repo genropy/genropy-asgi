@@ -121,12 +121,18 @@
   contaminating everything downstream — dissolves precisely because nobody walks
   past the first one. Identifiers still have to be adapted per stack (each has
   its own session, page_id, connection_id), which the owner accepts as iterative
-  work. The doubled database only becomes a problem when a macro writes, so the
-  loop starts read-only and a db copy is a later run condition. Both recorders
+  work. [SUPERSEDED 2026-08-23, see ## Phase 3: the bridge side runs on a
+  database copied on the fly, so writes are allowed from the start.] The doubled
+  database only becomes a problem when a macro writes, so the loop starts
+  read-only and a db copy is a later run condition. Both recorders
   survive this change and matter MORE: at each stop, the register trace is what
   says whether the bridge reached the same answer through the same calls, which
   the HTTP layer cannot see. Open: whether this becomes Phase 4 of this workflow
   (the bridge already exists, no waiting) or a rewritten Macro 2 on the roadmap.
+  [RESOLVED 2026-08-23 — a rewritten macro-phase 2 on the roadmap, not a Phase 4
+  here: the convergence loop MODIFIES the bridge, which this workflow's rules
+  forbid, and it has no end a phase's `Done:` could state. Written into
+  `.phased/roadmap.md` 2.0, commit 6bed20e.]
 
 ## Phase 3
 

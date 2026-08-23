@@ -1,8 +1,10 @@
 # The legacy/bridge comparison bench
 
 Everything needed to bring up the classic (synchronous) GenroPy stack and record
-from it, and later to record the same things from the genropy-asgi bridge and
-diff the two traces.
+from it. Later the same two recorders go on the genropy-asgi bridge, where a
+**replica** reproduces a session the owner performed and the run stops at the
+first divergence — not an offline diff of two finished traces (owner, 2026-08-23;
+macro-phase 2 in the roadmap).
 
 The programme is in `.phased/roadmap.md`: three macro-phases, the first two
 about **fidelity**, the third about performance. Fidelity work does not read
@@ -178,8 +180,8 @@ captured user.
 **Cookies are not scoped by port.** Both stacks live on `127.0.0.1`, so a
 browser used against one sends its cookies to the other as well — a legacy trace
 recorded in that browser carries the bridge's cookies among the request headers,
-and the other way round. In the macro-phase 2 diff those are leftovers of the
-browser, not divergences between the two implementations. Observed on
+and the other way round. When the replica compares the two stacks those are
+leftovers of the browser, not divergences between the two implementations. Observed on
 2026-08-23: a `sticky_cid` from the bridge arrived on a legacy request.
 
 ## The two recorders
@@ -193,7 +195,10 @@ browser, not divergences between the two implementations. Observed on
 
 Both are **installed by a plain call**, never by logic living inside a gunicorn
 hook: the bridge has no gunicorn, and the same two recorders have to install
-there in macro-phase 2.
+there in macro-phase 2. On the legacy stack the register recorder cannot use a
+hook at all — the site builds its register client in the master process before
+the configuration file is read — so it installs from the launcher
+`serve_legacy.py`.
 
 The 16 threads in one process interleave the calls, so every line of both traces
 carries a thread id as well as the `exchange_id`. That is why the two recorders
@@ -283,7 +288,7 @@ soon as `dataChanges` appears the exchange is recorded.
 
 **Recorded, whole, with no truncation anywhere**: everything else. RPC calls,
 pages, XML, JSON — and the pings that *do* carry a datachange, because that Bag
-is the register answering, which is prime material for the macro-phase 2 diff.
+is the register answering, and it is what the replica compares in macro-phase 2.
 
 One JSONL line per exchange, with these fields:
 
