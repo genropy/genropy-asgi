@@ -214,6 +214,12 @@ The recorders open the trace in append mode and never truncate it — truncating
 at install would mean the second worker erasing the first one's lines. A trace
 left over from a previous run silently mixes two sessions.
 
+**Delete before starting, never while the server runs.** The recorder holds the
+file open: removing it mid-run unlinks the inode the recorder still writes to,
+so the session goes on being recorded into a file nobody can see and the visible
+trace stays empty. If it happens, restart gunicorn — there is nothing to
+recover.
+
 ### What lands in the trace, and what does not
 
 **Not recorded at all** — the line does not exist:
