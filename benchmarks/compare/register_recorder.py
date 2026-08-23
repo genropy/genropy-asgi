@@ -203,11 +203,13 @@ class RegisterRecorder:
         try:
             answer = target(*args, **kwargs)
         except Exception as exc:
+            elapsed = time.time() - started
             self.write_record(verb, surface, fields, args, kwargs, None,
-                              started, exc, self.take_wire_count(previous))
+                              elapsed, exc, self.take_wire_count(previous))
             raise
+        elapsed = time.time() - started
         self.write_record(verb, surface, fields, args, kwargs, answer,
-                          started, None, self.take_wire_count(previous))
+                          elapsed, None, self.take_wire_count(previous))
         return self.get_recorded_answer(answer)
 
     def take_wire_count(self, previous):
@@ -258,7 +260,7 @@ class RegisterRecorder:
         return f"{text[:VALUE_LENGTH_LIMIT]}...<{len(text)} chars>"
 
     def write_record(self, verb, surface, fields, args, kwargs, answer,
-                     started, exc, state):
+                     elapsed, exc, state):
         try:
             record = {"ts": datetime.now().isoformat(),
                       "pid": os.getpid(),
@@ -272,7 +274,7 @@ class RegisterRecorder:
                       "wire_calls": state["wire_calls"],
                       "wire_error": state["wire_error"],
                       "error": f"{type(exc).__name__}: {exc}" if exc else None,
-                      "duration_ms": round((time.time() - started) * 1000, 3)}
+                      "duration_ms": round(elapsed * 1000, 3)}
             exchange_id = self.current_exchange_id
             if exchange_id is not None:
                 record["exchange_id"] = exchange_id

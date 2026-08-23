@@ -13,6 +13,7 @@ Run: temp/legacy_venv/bin/python benchmarks/compare/register_recorder_check.py
 import json
 import os
 import sys
+import time
 
 import register_recorder
 from gnr.core.gnrbag import Bag
@@ -260,6 +261,23 @@ check("a Bag argument is recorded as its XML",
 check("no memory address reaches the trace", " at 0x" not in written)
 check("the store handed back is still named in the answer",
       "ServerStore" in recorded[0]["result"])
+
+# 12. the duration is the call alone, not the call plus our serialisation
+rec, site, wire = fresh()
+site.enter_exchange("ex12")
+plain = rec.get_comparable_value
+
+
+def slow_value(value):
+    time.sleep(0.05)
+    return plain(value)
+
+
+rec.get_comparable_value = slow_value
+rec.get_item("p1")
+rec.get_comparable_value = plain
+check("duration_ms excludes the recorder's own serialisation",
+      lines()[0]["duration_ms"] < 50)
 
 os.remove(TRACE)
 print()

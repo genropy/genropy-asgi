@@ -344,3 +344,12 @@
   `repr`) and `STORE_READS` → `STORE_READ_PROPERTIES`. No record field changed,
   which is what let the reference session stand instead of being performed a
   third time — verified field by field, not assumed.
+- **`duration_ms` was charging the call for our own serialisation**, found in the
+  light review after the phase closed. The elapsed time was computed inside
+  `write_record`, i.e. after `get_comparable_value` had run over the arguments,
+  the keyword arguments and the answer — and for a Bag that means a `toXml()`.
+  The number is now taken the instant the call returns, before anything is
+  serialised, and a check pins it: with the serialisation artificially slowed to
+  50ms, the recorded duration stays under it. It mattered because macro-phase 3
+  reads these numbers and the inflation was invisible — a plausible value, just
+  wrong, and worst exactly on the calls that carry the biggest Bags.
