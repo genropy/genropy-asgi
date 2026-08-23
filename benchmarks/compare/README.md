@@ -468,27 +468,29 @@ record opened, one field changed and saved:
 
 | | |
 |---|---|
-| HTTP exchanges | 256 — 22 full records, 234 stubs |
-| Stub reasons | 223 `static`, 11 `empty_ping` |
-| Register calls | 2046, on 12 threads |
+| HTTP exchanges | 260 — 23 full records, 237 stubs |
+| Stub reasons | 224 `static`, 13 `empty_ping` |
+| Register calls | 1918, on 13 threads — 903 `client`, 948 `store`, 67 `passthrough` |
 | Unjoinable register lines | 0 |
 | Calls with the exchange absent | 2, both the master's boot |
 | `recorder_error` | 0 |
-| Register calls per RPC exchange | 25 minimum, 33 median, 92 maximum |
+| Register calls per RPC exchange | 6 minimum, 32 median, 92 maximum |
+| RPC methods in the run | `login_checkAvatar`, `login_doLogin`, `main`, `getRemoteTranslation`, `app.dbSelect`, `app.getSelection`, `app.checkFreezedSelection`, `loadRecordCluster`, `saveRecordCluster` |
 
 **The filtered exchanges are not free, which is why they get a stub.** Their
 register traffic, measured on this run:
 
 | Filtered exchange | Count | Register calls each | Verbs |
 |---|---|---|---|
-| `static` | 223 | 2 | `globalStore`, `getItem` on the global register |
-| `empty_ping` | 11 | 5 | `globalStore` and `getItem` twice, then `handle_ping` |
+| `static` | 224 | 2 | `globalStore`, `getItem` on the global register |
+| `empty_ping` | 13 | 5 | `globalStore` and `getItem` twice, then `handle_ping` |
 
-501 register calls on exchanges the HTTP trace would otherwise not have
-mentioned. And the split is only knowable *because* of the stub: before it,
-both shapes were exchanges with no HTTP line, and a two-line one could not be
-told from a ping — the earlier run of the same session showed 223 and 17 of them
-with no way to say which was which.
+513 register calls on exchanges the HTTP trace would otherwise not have
+mentioned. And the split is only knowable *because* of the stub: before it, both
+shapes were exchanges with no HTTP line, and a two-line one could not be told
+from a ping — an earlier run of the same session showed 223 two-line and 17
+five-line exchanges with no way to say which was which, and the guess made at the
+time (all of it ping traffic) was wrong: the two-line ones are statics.
 
 ### Exercising the recorder without a browser
 

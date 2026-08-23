@@ -76,7 +76,7 @@ TRACE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "temp", "register_trace.jsonl")
 
-VALUE_REPR_LIMIT = 2000
+VALUE_LENGTH_LIMIT = 2000
 
 # `<Bag object at 0x10fcb0ce0>` says nothing about the answer and changes at
 # every run: the address alone would read as a divergence. Bags go in as their
@@ -85,7 +85,7 @@ OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-f]+")
 
 # The store's register reads are properties, so they cannot be intercepted as
 # calls: reading the attribute IS the call. They are recorded by name.
-STORE_READS = ("data", "register_item", "datachanges", "subscribed_paths")
+STORE_READ_PROPERTIES = ("data", "register_item", "datachanges", "subscribed_paths")
 
 
 class TraceWriter:
@@ -95,7 +95,7 @@ class TraceWriter:
         self.path = path
         self.lock = threading.Lock()
 
-    def append(self, record):
+    def append_record(self, record):
         line = json.dumps(record, ensure_ascii=False, default=repr)
         with self.lock:
             with open(self.path, "a", encoding="utf-8") as trace:
@@ -119,9 +119,9 @@ class WireCounter:
         attribute = getattr(self.proxy, name)
         if not callable(attribute):
             return attribute
-        return self.counting(attribute)
+        return self.get_counted_call(attribute)
 
-    def counting(self, attribute):
+    def get_counted_call(self, attribute):
         def counted(*args, **kwargs):
             self.recorder.record_wire_call()
             try:
@@ -146,30 +146,30 @@ class StoreRecorder:
         self.recorder = recorder
 
     @property
-    def store_fields(self):
+    def store_identity(self):
         return {"register_name": self.store.register_name,
                 "register_item_id": self.store.register_item_id}
 
     def __enter__(self):
-        self.recorder.run_recorded(self.store.__enter__, "__enter__",
-                                   "store", self.store_fields, (), {})
+        self.recorder.perform_recorded_call(self.store.__enter__, "__enter__",
+                                   "store", self.store_identity, (), {})
         return self
 
     def __exit__(self, exc_type, exc_value, tb):
-        return self.recorder.run_recorded(self.store.__exit__, "__exit__",
-                                          "store", self.store_fields,
+        return self.recorder.perform_recorded_call(self.store.__exit__, "__exit__",
+                                          "store", self.store_identity,
                                           (exc_type, exc_value, tb), {})
 
     def __getattr__(self, name):
-        if name in STORE_READS:
+        if name in STORE_READ_PROPERTIES:
             read = functools.partial(getattr, self.store, name)
-            return self.recorder.run_recorded(read, name, "store",
-                                              self.store_fields, (), {})
+            return self.recorder.perform_recorded_call(read, name, "store",
+                                              self.store_identity, (), {})
         attribute = getattr(self.store, name)
         if not inspect.isroutine(attribute):
             return attribute
-        return self.recorder.recording(attribute, name, "store",
-                                       self.store_fields)
+        return self.recorder.get_recorded_call(attribute, name, "store",
+                                       self.store_identity)
 
 
 class RegisterRecorder:
@@ -178,7 +178,7 @@ class RegisterRecorder:
     def __init__(self, site, trace_path=TRACE_PATH):
         self.client = SiteRegisterClient(site)
         self.trace = TraceWriter(trace_path)
-        self.flight = threading.local()
+        self.wire_count = threading.local()
         self.ordinals = {}
         self.ordinals_lock = threading.Lock()
         self.client.siteregister = WireCounter(self.client.siteregister, self)
@@ -188,63 +188,63 @@ class RegisterRecorder:
         if not inspect.isroutine(attribute):
             return attribute
         surface = "client" if hasattr(type(self.client), name) else "passthrough"
-        return self.recording(attribute, name, surface, {})
+        return self.get_recorded_call(attribute, name, surface, {})
 
-    def recording(self, target, verb, surface, fields):
+    def get_recorded_call(self, target, verb, surface, fields):
         def recorded(*args, **kwargs):
-            return self.run_recorded(target, verb, surface, fields,
+            return self.perform_recorded_call(target, verb, surface, fields,
                                      args, kwargs)
         return recorded
 
-    def run_recorded(self, target, verb, surface, fields, args, kwargs):
-        previous = getattr(self.flight, "state", None)
-        self.flight.state = {"wire_calls": 0, "wire_error": None}
+    def perform_recorded_call(self, target, verb, surface, fields, args, kwargs):
+        previous = getattr(self.wire_count, "current", None)
+        self.wire_count.current = {"wire_calls": 0, "wire_error": None}
         started = time.time()
         try:
             answer = target(*args, **kwargs)
         except Exception as exc:
             self.write_record(verb, surface, fields, args, kwargs, None,
-                              started, exc, self.end_flight(previous))
+                              started, exc, self.take_wire_count(previous))
             raise
         self.write_record(verb, surface, fields, args, kwargs, answer,
-                          started, None, self.end_flight(previous))
-        return self.wrapped(answer)
+                          started, None, self.take_wire_count(previous))
+        return self.get_recorded_answer(answer)
 
-    def end_flight(self, previous):
+    def take_wire_count(self, previous):
         """The wire counters of the call just ended; the thread goes back."""
-        state = self.flight.state
-        self.flight.state = previous
+        state = self.wire_count.current
+        self.wire_count.current = previous
         return state
 
-    def wrapped(self, answer):
+    def get_recorded_answer(self, answer):
         if isinstance(answer, ServerStore):
             return StoreRecorder(answer, self)
         return answer
 
     def record_wire_call(self):
-        state = getattr(self.flight, "state", None)
+        state = getattr(self.wire_count, "current", None)
         if state is not None:
             state["wire_calls"] += 1
 
     def record_wire_error(self, exc):
-        state = getattr(self.flight, "state", None)
+        state = getattr(self.wire_count, "current", None)
         if state is not None:
             state["wire_error"] = f"{type(exc).__name__}: {exc}"
 
     @property
-    def current_exchange(self):
+    def current_exchange_id(self):
         request = self.client.site.currentRequest
         if request is None:
             return None
         return request.headers.get(EXCHANGE_HEADER)
 
-    def next_ordinal(self, exchange_id):
+    def assign_ordinal(self, exchange_id):
         with self.ordinals_lock:
             ordinal = self.ordinals.get(exchange_id, 0) + 1
             self.ordinals[exchange_id] = ordinal
             return ordinal
 
-    def readable(self, value):
+    def get_comparable_value(self, value):
         if value is None or isinstance(value, (bool, int, float)):
             return value
         if isinstance(value, Bag):
@@ -253,9 +253,9 @@ class RegisterRecorder:
             text = value
         else:
             text = OBJECT_ADDRESS.sub("", repr(value))
-        if len(text) <= VALUE_REPR_LIMIT:
+        if len(text) <= VALUE_LENGTH_LIMIT:
             return text
-        return f"{text[:VALUE_REPR_LIMIT]}...<{len(text)} chars>"
+        return f"{text[:VALUE_LENGTH_LIMIT]}...<{len(text)} chars>"
 
     def write_record(self, verb, surface, fields, args, kwargs, answer,
                      started, exc, state):
@@ -265,26 +265,26 @@ class RegisterRecorder:
                       "thread": threading.get_ident(),
                       "surface": surface,
                       "verb": verb,
-                      "args": [self.readable(arg) for arg in args],
-                      "kwargs": {key: self.readable(value)
+                      "args": [self.get_comparable_value(arg) for arg in args],
+                      "kwargs": {key: self.get_comparable_value(value)
                                  for key, value in kwargs.items()},
-                      "result": self.readable(answer),
+                      "result": self.get_comparable_value(answer),
                       "wire_calls": state["wire_calls"],
                       "wire_error": state["wire_error"],
                       "error": f"{type(exc).__name__}: {exc}" if exc else None,
                       "duration_ms": round((time.time() - started) * 1000, 3)}
-            exchange_id = self.current_exchange
+            exchange_id = self.current_exchange_id
             if exchange_id is not None:
                 record["exchange_id"] = exchange_id
-            record["ordinal"] = self.next_ordinal(exchange_id)
+            record["ordinal"] = self.assign_ordinal(exchange_id)
             record.update(fields)
-            self.trace.append(record)
+            self.trace.append_record(record)
         except Exception as failure:
             self.append_error(verb, failure)
 
     def append_error(self, verb, exc):
         try:
-            self.trace.append({"ts": datetime.now().isoformat(),
+            self.trace.append_record({"ts": datetime.now().isoformat(),
                                "pid": os.getpid(),
                                "thread": threading.get_ident(),
                                "verb": verb,

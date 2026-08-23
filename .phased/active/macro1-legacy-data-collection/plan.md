@@ -166,15 +166,54 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     identity travels (flat fields on `login_checkAvatar`, the XML Bag in the
     `login` field on `login_doLogin`)
 
-- [>] **Phase 3**: the register interceptor and the reference session
-  > In execution since 2026-08-23T09:05:32Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: 058d499, stub at HEAD
-  > Verify: now — perform the reference session in the browser on the stack
-    started by the launcher, with the register empty and the traces cleared:
-    log in with an account from `benchmarks/usernames.txt` (password `a`), open
-    one table page and let the grid load, open one record, change one field and
-    save it. Then take one RPC exchange and read what it did to the register:
-    it makes sense.
+- [x] **Phase 3**: the register interceptor and the reference session
+  > Done: `RegisterRecorder`, a wrapper OBJECT standing in place of
+    `SiteRegisterClient`, installed by one assignment from the versioned launcher
+    `serve_legacy.py` — no gunicorn hook is early enough, because
+    `gnrserveprod.main()` builds the site, and with it the register client, in the
+    master process before it reads the `-c` file. It records one JSONL line per
+    call the SITE made into `temp/register_trace.jsonl`: the verb, the surface it
+    was intercepted on (`client` for a method declared on the legacy class,
+    `passthrough` for a name its `__getattr__` forwards, `store` for a call on a
+    `ServerStore` it hands back and wraps), arguments and answer written to be
+    comparable between runs (Bags as XML, memory addresses stripped), the round
+    trips the call cost on the wire, the error class the legacy retry loop
+    swallows, the ordinal within its exchange, duration, thread and pid; store
+    lines name their register and item. The exchange is read from the
+    `X-Bench-Exchange-Id` header Phase 2 injects, and is ABSENT from the record
+    for the calls the master makes at boot. The HTTP recorder gained the
+    counterpart the join needed: a filtered exchange now leaves an id-only stub
+    line — what it was and why it was filtered, never a body — so no register
+    line names an exchange the HTTP trace does not contain (owner, amending his
+    own filter). The reference session was performed in the browser by the owner
+    and is documented in `benchmarks/compare/README.md` as a recipe with its
+    recorded evidence; the traces themselves are never committed.
+  > Files: benchmarks/compare/register_recorder.py,
+    benchmarks/compare/serve_legacy.py,
+    benchmarks/compare/register_recorder_check.py,
+    benchmarks/compare/http_recorder.py,
+    benchmarks/compare/http_recorder_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro1-legacy-data-collection/plan.md,
+    .phased/active/macro1-legacy-data-collection/notes.md
+  > Verified: `register_recorder_check.py` 33 assertions green on the bench venv
+    (the two client surfaces, the store and its lock, genropy's REAL retry loop
+    swallowing four round trips, the absent exchange, the comparable values, and
+    a recorder fault never reaching the site); `http_recorder_check.py` 22
+    assertions green (was 19 — the stub names itself, carries no body, and its
+    reason is right for each filtered shape); `ruff check benchmarks/compare/`
+    clean. On the live stack, the owner's reference session: 260 HTTP exchanges
+    (23 full records, 237 stubs — 224 `static`, 13 `empty_ping`), 1918 register
+    calls on 13 threads, ZERO unjoinable lines, 2 calls with the exchange
+    explicitly absent (the master's boot), zero `recorder_error`, no memory
+    addresses. The record shape was re-checked field by field after the naming
+    review and is identical, so that reference is what the current code produces.
+  > Verify: now — take one RPC call and read what it did to the register.
+    PERFORMED by the owner, 2026-08-23, confirmed on `saveRecordCluster`: the
+    identity reads, `get_dbenv`, then `subscribed_tables` →
+    `filter_subscribed_tables` → `notifyDbEvents` on `invc.customer`, then the
+    page lock around the write — 18 calls on the client, 14 on stores, ordinals
+    1 to 32 unbroken.
   - Run: opus / high
   - Pattern: `benchmarks/sr_counter.py` (valid as design only — its code is
     expired: it patches a module that no longer exists)

@@ -322,3 +322,25 @@
   explanation, and in a bench a misread number becomes a divergence that is not
   there. A retry now shows as more round trips than the call's shape costs,
   together with a `wire_error`.
+- **Naming review: the owner delegated the names for this instrument** ("per
+  questo strumento scegli pure tu i nomi, mi raccomando significativi e seguendo
+  le mie regole"), so they were rewritten against rules 9 and 11 rather than
+  accepted as first written. What changed and why: `run_recorded` →
+  `perform_recorded_call` (it performs and records, and a transitive verb carries
+  its object); `recording` → `get_recorded_call` and `counting` →
+  `get_counted_call` (pure reads that answer with a callable, so the explicit
+  `get_` prefix); `end_flight` → `take_wire_count` ("flight" was a metaphor the
+  reader had to learn, and the method both takes the count and restores the
+  previous one); `wrapped` → `get_recorded_answer` (the old name said neither
+  what it wrapped nor that it hands the answer back untouched when there is
+  nothing to wrap); `store_fields` → `store_identity` (the fields ARE which
+  register and which item); `next_ordinal` → `assign_ordinal` (it mutates a
+  counter, so the verb leads); `readable` → `get_comparable_value` (the purpose
+  is comparability between runs, which is what the Bag-as-XML decision is for);
+  `current_exchange` → `current_exchange_id` (it returns the id, not the
+  exchange); `TraceWriter.append` → `append_record`; `filtered_reason` →
+  `get_filter_reason` and `stub_record` → `get_stub_record`; the constants
+  `VALUE_REPR_LIMIT` → `VALUE_LENGTH_LIMIT` (values are no longer always a
+  `repr`) and `STORE_READS` → `STORE_READ_PROPERTIES`. No record field changed,
+  which is what let the reference session stand instead of being performed a
+  third time — verified field by field, not assumed.

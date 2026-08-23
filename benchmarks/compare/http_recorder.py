@@ -158,9 +158,9 @@ class HttpRecorder:
             headers = reply.get("headers") or []
             path = record.get("path")
             status = reply.get("status") or ""
-            filtered = self.filtered_reason(path, headers, body)
+            filtered = self.get_filter_reason(path, headers, body)
             if filtered:
-                self.append_record(self.stub_record(record, status, filtered))
+                self.append_record(self.get_stub_record(record, status, filtered))
                 return
             record.update(status=int(status.split(" ", 1)[0]) if status else None,
                           resp_headers=[[k, v] for k, v in headers],
@@ -173,7 +173,7 @@ class HttpRecorder:
         except Exception as exc:
             self.append_error(record.get("exchange_id"), exc)
 
-    def filtered_reason(self, path, headers, body):
+    def get_filter_reason(self, path, headers, body):
         """Why this exchange carries no content, or None when it carries some."""
         if self.is_static(path, headers):
             return "static"
@@ -181,7 +181,7 @@ class HttpRecorder:
             return "empty_ping"
         return None
 
-    def stub_record(self, record, status, reason):
+    def get_stub_record(self, record, status, reason):
         """The id-only line of a filtered exchange: what it was, never a body.
 
         The register recorder stamps every call with the exchange that caused

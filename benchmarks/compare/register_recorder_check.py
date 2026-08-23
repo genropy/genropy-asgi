@@ -226,7 +226,7 @@ check("reading attributes writes no line", lines() == [])
 # 9. a failure inside the recorder never reaches the site
 rec, site, wire = fresh()
 site.enter_exchange("ex9")
-rec.readable = lambda value: (_ for _ in ()).throw(RuntimeError("boom"))
+rec.get_comparable_value = lambda value: (_ for _ in ()).throw(RuntimeError("boom"))
 check("the site gets its answer even when the recorder fails",
       rec.get_item("p1") == ITEM_ANSWER)
 recorded = lines()
