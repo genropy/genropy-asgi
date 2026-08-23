@@ -48,10 +48,13 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     in this phase — it arrives in Phase 2, when there is something to install.
   - Details:
     1. Clean venv: `uv venv temp/legacy_venv --python 3.12`, then
-       `uv pip install --python temp/legacy_venv/bin/python ~/Sviluppo/Genropy/genropy/gnrpy`.
+       `uv pip install --python temp/legacy_venv/bin/python "$HOME/Sviluppo/Genropy/genropy/gnrpy[pgsql]"`.
+       The `pgsql` extra is REQUIRED, not optional hygiene: the Postgres driver is
+       an optional dependency of genropy, so a plain install cannot reach the
+       database and this phase's `Done:` — a successful login — is unreachable.
        NOT editable: an editable install points at the genropy working tree and
-       forbids isolated trials. genropy-asgi must NOT enter this venv. Check
-       gunicorn is present (`gnr web serveprod` needs it) and install it if not.
+       forbids isolated trials. genropy-asgi must NOT enter this venv. `gunicorn`
+       is a base dependency and needs no check.
     2. Twin instance: copy `test_invoice_pg/` to `test_invoice_pg_legacy/` under
        the same `test_invoice` project. The db line stays identical
        (`dbname="test_invoice_pg"`, postgres localhost:5432): same database,
@@ -62,8 +65,11 @@ timings are not read, so the instrumentation may be as heavy as it needs.
        the foreground; without one it starts the multi-site daemon, which spawns
        its children with multiprocessing and dies on macOS. It writes
        `sitedaemon.xml` in the site folder — that is where the client reads its
-       address. hmac key and port 40004 already come from
-       `~/.gnr/environment.xml`; the twin instance needs no extra config.
+       address. It always binds 40004 and no site configuration can move it: the
+       CLI passes no port and the chain ends at `PYRO_PORT`, so two standalone
+       sitedaemons cannot run side by side. The 40404 the site config reports
+       under `gnrdaemon` is the multi-site daemon's address and is never used
+       here. The twin instance needs no extra config.
     4. Gunicorn: `PGGSSENCMODE=disable gnr web serveprod test_invoice_pg_legacy
        -b 127.0.0.1:8099 -w 1 -k gthread --threads 16`. One process, 16 threads.
        The variable is mandatory on macOS: libpq negotiating Kerberos in a forked
@@ -71,9 +77,15 @@ timings are not read, so the instrumentation may be as heavy as it needs.
     5. Hygiene before every start: no stale process on 8098, 8099, 40004. An old
        server left standing falsifies everything downstream.
     6. The recipe stays written in `benchmarks/compare/README.md`: the commands
-       above, the declared run conditions (stack, debug yes or no, one process
-       and 16 threads, which db) and the accounts
-       (`benchmarks/usernames.txt`, password `a`).
+       above, the declared run conditions (stack, debug off in the standard run,
+       one process and 16 threads, which db) and the accounts
+       (`benchmarks/usernames.txt`, password `a`). From Phase 3 the README carries
+       TWO launch commands: the plain `gnr web serveprod` above, which stays the
+       declared condition of a run with NO recorders, and the launcher
+       `benchmarks/compare/serve_legacy.py` for a recorded run — a gunicorn hook
+       cannot install the register recorder, because the site builds its register
+       client in the master before the config file is read. This step is extended,
+       not falsified.
   - Done: the site answers on `http://127.0.0.1:8099` and login with a user from
     `benchmarks/usernames.txt` succeeds
   - Verify: now — open the browser, log in, the application page appears
