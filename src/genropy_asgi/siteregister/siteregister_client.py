@@ -38,11 +38,14 @@ Who serves what (FIXED):
   collectors watch and a move would package); ``ServerStore`` locks the item and
   reads/writes it in-process. The legacy ``data`` seed of ``new_page`` becomes the
   page's store, so channel-A writes, the dbenv walk and the capture all see one Bag.
-- Global store — one stable legacy Bag (``global_bag``), write-by-reference: every LEAF
-  write ships up as ``store_set``/``store_del`` with a FULL-PATH key and a TYTX-encoded
-  SCALAR value. The descent is the worker's: ``GenropyWorker.handle_frame`` hands the
-  already-decoded values to ``_materialize_global`` and ``_materialize_global_snapshot``.
-  Coherence is EVENTUAL (one channel round-trip).
+- Global store — the ONLY copy lives on the commander (owner design, 2026-08-21).
+  Writes: one stable legacy Bag (``global_bag``), write-by-reference — every LEAF
+  write ships up as ``store_set``/``store_del`` with a FULL-PATH key and a
+  TYTX-encoded SCALAR value. Reads: a lock-less ``globalStore().getItem(path)``
+  PAYS one ``store_get`` CALL and answers the master at the moment it was asked —
+  no local copy that ages. A read-modify-write block holds the real lease, whose
+  grant materializes the master snapshot into ``global_bag`` for the block's
+  duration (``_materialize_global_snapshot``).
 
 NOT served (explicit, PROVISIONAL): dump/load (future Service Store),
 sendProcessCommand/pendingProcessCommands (inter-process bus, will move to the
@@ -64,7 +67,8 @@ import threading
 import time
 from typing import Any
 
-from genro_tytx import to_tytx
+from genro_bag import Bag as CoreBag
+from genro_tytx import from_tytx, to_tytx
 from gnr.core.gnrbag import Bag
 from gnr.core.gnrclasses import GnrClassCatalog
 from gnr.web import logger
@@ -199,6 +203,20 @@ class ServerStore:
         item = self.register_item
         return item.get("data") if item else None
 
+    def getItem(self, path: str, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface
+        """Read one path — on the bare global store, a paid ``store_get`` CALL.
+
+        A lock-less global read answers the commander's master at the moment it
+        was asked (owner design, 2026-08-21): no local copy that ages. Inside a
+        ``with`` block the lease already materialized the master locally, so the
+        block reads (and sees its own writes) on the local Bag; every other
+        register reads its in-process item as before.
+        """
+        if self.register_name == "global" and "_lease" not in self.__dict__:
+            return self.siteregister._global_read(path, default)
+        data = self.data
+        return data.getItem(path, default) if data is not None else default
+
     def __getattr__(self, fname: str) -> Any:
         # Delegate Bag methods (getItem/setItem/...) to the item's data Bag.
         def decore(*args: Any, **kwargs: Any) -> Any:
@@ -251,10 +269,9 @@ class GenropyRegisterClient:
         ``get_item(register_name='global')`` hands it back on every call so a ``setItem``
         on it persists (write-by-reference), exactly as the daemon-backed store did.
         The Bag is subscribed to the global-store RAIL: every local leaf write ships
-        up as a full-path scalar (``_on_global_change``), and commander pushes
-        materialize back into it — ``GenropyWorker.handle_frame`` feeds the already
-        decoded values to ``_materialize_global`` (one change) and
-        ``_materialize_global_snapshot`` (the whole store).
+        up as a full-path scalar (``_on_global_change``). It is a WRITE vehicle, not
+        a read cache: a lock-less read pays ``store_get`` (``_global_read``), and the
+        only descent is the lease grant (``_materialize_global_snapshot``).
         """
         bag = self.__dict__.get("_global_bag")
         if bag is None:
@@ -334,7 +351,7 @@ class GenropyRegisterClient:
         """A new page (browser tab) opens.
 
         Called by ``WebPage._register_new_page`` (gnrwebpage.py) on page registration.
-        The op is user-addressed (``new_page(user, page_id, session_id=cid, ...)``);
+        The op is user-addressed (``new_page(user, page_id, connection_id=cid, ...)``);
         a page with no user named belongs to its connection's user — the name the core
         minted at the ``new_connection`` door (``guest_<cid>`` for an anonymous
         browser), read off the live row, never re-minted here: composing a guest name
@@ -358,7 +375,7 @@ class GenropyRegisterClient:
         if data is not None:
             fields["store"] = data
         fields["start_ts"] = datetime.datetime.now()
-        worker.new_page(user, page_id=page_id, session_id=connection_id, **fields)
+        worker.new_page(user, page_id=page_id, connection_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
     def change_connection_user(self, connection_id: Any, **kwargs: Any) -> dict | None:
@@ -412,7 +429,7 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker.connection_items.get(connection_id) is None:
             return
-        worker.drop_connection(connection_id, session_id=connection_id)
+        worker.drop_connection(connection_id, connection_id=connection_id)
 
     def refresh(self, page_id: Any, ts: Any = None, lastRpc: Any = None, pageProfilers: Any = None) -> dict | None:
         """Bump the last-seen timestamps for a page, up through connection to user.
@@ -472,7 +489,7 @@ class GenropyRegisterClient:
 
         Returns ``{register_item_id: item}`` — the daemon-client contract (``adaptListToDict``):
         the legacy does ``page_id in register.pages(...)`` (Connection.validate_page_id), so
-        the keys must be the page ids. ``connection_id`` reads the ``session_id`` index;
+        the keys must be the page ids. ``connection_id`` reads its own index;
         ``user`` walks the ownership edges (user -> connections -> pages). Called for the
         ``setInClientData`` broadcast (with filters) and by monitoring.
 
@@ -487,7 +504,7 @@ class GenropyRegisterClient:
             return {}
         page_items = worker.page_items
         if connection_id:
-            items = self._live_rows(page_items, page_items.keys_by("session_id", connection_id))
+            items = self._live_rows(page_items, page_items.keys_by("connection_id", connection_id))
             if user:
                 items = [
                     p for p in items
@@ -747,8 +764,6 @@ class GenropyRegisterClient:
         channel down, worker not started — maps to ``GnrDaemonLocked``, the
         exception the legacy already catches around a store lock.
         """
-        from genro_bag import Bag as CoreBag
-
         worker = self.spa_worker
         if worker is None:
             raise GnrDaemonLocked("global store lease: no worker attached")
@@ -804,27 +819,36 @@ class GenropyRegisterClient:
             raise
         lease.__exit__(exc_type, None, None)
 
-    def _materialize_global(self, op: str | None, key: str | None, value: Any = None) -> None:
-        """Materialize one DECODED write into the Bag.
+    def _global_read(self, path: str, default: Any = None) -> Any:
+        """One lock-less read of the global store: a ``store_get`` CALL on the lane.
 
-        Runs under the thread-local ``applying`` flag so the Bag triggers do not
-        bounce the echo back on the rail. An aware datetime is normalized back
-        to naive local (the legacy compares naive clocks). A missing key on
-        delete is silent.
+        The owner design (2026-08-21): the only copy lives on the commander, so a
+        read pays its round trip and answers the master at the moment it was asked
+        — never a local copy that ages. Before the worker attaches, the local Bag
+        answers (the site touches the register during its own construction). A
+        subtree comes back as a core Bag and is translated leaf by leaf into a
+        legacy Bag; aware datetimes are normalized to naive local, the same
+        boundary convention as ``_materialize_global_snapshot``.
         """
-        if not key:
-            return
+        worker = self.spa_worker
+        if worker is None:
+            return self.global_bag.getItem(path, default)
+        value = worker.store_get(None, path)
+        if value is None:
+            return default
+        if isinstance(value, CoreBag):
+            bag = Bag()
+            for leaf_path, node in value.walk():
+                leaf = node.value
+                if isinstance(leaf, CoreBag):
+                    continue
+                if isinstance(leaf, datetime.datetime) and leaf.tzinfo is not None:
+                    leaf = leaf.astimezone().replace(tzinfo=None)
+                bag.setItem(leaf_path, leaf)
+            return bag
         if isinstance(value, datetime.datetime) and value.tzinfo is not None:
             value = value.astimezone().replace(tzinfo=None)
-        state = self._global_rail_state
-        state.applying = True
-        try:
-            if op == "store_del":
-                self.global_bag.delItem(key)
-            else:
-                self.global_bag.setItem(key, value)
-        finally:
-            state.applying = False
+        return value
 
     def _materialize_global_snapshot(self, leaves: dict) -> None:
         """Replace the whole Bag content from DECODED ``{full_path: value}`` leaves.
@@ -1103,20 +1127,41 @@ class GenropyRegisterClient:
         """The commit gate: which tables of ``table_list`` deserve db events.
 
         Called by ``site.getSubscribedTables`` on every db commit to decide whether to
-        build and send the db events. The SINGLE knows every subscription (all pages
-        are its own) and answers from the worker's own index; a pool child — a worker
-        on a real socket channel — only knows its own pages, so it passes the whole
-        list through and lets the fan-out target the real subscribers (unchanged
-        cemented rule; over-notifying on the child is innocuous).
+        build and send the db events. A worker on the wire passes the whole list
+        through and lets the fan-out target the real subscribers (unchanged cemented
+        rule; over-notifying is innocuous). A bare worker — no wire, every page its
+        own — answers from the worker's subscription cache (``subscribed_tables``,
+        refreshed by every exchange and subscribe reply).
         """
         worker = self.spa_worker
         if worker is None:
             return []
         if worker.pool_member:
             return list(table_list or [])
-        return [
-            table for table in (table_list or []) if worker.subscriptions.pages_for(table)
-        ]
+        return [table for table in (table_list or []) if table in worker.subscribed_tables]
+
+    def subscribed_tables(self, register_name: Any = None, **kwargs: Any) -> list:
+        """Every table observed by at least one live page — the write-time gate reads it.
+
+        The daemon grew this command with the write-time broadcast gate
+        (genropy #968: ``site.allSubscribedTables`` asks the register instead
+        of unioning per-page lists at commit time). On the wire the worker's
+        subscription cache IS the whole pool's view, refreshed synchronously
+        by every subscribe and exchange reply; a bare worker unions its own
+        page rows, which are all the pages there are.
+        """
+        worker = self.spa_worker
+        if worker is None:
+            return []
+        if worker.pool_member:
+            return sorted(worker.subscribed_tables)
+        with worker.dispatch_lock:
+            tables: set = set()
+            for page_id in worker.page_items.keys():
+                page = worker.page_items.get(page_id)
+                if page is not None:
+                    tables.update(page["table_subscriptions"])
+        return sorted(tables)
 
     # ==================================================================
     # Maintenance / cleanup (in-process, single node)
@@ -1399,13 +1444,20 @@ class GenropyRegisterClient:
 
         ``last_refresh_ts`` is NEVER touched with client values — a page cannot buy
         immortality by lying about its own activity. The client-reported clocks land
-        as ``last_user_ts``/``last_rpc_ts`` on the three rows, under ``dispatch_lock``.
+        as ``last_user_ts``/``last_rpc_ts`` on the three rows, under ``dispatch_lock``,
+        converted datetime -> epoch float at this boundary: the rows keep the core's
+        own stamp type (the freeze valve compares these floats), and the dressing
+        converts back on the way out (``EPOCH_STAMPS``).
         Returns the USER item (``handle_ping`` reads the user from it), or None when
         the chain is broken (a dead page: the ping answers False).
         """
         worker = self.spa_worker
         if worker is None:
             return None
+        if isinstance(last_user_ts, datetime.datetime):
+            last_user_ts = last_user_ts.timestamp()
+        if isinstance(last_rpc_ts, datetime.datetime):
+            last_rpc_ts = last_rpc_ts.timestamp()
         with worker.dispatch_lock:
             page = worker.page_items.get(page_id)
             if page is None:
@@ -1460,7 +1512,7 @@ class GenropyRegisterClient:
         """One genro-bag change dict -> the legacy ClientDataChange.
 
         ``change_ts`` is normalized aware -> naive local at this boundary: the legacy
-        world compares naive clocks (same convention as ``_materialize_global``).
+        world compares naive clocks (same convention as ``_materialize_global_snapshot``).
         """
         key = change["key"]
         change_ts = change["change_ts"]
@@ -1491,9 +1543,14 @@ class GenropyRegisterClient:
         """Peek at a page's pending changes without consuming them (ServerStore.datachanges).
 
         The ``drain(reset=False)`` equivalent of ``collect_page``: both collectors
-        peeked and merged by ``change_ts``, under the worker's lock. Only a page has
-        collectors; any other register answers empty. The ``autocreate`` parents
-        stay out, as in ``_collect_local_datachanges`` — same envelope, same rule.
+        peeked and merged by ``change_ts``, under the worker's lock, PLUS the
+        caller's own request slot — the writes this request has queued for the
+        exchange. The core lays addressed writes on the slot and applies them at
+        the exchange, so without the slot a serverbatch would stop reading its
+        own writes back mid-request: the healed defect, healed on this leg too.
+        Only a page has collectors; any other register answers empty. The
+        ``autocreate`` parents stay out, as in ``_collect_local_datachanges`` —
+        same envelope, same rule.
         """
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
@@ -1505,6 +1562,11 @@ class GenropyRegisterClient:
             changes = page["collector"].drain(reset=False)
             if page["user_view"] is not None:
                 changes.extend(page["user_view"].drain(reset=False))
+        changes.extend(
+            from_tytx(entry["change"], "json")
+            for entry in worker.request_slot.datachanges
+            if entry["kind"] == "page" and entry["target"] == register_item_id
+        )
         changes.sort(key=lambda change: change["change_ts"])
         return [
             self._change_to_client(raw)

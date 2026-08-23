@@ -1,30 +1,29 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""CLI entry point: serve one GenroPy instance as a single-process SPA — no daemon.
+"""CLI entry point: serve one GenroPy instance as a SPA — no daemon.
 
 ``gnrasgiserve <instance>`` resolves the instance name to its filesystem path, then starts a
 standard genro-asgi ``AsgiServer`` from the fixed ``config.py`` recipe, whose only variable
 element is that path (passed via the environment). The recipe mounts a single
 ``GenropySpaApplication`` on the root; auth and session stay inside the legacy GnrWsgiSite,
-not the asgi layer. Single process, no commander.
+not the asgi layer. The pool always runs and sizes itself: there is no worker
+count to declare and no single/pool selector.
 
 The register is served ENTIRELY in-process (``GenropyRegisterClient``): lifecycle
-registries, datachanges (both channels), stores and locks live inside the application.
-No external register daemon is contacted, started or required.
+registries, datachanges (both channels), stores and locks live inside the workers.
+The legacy ``gnr.web.daemon`` namespace is replaced through its entry-point gate:
+genropy (PR #1070) overrides it only when ``GNR_DAEMON_PROVIDER`` names the
+provider, so this command declares itself before anything imports the site
+machinery. No external register daemon is contacted, started or required.
 
 Name -> path resolution is the legacy GenroPy step and lives here (it uses ``gnr.*``); the
 generic SPA model only ever sees a path.
-
-With ``--workers N`` the same command serves the instance through the front's
-user-sticky pool: N worker subprocesses, each hosting the same site, reached over
-the pool's own channel (sticky routing per user). Still no daemon.
 
 Usage:
     gnrasgiserve test_invoice_pg
     gnrasgiserve test_invoice_pg -p 8000
     gnrasgiserve test_invoice_pg -H 0.0.0.0 -p 8080 --nodebug
-    gnrasgiserve test_invoice_pg --workers 2
 """
 
 from __future__ import annotations
@@ -37,6 +36,10 @@ from pathlib import Path
 from genro_asgi import AsgiServer
 
 CONFIG = Path(__file__).resolve().parent / "config.py"
+
+# The gnr.web.daemon provider this package declares (pyproject entry point
+# ``gnr.web:daemon``); genropy replaces the namespace only when asked by name.
+DAEMON_PROVIDER = "genropy-asgi"
 
 
 def resolve_instance_path(instance: str) -> str:
@@ -66,18 +69,17 @@ def cmd_serve(argv: list[str]) -> int:
     )
     parser.add_argument("--nodebug", action="store_true")
     parser.add_argument(
-        "--workers",
-        type=int,
-        default=0,
-        help="serve through a commander with N worker subprocesses (0 = single process)",
-    )
-    parser.add_argument(
         "--config",
         default=None,
         help="server config.py (a ServerConfiguration) instead of the built-in recipe; "
-        "the config carries the shape (pool, caps) while the CLI instance still wins",
+        "the config carries the pool shape while the CLI instance still wins",
     )
     opts = parser.parse_args(argv)
+
+    # The daemon override is gated on the explicit request (genropy #1070):
+    # declared BEFORE the site machinery is imported, so gnr.web.daemon is
+    # this package's in-process register and never the Pyro client.
+    os.environ.setdefault("GNR_DAEMON_PROVIDER", DAEMON_PROVIDER)
 
     # The CLI instance always wins: it is written to the environment BEFORE the server is
     # built, so a --config that reads GNR_ASGI_PATH serves the instance named on the CLI.
@@ -89,10 +91,11 @@ def cmd_serve(argv: list[str]) -> int:
         os.environ["GNR_ASGI_PORT"] = str(opts.port)
     if opts.nodebug:
         os.environ["GNR_ASGI_DEBUG"] = ""
-    # With --config the config owns the pool shape (workers + caps): the CLI leaves
-    # GNR_ASGI_WORKERS untouched. Without it, --workers selects single vs pool.
-    if opts.config is None and opts.workers:
-        os.environ["GNR_ASGI_WORKERS"] = str(opts.workers)
+    if os.environ.get("GNR_ASGI_WORKERS"):
+        print(
+            "GNR_ASGI_WORKERS is set but no longer read: the pool always runs "
+            "and sizes itself (the worker count is a reading, not a setting)."
+        )
 
     if opts.reload:
         print("--reload: the core server has no reloader; flag accepted and ignored.")

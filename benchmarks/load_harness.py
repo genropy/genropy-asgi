@@ -10,7 +10,7 @@ fall on demand.
 Reused, not reinvented:
 - ``StickyClient`` / ``login_user`` / ``inject_identity`` / ``page_id_from`` from
   ``scaling_probe`` (keep-alive connection + cookie jar pinning the worker via the
-  sticky_cid cookie; distinct identities injected into the doLogin Bag XML).
+  spa_connection_id cookie; distinct identities injected into the doLogin Bag XML).
 - the real load unit from ``capacity_bench``: POST app.getSelection on the customer
   TH page, varying the ``where`` filter letter each call so every query is fresh
   (~45 KB, 0 errors).

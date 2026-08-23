@@ -1,11 +1,12 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""End-to-end: ``gnrasgiserve --workers 1`` — commander + one real worker subprocess.
+"""End-to-end: ``gnrasgiserve`` — the pool booted by the CLI, driven over HTTP.
 
-The pool bridge driven from the outside: the CLI boots a ``GenropySpaApplication``
-whose core commander (``UserStickyCommander``) spawns ONE worker subprocess hosting
-the GenroPy site; the test talks HTTP only. No register daemon anywhere.
+The bridge from the outside: the CLI boots a ``GenropySpaApplication`` whose
+recipe-born commander (``SpaCommander``) spawns the reception worker hosting
+the GenroPy site; the test talks HTTP only. There is no worker count to pass
+— the pool always runs and sizes itself. No register daemon anywhere.
 
 Covers: the recipe's pool shape, the worker spawn, the sticky forward (page served
 by the child through the commander), the child's LOCAL drain of the ping envelope,
@@ -50,14 +51,14 @@ def read_metrics(client: httpx.Client) -> dict[str, int]:
 
 @pytest.fixture(scope="module")
 def pool_server():
-    """gnrasgiserve --workers 1 as a real subprocess; yields its base URL."""
+    """gnrasgiserve as a real subprocess; yields its base URL."""
     port = free_port()
     env = dict(os.environ)
     # macOS: libpq + Kerberos + fork segfaults the forked children without this.
     env.setdefault("PGGSSENCMODE", "disable")
     process = subprocess.Popen(
         [sys.executable, "-m", "genropy_asgi.spa.cli", _SITE, "-p", str(port),
-         "--nodebug", "--workers", "1"],
+         "--nodebug"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -99,8 +100,8 @@ def test_page_served_by_the_pool_through_the_commander(pool_server):
         match = re.search(r"page_id:'([\w-]+)'", response.text)
         assert match, "no page bootstrap in the forwarded response"
         page_id = match.group(1)
-        # the commander minted its sticky cookie on the connection's birth
-        assert "sticky_cid" in response.cookies
+        # the connection the site created came back as the routing cookie
+        assert "spa_connection_id" in response.cookies
         # the ping crosses the rail: commander forward -> child handle_ping ->
         # LOCAL pending-list drain on the child -> envelope
         answer = client.get("/_ping", params={"page_id": page_id})
@@ -119,3 +120,44 @@ def test_metrics_reflects_the_guest_lifecycle(pool_server):
         assert counters["users"] >= 1
         assert counters["connections"] >= 1
         assert counters["pages"] >= 1
+
+
+def test_the_routing_cookie_survives_a_reload(pool_server):
+    """The cookie reaches the browser AND the reload comes back on the same cid.
+
+    The doubt this closes (open since 2026-08-14, never retried): through the
+    bridge the routing cookie did not reach the client, so every request
+    travelled anonymous — freeze worked and wake was unreachable from traffic.
+    The reload is the proof: no second ``Set-Cookie`` means the site reused the
+    connection the cookie named, and a connection count that does not grow means
+    the request landed on the row already there instead of opening a second one.
+    """
+    with httpx.Client(base_url=pool_server, timeout=30.0) as client:
+        first = client.get("/")
+        assert first.status_code == 200
+        stamps = first.headers.get_list("set-cookie")
+        minted = [line for line in stamps if line.startswith("spa_connection_id=")]
+        assert len(minted) == 1, f"the connection's birth named no cookie: {stamps}"
+        assert "httponly" in minted[0].lower()
+        assert "samesite=lax" in minted[0].lower()
+        assert "max-age=86400" in minted[0].lower()
+        cid = client.cookies["spa_connection_id"]
+
+        before = read_metrics(client)
+        reload_response = client.get("/")
+        assert reload_response.status_code == 200
+        # the site reused the connection the cookie named: nothing rewritten
+        assert not [
+            line for line in reload_response.headers.get_list("set-cookie")
+            if line.startswith("spa_connection_id=")
+        ]
+        assert client.cookies["spa_connection_id"] == cid
+        # ... and the reload stayed on the same connection row
+        assert read_metrics(client)["connections"] == before["connections"]
+
+    # counter-proof: a cookie-less client is a new connection, with its own cid
+    with httpx.Client(base_url=pool_server, timeout=30.0) as other:
+        response = other.get("/")
+        assert response.status_code == 200
+        assert other.cookies["spa_connection_id"] != cid
+        assert read_metrics(other)["connections"] >= before["connections"] + 1

@@ -175,11 +175,12 @@ serving everything else. Two notes on correctness:
 Sticky routing
 ~~~~~~~~~~~~~~~
 
-Routing reads an opaque cookie, ``sticky_cid``, that the commander mints on the
+Routing reads the ``spa_connection_id`` cookie, which carries the connection id
+the site itself creates on the
 first connection (cleartext, ``HttpOnly; SameSite=Lax``). The registries map
 ``cid -> user`` and ``user -> {connections, worker}``; a request is forwarded to
 the worker that holds its user. The GenroPy session cookie is never decoded for
-routing — the ``sticky_cid`` cookie is the only routing key.
+routing — the ``spa_connection_id`` cookie is the only routing key.
 
 One worker never sees another worker's in-process register. That is the point:
 each worker's site state is local, and load scales with the number of workers.
@@ -211,12 +212,12 @@ Request flow, end to end
 #. The front forwards it to its in-process ``GenropyWorker``, which converts it
    to a WSGI environ and runs the ``GnrWsgiSite`` in the thread executor.
 #. The site calls its register — served in-process by ``GenropyRegisterClient``.
-#. The response (with any ``sticky_cid`` birth cookie) goes back through uvicorn.
+#. The response (with any ``spa_connection_id`` birth cookie) goes back through uvicorn.
 
 **Pool**
 
 #. uvicorn hands the request to the front (``GenropySpaApplication``).
-#. Its commander reads ``sticky_cid``, looks up the user's worker, and forwards
+#. Its commander reads ``spa_connection_id``, looks up the user's worker, and forwards
    the request there. No cookie? The reception worker mints one.
 #. The worker runs the site exactly as in the single case; its register is
    in-process and local.

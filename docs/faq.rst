@@ -32,7 +32,8 @@ What happened to the register daemon?
    keep working with no daemon behind them. This replaces ``genro-nodaemon``.
 
 Does a user always land on the same worker?
-   Yes. In the pool, the commander mints an opaque ``sticky_cid`` cookie and
+   Yes. In the pool, the routing cookie is ``spa_connection_id`` — the connection
+   id the site itself creates (nothing is minted by the front) — and
    routes every request from that user to the worker that holds their session.
    The pin is per user, so their in-process session state stays coherent.
 
