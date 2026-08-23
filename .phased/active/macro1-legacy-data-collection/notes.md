@@ -160,3 +160,43 @@
   (`benchmarks/sr_counter.py`) wrapped the store on purpose. Consequence for the
   record shape: a recorded line is a call on the client OR a call on a store, and
   the store lines carry which register and which item they belong to.
+- **Foreman decision on the second `clarify?` of 2026-08-23 — the register
+  recorder installs from a versioned launcher, not from a gunicorn hook.**
+  Verified at the source, not taken on the child's word: in
+  `gnr/web/cli/gnrserveprod.py` `main()` builds the application first
+  (`get_gnr_wsgi_application`), reads the `-c` file only afterwards, and hands an
+  already-built app to `GnrProductionServer`, whose `load()` just returns it;
+  `GnrWsgiSite.__init__` forces the register into existence, under genropy's own
+  comment saying not to remove that line. So the client instance exists in the
+  MASTER process before the configuration file is read and before the fork —
+  every hook, `post_fork` included, is too late, and patching the name from the
+  config would be a no-op on the instance the site already holds. The child also
+  measured it: master and worker share one inherited socket to the sitedaemon.
+  Shape chosen: `benchmarks/compare/serve_legacy.py`, which calls the install and
+  then `gnrserveprod.main()`. Rejected the alternative of reaching into the live
+  site from `post_worker_init` to overwrite `domain_proxy._register`: it writes a
+  private attribute of genropy and has to grip the closure the application
+  factory returns, a hold that breaks silently on any refactor upstream. The
+  launcher keeps installation a plain call, which is what the plan's first
+  `Must not break:` line asks for, and the phase's own `Pattern:` had already
+  learned the lesson — `sr_counter.py` installed itself sitecustomize-style
+  precisely because the config file runs too late.
+- **Phase 2's install path is NOT reopened.** The HTTP recorder stays where it
+  is, installed from `post_worker_init`, verified and owner-confirmed. Two
+  recorders, two install points, one documented command that runs both: rewriting
+  closed, working work is scope the plan never bought.
+- **The bare-stack command stays valid.** `benchmarks/compare/README.md` carries
+  TWO launch commands from now on: the plain `gnr web serveprod` of Phase 1, which
+  remains the declared condition of a run with no recorders, and the launcher for
+  a recorded run. Phase 1's declared condition is extended, never falsified.
+- **Two consequences of building the wrapper in the master, for the phase to
+  handle.** First, no trace file handle may be opened in the master and inherited
+  across the fork — two processes appending on one descriptor interleave
+  mid-line; the writer opens per write or lazily per pid. Second, the master
+  makes real register calls before any exchange exists (`__init__` forces the
+  register, then `DataCollector(self.register.siteregister)`). Those are recorded,
+  explicitly marked as belonging to no exchange, NOT filtered: the empty-ping
+  filter exists for noise the wire carries anyway, while startup register traffic
+  is exactly what macro-phase 2 will want to compare between the two stacks.
+- **The `attempts` field and the surface it was intercepted on live in
+  `Details:`**, with the rest of the record shape — no separate plan line needed.
