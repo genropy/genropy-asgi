@@ -185,11 +185,12 @@ changing what it observed. genro-asgi f860c95 (the same morning) had just added
 `SpaCommander.inspect_target` + `SpaInspectorMcpApplication`: an expression
 evaluated inside the commander or inside a named worker, over the lane the
 commander already holds, answered as a `repr`. config.py now mounts it on
-`_inspect` behind `GNR_ASGI_INSPECTOR` — mounting IS the gate (core doctrine:
+`_console` behind `GNR_ASGI_CONSOLE` (renamed with the console in 92b9b7e) —
+mounting IS the gate (core doctrine:
 full eval, never in production), and the first path segment decides the app so
 the site keeps every other URL of the root mount. Registered as an MCP server
 for the next chats: `claude mcp add --transport http genro-spa-inspector
-http://127.0.0.1:8099/_inspect`.
+http://127.0.0.1:8099/_console`.
 
 Findings of the collaudo so far, none of them a defect of the phase's own
 Done::

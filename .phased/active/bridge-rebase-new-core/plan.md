@@ -155,8 +155,8 @@ notes.md, review.md), then the pre_refactoring worker
 - [x] **Phase 3**: Browser collaudo — sticky_cid and the four steps
   > Done: the routing-cookie reload scenario is green
     (`test_the_routing_cookie_survives_a_reload`), the full suite passes
-    (117 passed, ruff clean), and the debug door is mounted on `_inspect`
-    behind `GNR_ASGI_INSPECTOR`, registered as an MCP server. In the same
+    (117 passed, ruff clean), and the debug door is mounted on `_console`
+    behind `GNR_ASGI_CONSOLE`, registered as an MCP server. In the same
     phase the identity was reworked: the routing cookie became the site's
     own `connection_id` (`spa_connection_id`), the core rename to
     `SpaApplication` was followed, and the docs describing the dead front

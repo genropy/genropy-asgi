@@ -134,6 +134,30 @@ def test_the_recipe_declares_the_pool_where_the_core_reads_it(booted):
     assert worker_kwargs["user_idle_freeze_minutes"] == 45.0  # the env-driven valve
 
 
+@pytest.mark.parametrize(
+    "value,expected",
+    [("", False), ("0", False), ("false", False), ("False", False), ("no", False),
+     ("off", False), ("1", True), ("true", True), ("yes", True)],
+)
+def test_the_debug_flag_is_read_as_a_word_not_as_a_truthy_string(monkeypatch, value, expected):
+    # a truthy-string read would turn GNR_ASGI_DEBUG=false into debug ON: the
+    # Werkzeug debugger around the site, and the site's SQL time counters
+    # (incremented only under debug) suddenly filled — a measured run would be
+    # measuring another system
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_DEBUG", value)
+    server = AsgiServer(str(CONFIG))
+    pool = server.config.group_kwargs("site")["pool"]
+    assert pool["worker_kwargs"]["debug"] is expected
+
+
+def test_the_debug_flag_unset_stays_the_dev_default(monkeypatch):
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.delenv("GNR_ASGI_DEBUG", raising=False)
+    server = AsgiServer(str(CONFIG))
+    assert server.config.group_kwargs("site")["pool"]["worker_kwargs"]["debug"] is True
+
+
 def test_a_leftover_workers_variable_changes_nothing(monkeypatch):
     # the single/pool selector is gone: the pool always runs and sizes itself
     monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")

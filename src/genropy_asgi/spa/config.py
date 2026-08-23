@@ -53,6 +53,9 @@ from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 
+# The words that turn the debug flag OFF when GNR_ASGI_DEBUG carries one.
+DEBUG_OFF_WORDS = frozenset({"", "0", "false", "no", "off"})
+
 
 class ServerConfiguration(AsgiConfigBuilder):
     def main(self, root: Any) -> None:
@@ -65,9 +68,13 @@ class ServerConfiguration(AsgiConfigBuilder):
         cfg.middleware()
         source = os.environ.get("GNR_ASGI_PATH") or ""
         # Unset means the dev default (True), exactly as the pre-rebase recipe
-        # read it; the CLI's --nodebug writes the empty string.
+        # read it; the CLI's --nodebug writes the empty string. A value is read
+        # as a word, never as a truthy string: "false"/"0"/"no"/"off" mean OFF,
+        # and getting that wrong would serve the site wrapped in the Werkzeug
+        # debugger AND change what the site measures (the SQL time counters are
+        # incremented only under debug).
         debug_env = os.environ.get("GNR_ASGI_DEBUG")
-        debug = True if debug_env is None else bool(debug_env)
+        debug = True if debug_env is None else debug_env.strip().lower() not in DEBUG_OFF_WORDS
         site_key = os.path.basename(os.path.normpath(source)) or "site"
         frozen_users_path = os.environ.get("GNR_ASGI_FROZEN_USERS_PATH") or os.path.join(
             source, "data", "_frozen_users"

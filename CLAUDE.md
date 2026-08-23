@@ -35,7 +35,7 @@ test suite — so changes here no longer drag the genro-asgi framework test suit
   serves `/metrics` natively and forwards site paths to the pool. The pool is born at
   startup from OUR recipe (`spa/config.py`): `commander(...)` + ONE
   `group(worker_class=GenropyWorker, ...)`. The debug door mounts the core console on
-  `_inspect` when `GNR_ASGI_INSPECTOR` is set (mounting IS the gate).
+  `_console` when `GNR_ASGI_CONSOLE` is set (mounting IS the gate).
 - **Worker** (`GenropyWorker` on the core's `SpaWorker`): a child process hosting the
   `GnrWsgiSite`; registers user/connection/page items, runs the site in a thread.
 - **Register client** (`GenropyRegisterClient`, `siteregister/`): the in-process fake of
