@@ -294,3 +294,31 @@
 - **Names**: `RegisterRecorder` stands in place of the client, `StoreRecorder` in
   place of one store, `WireCounter` in place of the Pyro proxy, `TraceWriter`
   appends the lines. Bench scaffolding, not package surface.
+- **A recorder decision riding on a shared flag is this workflow's recurring
+  defect, twice now.** In Phase 2 the buffering decision sat outside the try
+  block, so a failure there reached the response after `start_response` had
+  already fired. In this phase the *write* rode on the buffering *skip*: statics
+  are not buffered, and the call to `write_record` hung off the same flag, so
+  filtered statics produced no stub at all — while pings did, which made the hole
+  look like a working feature. Same shape, same discovery route both times: the
+  isolation check, never reading. Two decisions that happen to agree today get
+  tied to one variable, and the day they should diverge nothing says so. Worth
+  expecting again on the bridge, where the same recorder gets a second install
+  point.
+- **A store's Bag read costs two register round trips where one would do.** Not
+  ours and not a defect of the recorder: `ServerStore.data` is
+  `if self.register_item: return self.register_item['data']`, and `register_item`
+  is a property that calls `get_item` on the register — so it is evaluated twice
+  and pays a round trip each time (plus one on the remotebag proxy for the Bag
+  operation itself). Measured on the fake wire. It sits on the polling path, so
+  it happens constantly. genropy stays untouched, but macro-phase 3 will measure
+  it and should not rediscover it as a mystery.
+- **The field is `wire_calls`, and `attempts` was the wrong name.** It counted
+  round trips, but it read as retries, and it misled its first reader — the
+  foreman, who saw `2` on a routine global read and warned the owner that the
+  legacy register was retrying. Nothing was retrying. The lesson is the project's
+  own naming rule arriving from the other end: a name that needs a convention
+  explained is a name that will be read wrong by whoever has not read the
+  explanation, and in a bench a misread number becomes a divergence that is not
+  there. A retry now shows as more round trips than the call's shape costs,
+  together with a `wire_error`.
