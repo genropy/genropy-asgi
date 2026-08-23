@@ -94,3 +94,18 @@
   browser used against one sends its cookies to the other too. A `sticky_cid`
   from the bridge was observed arriving on a legacy request. In the macro-phase 2
   diff those are browser leftovers, not divergences between the stacks.
+- **The login is driven over HTTP, not through a browser** (owner, 2026-08-23:
+  "mi aspettavo che tu facessi la chiamata http e verificassi il risultato").
+  Phase 1 had already replayed it that way. The login-gated rule that hands a
+  browser check to the human is about a person's own identity in a real session,
+  not about replaying a documented bench account (`benchmarks/usernames.txt`,
+  password `a`) against `127.0.0.1`. So `drive_login.py` is versioned and the
+  check is the machine's.
+- **The two helper scripts are versioned, not scratch.**
+  `http_recorder_check.py` is the only machine evidence for the promise that a
+  recorder fault never reaches the response, and `drive_login.py` is what makes
+  the recorder exercisable without a human. Both would have died in `temp/`,
+  which is gitignored.
+- **Deleting the trace with the server up is a mistake easy to repeat** — made
+  twice in this phase, the second time minutes after documenting it. The README
+  warning is worth its space.

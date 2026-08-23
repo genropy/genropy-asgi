@@ -308,6 +308,28 @@ The `X-Gnr*` headers only arrive on the page-serving path — they are set by
 statics are not recorded anyway. With debug off, `X-GnrSqlTime` and
 `X-GnrSqlCount` arrive as `0`; see the declared conditions above.
 
+### Exercising the recorder without a browser
+
+Two scripts in this folder, both runnable from the repository root.
+
+```bash
+python3 benchmarks/compare/http_recorder_check.py
+python3 benchmarks/compare/drive_login.py [username]
+```
+
+`http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder
+wrapping it, and 19 assertions over the filters, the whole bodies and the two
+guarantees about failure. It is the machine evidence that a fault inside the
+recorder never reaches the response — kept versioned rather than in a scratch
+file, because evidence that gets deleted is not evidence.
+
+`drive_login.py` replays a real login against the running site over HTTP, no
+browser involved: it reuses `replay_a1.build_plan` to pull the two login
+pageCalls out of the captured session and `scaling_probe.login_user` to replay
+them on one keep-alive connection, with the identity rewritten in **both** places
+(see the login trap above). Default user `alexander.king`, password `a`. Use it
+to leave a login in the trace whenever the recorder changes.
+
 Wrapping the app costs the `wsgi.file_wrapper` fast path: gunicorn only takes it
 when the application returns a file wrapper, and the recorder returns a
 generator. Irrelevant for fidelity work, worth knowing before anyone reads
