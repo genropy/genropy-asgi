@@ -172,8 +172,10 @@ timings are not read, so the instrumentation may be as heavy as it needs.
   - Pattern: `benchmarks/sr_counter.py` (valid as design only — its code is
     expired: it patches a module that no longer exists)
   - Files: `benchmarks/compare/register_recorder.py`,
-    `benchmarks/compare/gunicorn_recorders.conf.py`,
-    `benchmarks/compare/serve_legacy.py`, `benchmarks/compare/README.md`
+    `benchmarks/compare/register_recorder_check.py`,
+    `benchmarks/compare/serve_legacy.py`, `benchmarks/compare/README.md`.
+    NOT `gunicorn_recorders.conf.py`: the HTTP recorder's install point is closed
+    work and this phase does not reopen it.
   - Decisions: the patch point is the name `SiteRegisterClient` in the
     `gnr.web.gnrwsgisite` namespace (imported at line 45, instantiated by the
     `register` property at line 178) — genropy itself is never modified. The
