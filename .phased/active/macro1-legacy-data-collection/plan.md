@@ -318,7 +318,7 @@ loop stay in macro-phase 2.
     missing: the reference session itself, performed in the browser by the
     owner, and the census of that archive written into the README |
     next: the owner performs the session; then run the census queries |
-    commit: 6b0f38d
+    commit: b6b7a7c
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
   - Files: `benchmarks/compare/run_archive.py`,
