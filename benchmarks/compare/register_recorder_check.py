@@ -2,7 +2,8 @@
 client, the store, the exchange that is absent, and the promise that a failure
 inside the recorder never reaches the site.
 
-No site, no sitedaemon, no database. The real `SiteRegisterClient` is used —
+No site, no sitedaemon, no site database — a throwaway run archive stands in for
+the real one. The real `SiteRegisterClient` is used —
 built past its `__init__`, with a fake Pyro proxy in place of the wire — so the
 retry loop under test is genropy's own and not a copy of it.
 
@@ -20,13 +21,30 @@ from gnr.core.gnrbag import Bag
 from gnr.web.daemon.siteregister import MAX_RETRY_ATTEMPTS
 from gnr.web.daemon.siteregister_client import SiteRegisterClient
 from register_recorder import EXCHANGE_HEADER, RegisterRecorder, StoreRecorder
+from run_archive import RunArchive
 
 # what FakeWire answers to get_item, so the checks name it once
 ITEM_ANSWER = {"register_item_id": "p1", "data": None, "register_name": "page"}
 
-TRACE = os.path.join(
+ARCHIVE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "temp", "register_recorder_check.jsonl")
+    "temp", "register_recorder_check.sqlite")
+
+CONDITIONS = {"stack": "legacy", "recorders": ["register"]}
+
+
+class FailingOnce:
+    """An archive whose first write fails, so the failure itself is recorded."""
+
+    def __init__(self, archive):
+        self.archive = archive
+        self.failed = False
+
+    def append_record(self, kind, record):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("archive down")
+        self.archive.append_record(kind, record)
 
 
 class FakeWire:
@@ -99,22 +117,28 @@ class ClientBuilder:
         return client
 
 
-def lines():
-    if not os.path.exists(TRACE):
-        return []
-    with open(TRACE) as f:
-        return [json.loads(line) for line in f if line.strip()]
+def lines(archive):
+    rows = archive.connection.execute(
+        "SELECT line FROM record WHERE kind = 'register' ORDER BY id").fetchall()
+    return [json.loads(row[0]) for row in rows]
+
+
+def drop_archive():
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(ARCHIVE + suffix):
+            os.remove(ARCHIVE + suffix)
 
 
 def fresh(failing=False):
-    if os.path.exists(TRACE):
-        os.remove(TRACE)
+    """A throwaway archive, a real client on a fake wire, and the recorder."""
+    drop_archive()
+    archive = RunArchive(ARCHIVE, run_id="check", conditions=CONDITIONS)
     wire = FakeWire(failing=failing)
     site = FakeSite()
     register_recorder.SiteRegisterClient = ClientBuilder(wire)
-    recorder = RegisterRecorder(site, trace_path=TRACE)
+    recorder = RegisterRecorder(site, archive=archive)
     register_recorder.SiteRegisterClient = SiteRegisterClient
-    return recorder, site, wire
+    return recorder, site, wire, archive
 
 
 failures = []
@@ -127,10 +151,10 @@ def check(label, condition):
 
 
 # 1. a method declared on the legacy class: surface `client`, one wire attempt
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex1")
 answer = rec.get_item("p1")
-recorded = lines()
+recorded = lines(arc)
 check("an explicit method answers through the recorder",
       answer == ITEM_ANSWER)
 check("an explicit method is recorded on the client surface",
@@ -145,25 +169,25 @@ check("a successful call records no error",
       recorded[0]["error"] is None and recorded[0]["wire_error"] is None)
 
 # 2. a name the legacy __getattr__ forwards: surface `passthrough`
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex2")
 check("a forwarded verb answers", rec.drop_page("p9") == "p9")
 check("it is recorded on the passthrough surface",
-      lines()[0]["surface"] == "passthrough" and lines()[0]["verb"] == "drop_page")
+      lines(arc)[0]["surface"] == "passthrough" and lines(arc)[0]["verb"] == "drop_page")
 
 # 3. the legacy retry loop: four attempts, swallowed, and the trace says so
-rec, site, wire = fresh(failing=True)
+rec, site, wire, arc = fresh(failing=True)
 site.enter_exchange("ex3")
 check("the legacy funnel swallows the failure and answers None",
       rec.drop_page("p9") is None)
-recorded = lines()[0]
+recorded = lines(arc)[0]
 check(f"the {MAX_RETRY_ATTEMPTS} retried round trips are counted",
       recorded["wire_calls"] == MAX_RETRY_ATTEMPTS)
 check("the swallowed error class is recorded",
       recorded["wire_error"].startswith("ConnectionError"))
 
 # 4. an explicit method does not retry: the exception reaches the site, recorded
-rec, site, wire = fresh(failing=True)
+rec, site, wire, arc = fresh(failing=True)
 site.enter_exchange("ex4")
 raised = None
 try:
@@ -173,15 +197,15 @@ except Exception as exc:
 check("an explicit method lets the exception through",
       isinstance(raised, ConnectionError))
 check("the exception is recorded on the line",
-      lines()[0]["error"].startswith("ConnectionError"))
+      lines(arc)[0]["error"].startswith("ConnectionError"))
 
 # 5. no exchange: the key is absent, never faked and never stale
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex5")
 rec.get_item("p1")
 site.leave_exchange()
 rec.get_item("p2")
-recorded = lines()
+recorded = lines(arc)
 check("the call inside the exchange carries it",
       recorded[0]["exchange_id"] == "ex5")
 check("the call outside any exchange omits the key",
@@ -190,7 +214,7 @@ check("the ordinal of the exchangeless call is its own sequence",
       recorded[0]["ordinal"] == 1 and recorded[1]["ordinal"] == 1)
 
 # 6. the store: wrapped, recorded, and naming its register and item
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex6")
 store = rec.pageStore("p1")
 check("the store handed back is wrapped", isinstance(store, StoreRecorder))
@@ -198,7 +222,7 @@ with store as opened:
     check("the with block yields the wrapper, so inner calls are recorded",
           opened is store)
     opened.set_datachange("a.b", value=1)
-recorded = lines()
+recorded = lines(arc)
 verbs = [line["verb"] for line in recorded]
 check("the store call and the lock are recorded",
       verbs == ["pageStore", "__enter__", "set_datachange", "__exit__"], )
@@ -210,50 +234,48 @@ check("the store lines belong to the exchange",
       all(line["exchange_id"] == "ex6" for line in store_lines))
 
 # 7. a register read that is a property is recorded too
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex7")
 rec.pageStore("p1").register_item
 check("a property read on the store is recorded",
-      [line["verb"] for line in lines()] == ["pageStore", "register_item"])
+      [line["verb"] for line in lines(arc)] == ["pageStore", "register_item"])
 
 # 8. what is not a routine is handed back untouched
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 check("an exception class stays a class, so `except` keeps matching",
       rec.locked_exception is RuntimeError)
 check("the wire object is handed back, not wrapped into a call",
       rec.siteregister.proxy is wire)
-check("reading attributes writes no line", lines() == [])
+check("reading attributes writes no line", lines(arc) == [])
 
 # 9. a failure inside the recorder never reaches the site
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex9")
 rec.get_comparable_value = lambda value: (_ for _ in ()).throw(RuntimeError("boom"))
 check("the site gets its answer even when the recorder fails",
       rec.get_item("p1") == ITEM_ANSWER)
-recorded = lines()
+recorded = lines(arc)
 check("the recorder failure is recorded instead of the line",
       len(recorded) == 1
       and recorded[0]["recorder_error"].startswith("RuntimeError"))
 
-# 10. long values are truncated, and the writer keeps no handle across a fork
-rec, site, wire = fresh()
+# 10. long values are truncated with their real length
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex10")
 rec.drop_page("x" * 5000)
-recorded = lines()[0]
+recorded = lines(arc)[0]
 check("a long value is truncated with its real length",
       recorded["args"][0].endswith("chars>")
       and len(recorded["args"][0]) < 5000)
-check("the trace writer holds no open file between writes",
-      sorted(rec.trace.__dict__) == ["lock", "path"])
 
 # 11. values are comparable between runs: Bags as XML, no memory addresses
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex11")
 bag = Bag()
 bag["a.b"] = 1
 store = rec.pageStore("p1")
 store.set_datachange("rootenv", value=bag)
-recorded = lines()
+recorded = lines(arc)
 written = json.dumps(recorded)
 check("a Bag argument is recorded as its XML",
       "<GenRoBag>" in recorded[1]["kwargs"]["value"]
@@ -263,7 +285,7 @@ check("the store handed back is still named in the answer",
       "ServerStore" in recorded[0]["result"])
 
 # 12. the duration is the call alone, not the call plus our serialisation
-rec, site, wire = fresh()
+rec, site, wire, arc = fresh()
 site.enter_exchange("ex12")
 plain = rec.get_comparable_value
 
@@ -277,9 +299,20 @@ rec.get_comparable_value = slow_value
 rec.get_item("p1")
 rec.get_comparable_value = plain
 check("duration_ms excludes the recorder's own serialisation",
-      lines()[0]["duration_ms"] < 50)
+      lines(arc)[0]["duration_ms"] < 50)
 
-os.remove(TRACE)
+# 13. a failure inside the ARCHIVE WRITER never reaches the site either
+rec, site, wire, arc = fresh()
+site.enter_exchange("ex13")
+rec.archive = FailingOnce(arc)
+check("the site gets its answer even when the archive writer fails",
+      rec.get_item("p1") == ITEM_ANSWER)
+recorded = lines(arc)
+check("the writer failure is recorded once the writer answers again",
+      len(recorded) == 1
+      and recorded[0]["recorder_error"].startswith("RuntimeError"))
+
+drop_archive()
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

@@ -1,7 +1,9 @@
 """Isolation checks for the HTTP recorder: filters, whole bodies, and the
-promise that a failure inside the recorder never reaches the response.
+promise that a failure inside the recorder — the archive writer included —
+never reaches the response.
 
-No site, no server, no database — a minimal WSGI app and a recorder wrapping it.
+No site, no server, no site database — a minimal WSGI app, a recorder wrapping
+it, and a throwaway run archive.
 This is the machine evidence behind the recorder's two guarantees, so it lives
 here rather than in a scratch file: evidence that is deleted is not evidence.
 
@@ -14,10 +16,27 @@ import os
 import sys
 
 from http_recorder import EXCHANGE_ENVIRON_KEY, HttpRecorder
+from run_archive import RunArchive
 
-TRACE = os.path.join(
+ARCHIVE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "temp", "http_recorder_check.jsonl")
+    "temp", "http_recorder_check.sqlite")
+
+CONDITIONS = {"stack": "legacy", "recorders": ["http"]}
+
+
+class FailingOnce:
+    """An archive whose first write fails, so the failure itself is recorded."""
+
+    def __init__(self, archive):
+        self.archive = archive
+        self.failed = False
+
+    def append_record(self, kind, record):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("archive down")
+        self.archive.append_record(kind, record)
 
 
 def serve(recorder, path, body=b"", content_type="text/xml", answer=b"<answer/>",
@@ -42,17 +61,23 @@ def serve(recorder, path, body=b"", content_type="text/xml", answer=b"<answer/>"
     return served, seen
 
 
-def lines():
-    if not os.path.exists(TRACE):
-        return []
-    with open(TRACE) as f:
-        return [json.loads(line) for line in f if line.strip()]
+def lines(archive):
+    rows = archive.connection.execute(
+        "SELECT line FROM record WHERE kind = 'http' ORDER BY id").fetchall()
+    return [json.loads(row[0]) for row in rows]
+
+
+def drop_archive():
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(ARCHIVE + suffix):
+            os.remove(ARCHIVE + suffix)
 
 
 def fresh():
-    if os.path.exists(TRACE):
-        os.remove(TRACE)
-    return HttpRecorder(lambda e, s: [], trace_path=TRACE)
+    """A throwaway archive and a recorder writing into it."""
+    drop_archive()
+    archive = RunArchive(ARCHIVE, run_id="check", conditions=CONDITIONS)
+    return HttpRecorder(lambda e, s: [], archive=archive), archive
 
 
 failures = []
@@ -65,7 +90,7 @@ def check(label, condition):
 
 
 # 1. the happy path: whole bodies, the injected header, a distinct exchange_id
-rec = fresh()
+rec, arc = fresh()
 served, seen = serve(rec, "/test_invoice_pg_legacy/index",
                      body=b"method=login_doLogin&login=%3Clogin%3E%3C%2Flogin%3E")
 check("response relayed intact", served == b"<answer/>")
@@ -73,7 +98,7 @@ check("app could still read the request body",
       seen["read"] == b"method=login_doLogin&login=%3Clogin%3E%3C%2Flogin%3E")
 check("exchange id injected into the request", bool(seen["header"]))
 served2, seen2 = serve(rec, "/other", body=b"method=x")
-recorded = lines()
+recorded = lines(arc)
 check("two lines written", len(recorded) == 2)
 check("distinct exchange ids",
       recorded[0]["exchange_id"] != recorded[1]["exchange_id"])
@@ -90,7 +115,7 @@ check("thread and duration recorded",
 check("status recorded", first["status"] == 200)
 
 # 2. the filters
-rec = fresh()
+rec, arc = fresh()
 serve(rec, "/_rsrc/js/gnr.js", content_type="application/javascript",
       answer=b"var a=1")
 serve(rec, "/favicon.ico", content_type="application/octet-stream", answer=b"icon")
@@ -106,7 +131,7 @@ serve(rec, "/_ping", content_type="text/xml",
 serve(rec, "/_ping", content_type="text/xml",
       answer=b"<?xml version='1.0' encoding='UTF-8'?>\n<GenRoBag><result _T=\"NN\">"
              b"</result><dataChanges><sc_0>x</sc_0></dataChanges></GenRoBag>")
-recorded = lines()
+recorded = lines(arc)
 stubs = [line for line in recorded if line.get("filtered")]
 full = [line for line in recorded if not line.get("filtered")]
 check("statics, favicon and every empty ping shape are filtered",
@@ -123,7 +148,7 @@ check("the ping carrying a datachange is recorded whole",
       len(full) == 1 and "dataChanges" in full[0]["resp_body"])
 
 # 3. the X-Gnr* breakdown
-rec = fresh()
+rec, arc = fresh()
 environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/p", "QUERY_STRING": "",
            "wsgi.input": io.BytesIO(b"")}
 
@@ -137,29 +162,40 @@ def gnr_app(env, start_response):
 rec.application = gnr_app
 b"".join(rec(environ, lambda s, h, e=None: None))
 check("X-Gnr* headers harvested",
-      lines()[0]["gnr_headers"] == {"X-GnrTime": "0.12", "X-GnrSqlCount": "7"})
+      lines(arc)[0]["gnr_headers"] == {"X-GnrTime": "0.12", "X-GnrSqlCount": "7"})
 
 # 4. a failure on the reply side is recorded and does not reach the response
-rec = fresh()
+rec, arc = fresh()
 rec.is_static = lambda path, headers: (_ for _ in ()).throw(RuntimeError("boom"))
 served, _ = serve(rec, "/p", answer=b"<intact/>")
-recorded = lines()
+recorded = lines(arc)
 check("response intact when the recorder fails on the reply",
       served == b"<intact/>")
 check("the failure is recorded",
       recorded and recorded[0].get("recorder_error", "").startswith("RuntimeError"))
 
 # 5. a failure on the request side is recorded and does not reach the response
-rec = fresh()
+rec, arc = fresh()
 rec.read_body = lambda environ: (_ for _ in ()).throw(ValueError("nope"))
 served, _ = serve(rec, "/p", body=b"method=x", answer=b"<intact/>")
-recorded = lines()
+recorded = lines(arc)
 check("response intact when the recorder fails on the request",
       served == b"<intact/>")
 check("the request-side failure is recorded",
       recorded and recorded[0].get("recorder_error", "").startswith("ValueError"))
 
-os.remove(TRACE)
+# 6. a failure inside the ARCHIVE WRITER is recorded and does not reach the
+# response — the writer is the one part of the recorder every line goes through
+rec, arc = fresh()
+rec.archive = FailingOnce(arc)
+served, _ = serve(rec, "/p", answer=b"<intact/>")
+recorded = lines(arc)
+check("response intact when the archive writer fails",
+      served == b"<intact/>")
+check("the writer failure is recorded once the writer answers again",
+      recorded and recorded[0].get("recorder_error", "").startswith("RuntimeError"))
+
+drop_archive()
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

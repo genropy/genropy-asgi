@@ -13,9 +13,9 @@ constructs `GnrWsgiSite` before it reads the gunicorn `-c` file, and
 `GnrWsgiSite.__init__` forces the register into existence, so no gunicorn hook
 is early enough. `serve_legacy.py` is that install point.
 
-One JSONL line per call in `temp/register_trace.jsonl`, joined to the HTTP trace
-by the `exchange_id` the HTTP recorder injects as the `X-Bench-Exchange-Id`
-request header and this recorder reads back through `site.currentRequest`. The
+One `register` line per call in the run archive, joined to the HTTP lines by the
+`exchange_id` the HTTP recorder injects as the `X-Bench-Exchange-Id` request
+header and this recorder reads back through `site.currentRequest`. The
 calls the master makes while building the site happen before any exchange
 exists: the `exchange_id` key is then ABSENT from the record — never faked and
 never inherited from whatever ran last on that thread.
@@ -46,21 +46,23 @@ Only non-routine attributes are handed back untouched, and the guard is
 it is callable, and a wrapped class stops matching the `except` clause that uses
 it — silently, in a path that only runs once something has already gone wrong.
 
-The trace is opened per write: the wrapper is born in the master process, and a
-handle inherited across the fork would let two processes interleave mid-line.
+The archive opens its connection per process, never inherited across the fork:
+the wrapper is born in the master and every worker records afterwards. Without an
+archive the recorder attaches to the run the launcher published in
+`GNR_BENCH_RUN` (`run_archive.py`) — a constructor argument is not an option
+here, because genropy builds its client as `SiteRegisterClient(site)`.
 
 Values are written so that two runs can be compared: a Bag goes in as its XML,
 because the default `repr` carries no content and a memory address that changes
 at every run would read as a divergence; anything else goes in as its `repr`
 with the address removed. Long values are truncated with their real length.
 
-A failure inside the recorder is written as `recorder_error` and never reaches
-the site.
+A failure inside the recorder is written to the archive as `recorder_error` and
+never reaches the site.
 """
 
 import functools
 import inspect
-import json
 import os
 import re
 import threading
@@ -69,12 +71,9 @@ from datetime import datetime
 
 from gnr.core.gnrbag import Bag
 from gnr.web.daemon.siteregister_client import ServerStore, SiteRegisterClient
+from run_archive import RUN_ENV, RunArchive
 
 EXCHANGE_HEADER = "X-Bench-Exchange-Id"
-
-TRACE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "temp", "register_trace.jsonl")
 
 VALUE_LENGTH_LIMIT = 2000
 
@@ -86,20 +85,6 @@ OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-f]+")
 # The store's register reads are properties, so they cannot be intercepted as
 # calls: reading the attribute IS the call. They are recorded by name.
 STORE_READ_PROPERTIES = ("data", "register_item", "datachanges", "subscribed_paths")
-
-
-class TraceWriter:
-    """Appends one JSONL line per recorded call, opening the file per write."""
-
-    def __init__(self, path):
-        self.path = path
-        self.lock = threading.Lock()
-
-    def append_record(self, record):
-        line = json.dumps(record, ensure_ascii=False, default=repr)
-        with self.lock:
-            with open(self.path, "a", encoding="utf-8") as trace:
-                trace.write(line + "\n")
 
 
 class WireCounter:
@@ -175,9 +160,9 @@ class StoreRecorder:
 class RegisterRecorder:
     """Stands in place of `SiteRegisterClient`, recording every call on it."""
 
-    def __init__(self, site, trace_path=TRACE_PATH):
+    def __init__(self, site, archive=None):
         self.client = SiteRegisterClient(site)
-        self.trace = TraceWriter(trace_path)
+        self.archive = archive or RunArchive(os.environ[RUN_ENV])
         self.wire_count = threading.local()
         self.ordinals = {}
         self.ordinals_lock = threading.Lock()
@@ -280,16 +265,17 @@ class RegisterRecorder:
                 record["exchange_id"] = exchange_id
             record["ordinal"] = self.assign_ordinal(exchange_id)
             record.update(fields)
-            self.trace.append_record(record)
+            self.archive.append_record("register", record)
         except Exception as failure:
             self.append_error(verb, failure)
 
     def append_error(self, verb, exc):
         try:
-            self.trace.append_record({"ts": datetime.now().isoformat(),
-                               "pid": os.getpid(),
-                               "thread": threading.get_ident(),
-                               "verb": verb,
-                               "recorder_error": f"{type(exc).__name__}: {exc}"})
+            self.archive.append_record("register", {
+                "ts": datetime.now().isoformat(),
+                "pid": os.getpid(),
+                "thread": threading.get_ident(),
+                "verb": verb,
+                "recorder_error": f"{type(exc).__name__}: {exc}"})
         except Exception:
             pass

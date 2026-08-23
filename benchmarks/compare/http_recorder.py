@@ -2,7 +2,7 @@
 
 A WSGI middleware wrapping the site application. It mints an `exchange_id` for
 every request, injects it into the request as the `X-Bench-Exchange-Id` header,
-and appends one JSONL line per recorded exchange to `temp/http_trace.jsonl`.
+and appends one `http` line per recorded exchange to the run archive.
 
 That header is the seam between the two recorders. The register recorder reads
 it back through `site.currentRequest.headers` — GenroPy's own per-thread
@@ -17,6 +17,10 @@ the bridge has no gunicorn and installs the same recorder the same way:
 
     worker.wsgi = HttpRecorder(worker.wsgi)
 
+Without an archive it attaches to the run the launcher published in
+`GNR_BENCH_RUN` — the channel that works across the fork here and across the
+spawn on the bridge (`run_archive.py`).
+
 What carries no content: static assets, recognised by the response content type
 (javascript, css, images, fonts) plus `favicon.ico`; and pings that rendered
 nothing — the bare envelope, a null `result` and no `dataChanges`. Those get an
@@ -27,12 +31,11 @@ Everything else is recorded whole, with no truncation anywhere: a ping carrying
 a datachange is a full record like any other, because that Bag is the register
 answering.
 
-A failure inside the recorder is written to the trace as `recorder_error` and
+A failure inside the recorder is written to the archive as `recorder_error` and
 never reaches the response.
 """
 
 import io
-import json
 import os
 import re
 import threading
@@ -41,12 +44,10 @@ import urllib.parse
 import uuid
 from datetime import datetime
 
+from run_archive import RUN_ENV, RunArchive
+
 EXCHANGE_HEADER = "X-Bench-Exchange-Id"
 EXCHANGE_ENVIRON_KEY = "HTTP_X_BENCH_EXCHANGE_ID"
-
-TRACE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "temp", "http_trace.jsonl")
 
 STATIC_CONTENT_TYPES = ("javascript", "text/css", "image/", "font")
 XML_DECLARATION = re.compile(r"^<\?xml[^>]*\?>\s*")
@@ -61,13 +62,11 @@ EMPTY_PING_ANSWER = re.compile(
 
 
 class HttpRecorder:
-    """WSGI middleware writing one JSONL line per recorded HTTP exchange."""
+    """WSGI middleware writing one archive line per recorded HTTP exchange."""
 
-    def __init__(self, application, trace_path=TRACE_PATH):
+    def __init__(self, application, archive=None):
         self.application = application
-        self.trace_path = trace_path
-        self.lock = threading.Lock()
-        self.trace = open(self.trace_path, "a", encoding="utf-8")
+        self.archive = archive or RunArchive(os.environ[RUN_ENV])
 
     def __call__(self, environ, start_response):
         exchange_id = uuid.uuid4().hex[:16]
@@ -215,10 +214,7 @@ class HttpRecorder:
         return bool(EMPTY_PING_ANSWER.match(answer.strip()))
 
     def append_record(self, record):
-        line = json.dumps(record, ensure_ascii=False)
-        with self.lock:
-            self.trace.write(line + "\n")
-            self.trace.flush()
+        self.archive.append_record("http", record)
 
     def append_error(self, exchange_id, exc):
         try:

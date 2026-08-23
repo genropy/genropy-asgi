@@ -305,7 +305,16 @@ loop stay in macro-phase 2.
   - Verify: now — take one RPC call and read what it did to the register: it
     makes sense
 
-- [ ] **Phase 4**: the recorders write into a per-run archive, and the legacy reference re-performed into it
+- [>] **Phase 4**: the recorders write into a per-run archive, and the legacy reference re-performed into it
+  > In execution since 2026-08-23T23:58:00
+  > WIP: done: `run_archive.py` with `RunArchive` (one JSON column plus the
+    promoted ones), both recorders writing into it instead of JSONL,
+    `serve_legacy.py` minting the run and publishing it in `GNR_BENCH_RUN`,
+    three checks green (http 24, register 35, archive 17) and ruff clean |
+    missing: the README rewritten from JSONL to the archive, and the legacy
+    reference session re-performed into a run archive with its census |
+    next: rewrite the README sections that describe the traces |
+    commit: 67d4ccf
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
   - Files: `benchmarks/compare/run_archive.py`,
