@@ -16,6 +16,15 @@ timings are not read, so the instrumentation may be as heavy as it needs.
 ## Work Plan
 - [>] **Phase 1**: the classic stack up and serving
   > In execution since 2026-08-23T06:52:29Z
+  > Testing: awaiting the human's `Verify: now` checks | commit: cfa88ff
+  > Verified: site answers 200 on http://127.0.0.1:8099; login replayed for
+    `alexander.king` (benchmarks/usernames.txt, password `a`) returns the real
+    avatar from the db on `login_checkAvatar` and a clean `login_doLogin`, no
+    `<error>` in either body
+  > Verify: now — open http://127.0.0.1:8099 in the browser, log in with a user
+    from `benchmarks/usernames.txt` (password `a`): the application page appears.
+    Login-gated, so the login is the human's by rule — an agent-driven browser
+    pass would not remove the human from this check.
   - Run: opus / low
   - Pattern: `benchmarks/gunicorn_count.conf.py` (the launch recipe)
   - Files: `benchmarks/compare/README.md`, `temp/legacy_venv/` (not committed),
