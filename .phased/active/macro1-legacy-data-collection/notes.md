@@ -410,3 +410,11 @@
   the bare name. It is what the `method` field carries when the login page is a
   component; the identity itself still travels in the two places the login trap
   describes, flat fields and the XML Bag.
+- **Naming review: accept all** (owner, 2026-08-23). Twelve new names, one
+  minimality flag presented and waved through: `RunArchive.stack`, a property
+  with a single caller over a dict that is already public. Kept because it names
+  the one declared exception to the copy rule where that rule is applied, which
+  is the same reason Phase 2 kept `is_empty_ping`. Two others were flagged as
+  kept-on-purpose rather than as warnings — `RunConditions.database` and
+  `.bench_commit`, single callers that carry the "read each condition where it is
+  true" rule at the place it is obeyed.

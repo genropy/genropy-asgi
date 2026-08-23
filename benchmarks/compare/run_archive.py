@@ -84,7 +84,7 @@ SUBJECT_FIELD = {"http": "path", "register": "verb"}
 class RunArchive:
     """One SQLite file per run; both recorders append their lines to it."""
 
-    def __init__(self, path, run_id=None, conditions=None):  # wf:phase-4:new
+    def __init__(self, path, run_id=None, conditions=None):
         self.path = path
         self.lock = threading.Lock()
         self.connections = {}
@@ -96,11 +96,11 @@ class RunArchive:
             self.create_run()
 
     @property
-    def stack(self):  # wf:phase-4:new
+    def stack(self):
         return self.conditions.get("stack")
 
     @property
-    def connection(self):  # wf:phase-4:new
+    def connection(self):
         """The connection of THIS process, opened on first use.
 
         Never a handle inherited across the fork: the register recorder is born
@@ -115,7 +115,7 @@ class RunArchive:
             self.connections = {pid: connection}
         return connection
 
-    def create_run(self):  # wf:phase-4:new
+    def create_run(self):
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with self.lock:
             self.connection.executescript(SCHEMA)
@@ -124,12 +124,12 @@ class RunArchive:
                 (self.run_id, datetime.now().isoformat(),
                  json.dumps(self.conditions, ensure_ascii=False)))
 
-    def read_run(self):  # wf:phase-4:new
+    def read_run(self):
         row = self.connection.execute(
             "SELECT run_id, conditions FROM run ORDER BY started LIMIT 1").fetchone()
         return row[0], json.loads(row[1])
 
-    def append_record(self, kind, record):  # wf:phase-4:new
+    def append_record(self, kind, record):
         """One row: the line as JSON, plus the columns queries need."""
         line = json.dumps(record, ensure_ascii=False, default=repr)
         with self.lock:

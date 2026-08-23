@@ -57,28 +57,28 @@ BENCH_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 class RunConditions:
     """The declared conditions of this run, read from where each one is true."""
 
-    def __init__(self, argv):  # wf:phase-4:new
+    def __init__(self, argv):
         self.argv = argv
         self.run_id = f"legacy-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
 
     @property
-    def sitename(self):  # wf:phase-4:new
+    def sitename(self):
         return self.argv[1]
 
-    def get_option(self, *names):  # wf:phase-4:new
+    def get_option(self, *names):
         for name in names:
             if name in self.argv:
                 return self.argv[self.argv.index(name) + 1]
         return None
 
     @property
-    def database(self):  # wf:phase-4:new
+    def database(self):
         """The db the instance actually points at, not the one we remember."""
         path = PathResolver().instance_name_to_path(self.sitename)
         return dict(Bag(os.path.join(path, "instanceconfig.xml")).getAttr("db"))
 
     @property
-    def declared(self):  # wf:phase-4:new
+    def declared(self):
         return {"stack": "legacy",
                 "sitename": self.sitename,
                 "bind": self.get_option("-b", "--bind"),
@@ -94,7 +94,7 @@ class RunConditions:
                 "bench_commit": self.bench_commit}
 
     @property
-    def bench_commit(self):  # wf:phase-4:new
+    def bench_commit(self):
         return subprocess.run(["git", "-C", BENCH_ROOT, "rev-parse", "--short", "HEAD"],
                               capture_output=True, text=True).stdout.strip()
 

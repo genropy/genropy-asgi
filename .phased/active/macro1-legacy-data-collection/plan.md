@@ -305,20 +305,63 @@ loop stay in macro-phase 2.
   - Verify: now — take one RPC call and read what it did to the register: it
     makes sense
 
-- [>] **Phase 4**: the recorders write into a per-run archive, and the legacy reference re-performed into it
-  > In execution since 2026-08-23T23:58:00
-  > WIP: done: `run_archive.py` with `RunArchive` (one JSON column plus the
-    promoted ones), both recorders writing into it instead of JSONL,
-    `serve_legacy.py` minting the run and publishing it in `GNR_BENCH_RUN`, the
-    README rewritten around the archive, three checks green (http 24,
-    register 35, archive 17), ruff clean, and the stack up on a clean restart
-    recording into `~/genro_bench/runs/legacy-20260823T232924.sqlite` — verified
-    live: both kinds of line in one file, join clean, 2 boot calls with a NULL
-    exchange, zero recorder_error |
-    missing: the reference session itself, performed in the browser by the
-    owner, and the census of that archive written into the README |
-    next: the owner performs the session; then run the census queries |
-    commit: b6b7a7c
+- [x] **Phase 4**: the recorders write into a per-run archive, and the legacy reference re-performed into it
+  > Done: `RunArchive` (`run_archive.py`) is the recording TARGET of both
+    recorders: one SQLite file per run outside the git tree
+    (`~/genro_bench/runs/<run_id>.sqlite`, or under `GNR_BENCH_ARCHIVE_DIR`), a
+    `run` row carrying the declared conditions as data, and a `record` table that
+    is ONE JSON column holding the whole line plus the promoted columns that have
+    a job — `run_id`/`exchange_id` to join, `stack` to separate, `ts`/`thread` to
+    order, `kind`/`subject`/`status` to filter. Every promoted column is a copy
+    of what the JSON still holds; `stack` is the one declared exception, copied
+    from the run row so the record shape stays identical on both stacks.
+    `exchange_id` goes in as NULL for the calls that belong to no exchange. WAL,
+    and the connection opened lazily PER PID, so nothing is inherited across the
+    fork. `serve_legacy.py` owns the run: it reads each condition where it is
+    true (the command line, the instance's `instanceconfig.xml`, the installed
+    distributions, git), mints the archive, publishes its path in
+    `GNR_BENCH_RUN` before the fork — the channel that will also work for the
+    bridge's spawned workers — and hands the object itself to the register
+    recorder through a `functools.partial`, since genropy builds its client as
+    `SiteRegisterClient(site)`. `TraceWriter` and both `TRACE_PATH` constants are
+    gone. The legacy reference session was re-performed by the owner in a private
+    window and is archived as `legacy-20260823T232924`.
+  > Files: benchmarks/compare/run_archive.py,
+    benchmarks/compare/run_archive_check.py,
+    benchmarks/compare/http_recorder.py,
+    benchmarks/compare/register_recorder.py,
+    benchmarks/compare/serve_legacy.py,
+    benchmarks/compare/http_recorder_check.py,
+    benchmarks/compare/register_recorder_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro1-legacy-data-collection/plan.md,
+    .phased/active/macro1-legacy-data-collection/notes.md.
+    Outside git: ~/genro_bench/runs/legacy-20260823T232924.sqlite (the reference,
+    never committed)
+  > Verified: `http_recorder_check.py` 24 assertions green (was 22 — the new two
+    force a failure inside the archive writer and check the response is intact
+    and the failure recorded), `register_recorder_check.py` 35 green (the same
+    forced writer failure never reaching the site), `run_archive_check.py` 17
+    green (schema, run row, WAL, attach, every promoted column as a copy of the
+    JSON, the absent exchange as NULL, the join in both directions, and the
+    connection never inherited across a REAL fork); `ruff check
+    benchmarks/compare/` clean. On the archived reference run: the run row
+    carries stack legacy, sitename `test_invoice_pg_legacy`, 1 worker and 16
+    gthread threads, debug false, db `test_invoice_pg` on postgres
+    localhost:5432, genropy 26.8.19.1, gunicorn 26.1.0, python 3.12.12, bench
+    commit f6aca44. The join written as a query returns ZERO register lines
+    without an HTTP exchange. Counts: 266 HTTP (32 full, 234 stubs — 223
+    `static`, 11 `empty_ping`), 1788 register on 17 threads (833 `client`, 878
+    `store`, 77 `passthrough`), 2 calls with the exchange explicitly NULL (the
+    master's boot), 0 `recorder_error`, 25 RPC exchanges costing 5 register calls
+    minimum, 25 median, 92 maximum.
+  > Verify: now — PERFORMED by this session against the archive, 2026-08-23:
+    `saveRecordCluster` on exchange `d0c5b8539f1243b5` read out of the SQLite
+    file, 32 ordinals unbroken — the identity reads on the global, connection and
+    page stores, `get_dbenv`, then `subscribed_tables` →
+    `filter_subscribed_tables` → `notifyDbEvents` on `invc.customer`, then
+    `subscription_storechanges`, then the page lock (`__enter__`, `get`,
+    `setItem`, `__exit__`) around the write. The archive answers the question.
   - Run: opus / medium
   - Pattern: `new-pattern` (nothing comparable in the repo; SQLite from stdlib)
   - Files: `benchmarks/compare/run_archive.py`,
