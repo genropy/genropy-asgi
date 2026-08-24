@@ -539,3 +539,7 @@ loop stay in macro-phase 2.
   designed together even though they land in two phases.
 - Source of truth for the whole bench: `temp/startdoc_test_parallelo_2026-08-22.md`
   (verified facts, do not redo the investigation) and `.phased/roadmap.md`.
+
+## Quality check
+
+> Quality check: 2026-08-24T05:09:33Z — commit 23fb37a — review extended, QA done, findings 3 confirmed, 0 dismissed (all three repaired before the stamp)
