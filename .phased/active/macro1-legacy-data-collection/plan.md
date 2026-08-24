@@ -412,7 +412,7 @@ loop stay in macro-phase 2.
 
 - [>] **Phase 5**: the two recorders on the bridge, and its reference session
   > In execution since 2026-08-23T22:12:55Z
-  > WIP: done: the four bench modules exist and pass 22 isolation checks (coverage, the recipe transcription, one line per site call, the store wrapped) | missing: the bridge served with the recorders on, and the reference session archived | next: bring the bridge up on 8098 with serve_bridge.py and read the archive | commit: bbcbd6c
+  > Testing: awaiting the human's `Verify: now` checks — the reference session on the bridge, recording into bridge-20260824T063348 | commit: d0036a1
   - Run: opus / high
   - Pattern: `benchmarks/compare/register_recorder.py` and
     `benchmarks/compare/http_recorder.py` (the record shape is the contract),
