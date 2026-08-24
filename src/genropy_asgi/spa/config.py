@@ -107,6 +107,12 @@ class ServerConfiguration(AsgiConfigBuilder):
             "entry_module": "genro_asgi.spa.orchestration.worker_entry",
             "worker_class": "genropy_asgi.spa.genropy_worker:GenropyWorker",
             "worker_kwargs": {"source": source, "debug": debug},
+            # The group's workers are born by fork, out of a template process
+            # that builds the GnrWsgiSite once for all of them (fork contract,
+            # 2026-08-24). The factory takes the same two values the worker
+            # would have used to build its own site.
+            "engine_factory": "genropy_asgi.spa.site_engine_factory:GenropySiteEngineFactory",
+            "engine_kwargs": {"source": source, "debug": debug},
         }
         idle_minutes = os.environ.get("GNR_ASGI_IDLE_FREEZE_MINUTES")
         if idle_minutes:

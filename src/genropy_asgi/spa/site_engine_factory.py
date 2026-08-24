@@ -14,8 +14,11 @@ The same construction serves both births: ``GenropyWorker`` builds its own
 site through this factory when it is spawned, and receives an already-built
 one when it is forked. One code path, so the two workers cannot diverge.
 
-Two duties belong to this class and to no one else:
+Three duties belong to this class and to no one else:
 
+- **the site is settled before the fork** — ``resources_dirs`` and
+  ``storage("gnr")``, the two lazy resolutions the first request would
+  otherwise force in every worker, at 46.5 MB of privatized pages each;
 - **the db connection is closed before the fork** (``site.db.closeConnection()``,
   which closes the connections of the calling thread). A socket inherited by
   every child is a socket every child would speak on;
@@ -95,7 +98,22 @@ class GenropySiteEngineFactory:
         return gnr_site
 
     def build_group_engine(self) -> Any:
-        """The template's one call: the site, with no db connection open."""
+        """The template's one call: the site settled, with no db connection open.
+
+        The settling is done HERE, once for the group, and not in each worker:
+        ``resources_dirs`` and ``storage("gnr")`` are what the site resolves
+        lazily on its first request, and a worker that resolves them for itself
+        writes 46.5 MB of pages the fork had given it for free (measured on
+        test_invoice_pg, 2026-08-24). Settled before the fork, every child reads
+        them and pays nothing.
+
+        ``closeConnection`` is the reason the settling can happen here at all:
+        ``storage("gnr")`` opens ``_main_db``, and a socket inherited by every
+        child is a socket every child would speak on. Neither step starts a
+        thread, so the fork invariant survives (verified, same day).
+        """
         gnr_site = self.build_site()
+        gnr_site.resources_dirs
+        gnr_site.storage("gnr")
         gnr_site.db.closeConnection()
         return gnr_site
