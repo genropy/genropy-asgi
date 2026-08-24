@@ -418,3 +418,70 @@
   kept-on-purpose rather than as warnings — `RunConditions.database` and
   `.bench_commit`, single callers that carry the "read each condition where it is
   true" rule at the place it is obeyed.
+
+## Phase 5
+
+- **One file reached under two module names yields two classes, and the store
+  recording dies in silence.** The daemon override installs
+  `genropy_asgi.siteregister` into `sys.modules` as `gnr.web.daemon`; importing
+  the client afterwards by its OWN dotted name executes the file a second time,
+  and the two `ServerStore` classes that result fail `isinstance` against each
+  other. The first version of the mixin imported it that way: every store call
+  would have gone unrecorded, with no error anywhere. Caught by the coverage
+  check's first assertion, which was written for a different reason — that the
+  daemon provider is set at all — and turned out to catch this. Every bench
+  module now imports the client the way the SITE imports it, from
+  `gnr.web.daemon.siteregister_client`, and the check pins the identity.
+- **A subclass is inside the client's own call path; a wrapper never was.** This
+  is the one place where the mixin cannot simply reuse what the legacy recorder
+  does. The bridge's client calls six of its own public commands internally
+  (`get_item`, `local_item`, `pages`, `set_datachange`,
+  `set_serverstore_changes`, `subscribe_path`), and every `ServerStore`
+  delegates its whole conversation back to the client that made it — so a naive
+  mixin writes lines the legacy trace cannot have, and macro-phase 2 would read
+  a divergence produced by the instrument. Only the outermost call is recorded,
+  which restores the semantics Phase 3 had already stated in words: a line is a
+  call the SITE made. Rejected alternative: recording everything and filtering
+  at read time — it moves a decision about what a line MEANS out of the
+  instrument and into every future reader.
+- **`serve_bridge.py` was added, and it is not in the phase's `Files:` list.**
+  The first version minted the run inside the recipe's `main()`. That is wrong
+  twice: building a recipe would then have consequences — the drift check could
+  not build it without creating an archive — and `main()` is called by the
+  config layering, not once per server. So the run moved to a launcher, which is
+  exactly the role `serve_legacy.py` plays on the other stack. The plan's
+  decision is untouched: the INSTALL still rides the recipe (the pool resolves
+  the worker class string itself); the launcher owns only the RUN and the import
+  path. One owner of the run per stack, symmetrical.
+- **The mixin installs its overrides through `__init_subclass__` and a
+  descriptor**, not fifty transcribed method bodies. The list of names stays
+  explicit — that is what the coverage check reads — while `RecordedVerb` holds
+  the verb and the parent implementation it shadows where a reader can see both.
+  Rejected: a module-level closure factory (a module-level function that wants
+  to be a method) and `locals().update(...)` in the class body (unreadable).
+- **`wire_calls` is 1 on the bridge, and that is a statement, not a default.**
+  The legacy field counts round trips so a swallowed retry stays visible. Here
+  the register is in the worker's own process: there is nothing to swallow and
+  nothing to count. Implemented as an override of `take_wire_count` rather than
+  by leaving the counter at 0, because 0 would read as "not measured".
+- **The pool's first worker can be killed before it presents itself.** Building
+  a `GnrWsgiSite` outran the 10s presentation timeout on a cold start; the pool
+  logged `its process never presented itself`, killed it and started another,
+  which came up and served. Not the recorders' doing — they add nothing to the
+  site build — but the traceback in the log reads like a failure, so the README
+  says so.
+- **The SQLite fork segfault does not reach the bridge.** The pool spawns fresh
+  processes instead of forking, so the 3.51.0 trap that forces
+  `run_archive_check.py` onto the bench venv has nothing to bite. Measured
+  before writing a line of the phase: parent and spawned child writing
+  concurrently into one WAL archive, clean.
+- **The two stacks run the same genropy, and only the commits say so.** The
+  legacy venv reports `26.8.19.1` and the bridge's editable install reports
+  `26.6.8`, both from the same working tree at `9e39fe9c1` — verified by hashing
+  the 319 `.py` files of the ten shared packages, identical byte for byte. An
+  editable install never refreshes its metadata, so the bridge run row carries
+  `genropy_commit` and `genro_asgi_commit` beside the version strings. Owner's
+  call (2026-08-24): the bridge stays on the pyenv interpreter with the three
+  editable working trees rather than getting a frozen venv of its own, because
+  macro-phase 2 edits genro-asgi and genropy-asgi at every turn of the
+  convergence loop and a frozen environment would have to be rebuilt each time.

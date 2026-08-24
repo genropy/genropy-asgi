@@ -22,6 +22,7 @@ archive* below.
 | The instance | `<genropy>/projects/test_invoice/instances/test_invoice_pg_legacy/` | twin of `test_invoice_pg`, same db, different site name |
 | The recorders | `benchmarks/compare/` | versioned; genropy itself is never modified |
 | The run archives | `~/genro_bench/runs/` (outside the tree) | whole bodies, the login, the cookies — and this repository is public |
+| The bridge | the pyenv interpreter, `genropy_asgi` + `genro_asgi` + genropy installed **editable** | it is the software under comparison; macro-phase 2 edits it at every turn of the loop, so it is not frozen |
 
 `<genropy>` is `~/Sviluppo/Genropy/genropy` — the value of `gnrhome` in
 `~/.gnr/environment.xml`.
@@ -205,11 +206,12 @@ leftovers of the browser, not divergences between the two implementations. Obser
   carrying the `exchange_id` of the exchange that caused the call.
 
 Both are **installed by a plain call**, never by logic living inside a gunicorn
-hook: the bridge has no gunicorn, and the same two recorders have to install
-there in macro-phase 2. On the legacy stack the register recorder cannot use a
-hook at all — the site builds its register client in the master process before
-the configuration file is read — so it installs from the launcher
-`serve_legacy.py`.
+hook: the bridge has no gunicorn, and the same two recorders install there too.
+On the legacy stack the register recorder cannot use a hook at all — the site
+builds its register client in the master process before the configuration file
+is read — so it installs from the launcher `serve_legacy.py`. On the bridge both
+installs happen inside the worker, in `recording_worker.py`; see **The bridge
+side** below.
 
 The 16 threads in one process interleave the calls, so every line of both kinds
 carries a thread id as well as the `exchange_id`. That is why the two recorders
@@ -490,6 +492,159 @@ master, and a handle inherited across the fork would let two processes step on
 each other — the same class of invisible defect as a recorder fault reaching the
 response.
 
+## The bridge side
+
+The same two recorders, on the other stack. What changes is only how they are
+caught — the lines they write are the same shape, field by field, and the
+comparison of macro-phase 2 reads lines, never mechanisms.
+
+### What is different, and why
+
+| | legacy | bridge |
+|---|---|---|
+| Processes | gunicorn **forks** one master into workers | the pool **spawns** each worker as a fresh `python -m` process |
+| The register | a daemon on the other side of a Pyro socket | in-process, inside the worker itself |
+| The register client | `SiteRegisterClient`, most of its surface behind one `__getattr__` | `GenropyRegisterClient`, 49 explicit methods and no funnel at all |
+| HTTP recorder install | `post_worker_init` in the gunicorn config | one call in the worker's constructor |
+| Register recorder install | an assignment from `serve_legacy.py`, in the master | the same assignment, in the worker, before the site is built |
+| Concurrency | 1 process, 16 threads | up to 6 workers, thread pools left at the core's defaults |
+
+Two consequences reach the recorded lines, and both are real differences between
+the stacks rather than artefacts of the instrument:
+
+- **`surface` is always `client`.** There is no `__getattr__` to pass through, so
+  the `passthrough` lines of the legacy trace have no counterpart here.
+- **`wire_calls` is always 1.** The register lives in the worker's own process
+  and no call costs a round trip. On legacy the same field counts what the call
+  cost on the wire, which is how a swallowed retry stays visible; here there is
+  nothing to swallow.
+
+Everything else is identical, and that is checked rather than asserted: the
+machinery that builds a line is *inherited* from `register_recorder.py` instead
+of being written a second time.
+
+### The three pieces
+
+- **`bridge_recipe.py`** — the server recipe. The install rides the recipe: the
+  pool names its worker class as an import string that the worker process
+  resolves for itself, so a recipe naming the recording worker installs both
+  recorders in every worker. Nothing is patched, no environment switch, no
+  `sitecustomize`, and neither genro-asgi nor genropy-asgi is modified. It is
+  the shipped recipe transcribed with ONE line changed, and the coverage check
+  builds both and fails if anything else comes to differ.
+- **`recording_worker.py`** — `RecordingGenropyWorker`, a `GenropyWorker`
+  subclass. It assigns the recording client into `gnr.web.gnrwsgisite` *before*
+  `super().__init__` builds the site — `GnrWsgiSite.__init__` forces
+  `site.register` into existence, so an assignment made afterwards would patch a
+  name the site has already read — and wraps `wsgi_app` with the HTTP recorder
+  afterwards, outermost, so the exchange header is in the environ before
+  anything reads the request.
+- **`register_recorder_mixin.py`** — the mixin. Where the legacy client could be
+  shadowed by a wrapper object catching every attribute, this one declares
+  everything explicitly, so the recording client is a real **subclass** and each
+  recorded verb is an override delegating to the parent.
+
+### Only the outermost call is recorded
+
+A line is a call the SITE made. On legacy that came for free: the wrapper stands
+in front of the client and is not in its internal call path, so a command
+calling another command produced one line. A subclass **is** in that path, and
+the bridge's client calls six of its own public commands internally
+(`get_item`, `local_item`, `pages`, `set_datachange`, `set_serverstore_changes`,
+`subscribe_path`), while every `ServerStore` delegates its whole conversation
+back to the client that made it.
+
+Recorded naively the bridge's trace would carry lines the legacy one cannot
+have, and macro-phase 2 would read a divergence produced by the instrument. So a
+call that begins while another is already being recorded runs untouched. The
+coverage check asserts both halves of that: the store's own conversation IS
+recorded, its inner client calls are NOT.
+
+### The trap: one file, two module names, two classes
+
+The daemon override installs `genropy_asgi.siteregister` into `sys.modules` as
+`gnr.web.daemon`. A module reachable under **both** dotted names can end up
+executed twice — the same file then yields two distinct class objects, and an
+`isinstance` between them is False.
+
+Measured on 2026-08-24: importing the client as
+`genropy_asgi.siteregister.siteregister_client` after the alias had already
+loaded it produced a second copy, and the `ServerStore` handed back by one was
+invisible to the other — every store call would have gone unrecorded, in
+silence. So every bench module imports the client **the way the site imports
+it**, from `gnr.web.daemon.siteregister_client`, and the coverage check pins
+that: the class the site's own module holds must be the very one the mixin
+subclasses.
+
+Same family as the two other traps this bench has already paid for: the
+libpq/Kerberos segfault behind `PGGSSENCMODE=disable`, and the SQLite one below.
+
+### The SQLite trap does not bite here
+
+The bridge runs on a python whose sqlite is **3.51.0** — the version that
+segfaults when a connection is opened in a **forked** child in WAL mode, the
+reason `run_archive_check.py` runs on the bench venv instead. The pool does not
+fork: every worker is a fresh process, so there is nothing inherited to break.
+Measured on 2026-08-24: parent and spawned child writing concurrently into one
+WAL archive, clean.
+
+### Declared conditions of a bridge run
+
+Read by `serve_bridge.py` where each one is true and stored as data in the run
+row, exactly as on the legacy side. The keys the two stacks share read side by
+side; the ones only this stack has are the two extra packages and the commits.
+
+| Condition | Standard value |
+|---|---|
+| Stack | bridge: `gnrasgiserve`, the register in-process, no daemon |
+| Processes / threads | pool ceiling 6 (`worker_max_number`), thread pools at the core's defaults |
+| Recorders | both, installed by the recipe naming the recording worker |
+| Debug | **off** (`--nodebug`) — same reason as on the legacy side |
+| Database | `test_invoice_pg`, postgres localhost:5432 — the same db the legacy twin serves |
+| Bind | `127.0.0.1:8098` (the legacy stack keeps 8099) |
+
+**Why the commits are recorded and the versions are not enough.** genropy,
+genro-asgi and genropy-asgi are all installed **editable** on this side, so a
+distribution version records the moment of installation, not the code that ran:
+genropy reports `26.6.8` here and `26.8.19.1` in the legacy venv, while both are
+the same working tree. Verified on 2026-08-24 by hashing the 319 `.py` files of
+the ten shared packages (`app core db dev lib prj sql utils web xtnd`): byte for
+byte identical. The run row therefore carries `genropy_commit` and
+`genro_asgi_commit` beside the version strings, and it is the commits that say
+whether two runs compared the same code.
+
+### Running the bridge with both recorders
+
+Hygiene first, as always: no stale process on 8098, and the legacy stack down if
+it is still up. Then, from the repository root:
+
+```bash
+PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
+    -p 8098 --nodebug
+```
+
+Every argument is the `gnrasgiserve` command line; the launcher adds only
+`--config benchmarks/compare/bridge_recipe.py`, and leaves a `--config` the
+caller named alone. It prints the archive it is recording into.
+
+What the launcher owns is the RUN, not the install: it puts `benchmarks/compare`
+on the import path — in this process and in the environment every spawned worker
+inherits, which is how the workers resolve `recording_worker` — mints the archive
+with the conditions above, and publishes its path in `GNR_BENCH_RUN`. The
+environment is the only channel that reaches a spawned worker: no object crosses
+a spawn, which is exactly why the two recorders were built to agree on a path
+rather than on an inherited handle.
+
+The recipe itself does nothing but declare. That is deliberate: building a
+recipe has to stay free of consequences, or the drift check could not build it.
+
+**The first worker may be killed before it presents itself.** Building a
+`GnrWsgiSite` can outrun the pool's 10s presentation timeout on a cold start;
+the pool logs `its process never presented itself` and starts another, which
+comes up. Observed on 2026-08-24 with the recorders installed, and it is not
+theirs: they add nothing to the site build. Worth knowing so the traceback in
+the log is not read as a failure of the bench.
+
 ## The reference session
 
 What the collection produces is a **reference**: one archived run of a session
@@ -506,26 +661,38 @@ does not reproduce identically, and the clean restart wipes the register at ever
 run. Measured and unrecoverable a minute later is what happened on 2026-08-23,
 before the archive existed.
 
+**One reference per stack, the same session.** The steps 3 to 5 below are
+identical on both sides — that is the whole point: what differs between the two
+archives must be the stacks, not what was done to them. Only the bring-up and
+the shutdown differ.
+
 The session, under the declared conditions above and starting from an empty
 register:
 
-1. hygiene as in step 3 — no stale process, and the register empty: stop
-   gunicorn and the sitedaemon, delete `siteregister_data.pik` from the site
-   folder. Nothing to delete on the recording side: the run mints its own file;
-2. start the sitedaemon (step 4), then the launcher above — it prints the archive
-   it is recording into;
+1. hygiene — no stale process on 8098, 8099 or 40004, and the register empty.
+   **Legacy**: stop gunicorn and the sitedaemon, delete `siteregister_data.pik`
+   from the site folder. **Bridge**: stop the server; there is no pickle to
+   delete, the registers live in the workers and die with them. Nothing to
+   delete on the recording side either way: the run mints its own file;
+2. start the stack — **legacy**: the sitedaemon (step 4), then `serve_legacy.py`;
+   **bridge**: `serve_bridge.py` alone. Either prints the archive it is
+   recording into;
 3. in the browser, log in with an account from `benchmarks/usernames.txt`,
    password `a`;
 4. open one table page and let the grid load;
 5. open one record, change one field, save it.
 
+Do it in a **private window**, so the login really lands in the archive instead
+of being skipped by a session cookie left over from a previous run.
+
 Then that archive is the reference: every register line joins an HTTP exchange by
 `exchange_id` — a full record or the stub of a filtered one — except the boot
 calls, which have no exchange by construction.
 
-**Close the run before reading it.** Stop gunicorn, then the sitedaemon — while
-they run, the browser's idle pings keep landing in the archive and any census
-taken earlier stops matching. Then fold the WAL into the file itself, so the
+**Close the run before reading it.** Stop the server first — gunicorn then the
+sitedaemon on legacy, `serve_bridge.py` on the bridge — because while they run
+the browser's idle pings keep landing in the archive and any census taken
+earlier stops matching. Then fold the WAL into the file itself, so the
 `.sqlite` alone is the whole archive and nobody loses the tail by copying it
 without its `-wal` companion:
 
@@ -606,12 +773,14 @@ built in process.
 
 ### Exercising the recorders without a browser
 
-Four scripts in this folder, all runnable from the repository root.
+Five scripts in this folder, all runnable from the repository root.
 
 ```bash
 python3 benchmarks/compare/http_recorder_check.py
 temp/legacy_venv/bin/python benchmarks/compare/register_recorder_check.py
 temp/legacy_venv/bin/python benchmarks/compare/run_archive_check.py
+GNR_DAEMON_PROVIDER=genropy-asgi PYTHONPATH=benchmarks/compare \
+    python benchmarks/compare/bridge_coverage_check.py
 python3 benchmarks/compare/drive_login.py [username]
 ```
 
@@ -640,6 +809,25 @@ class stops matching the `except` clause that uses it — silently, in a path th
 only runs once something has already gone wrong. The wrapper hands back anything
 that is not a routine untouched, and `inspect.isroutine` is the guard, not
 `callable`.
+
+`bridge_coverage_check.py` needs nothing running and runs on the bridge's own
+interpreter: 22 assertions, and it is the one check whose job is to fail *later*
+rather than now. The bridge recorder is a mixin over an explicit list of verbs,
+which can silently fall behind the client it shadows — the legacy wrapper never
+could, since it caught everything — so this check compares the list against the
+client's live surface in both directions and says which name appeared or
+disappeared. It guards the second copy this side needs as well: it builds the
+bench recipe and the shipped one through the runtime's own read door and fails
+if they come to differ in anything but the worker class. Then it pins the
+module-identity trap described above, and exercises the recorder itself on a
+stub site — one line for the call the site made, none for the calls the client
+makes on itself, the store handed back wrapped and its own conversation
+recorded.
+
+The two env vars are not optional: without the provider the check would look at
+the legacy Pyro client instead of the bridge's — which is exactly the mistake it
+exists to catch, so it fails loudly on its first assertion rather than passing
+against the wrong class.
 
 `drive_login.py` replays a real login against the running site over HTTP, no
 browser involved: it reuses `replay_a1.build_plan` to pull the two login
