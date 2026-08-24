@@ -18,14 +18,16 @@ recognised rather than discovered.
 
 ## Work Plan
 
-- [ ] **Phase 1**: `site_caller` field on every register line
+- [>] **Phase 1**: `site_caller` field on every register line
+  > In execution since 2026-08-24T22:26:29+02:00
   - Run: opus / medium
   - Pattern: `benchmarks/compare/register_recorder.py` (the line builder — the
     bridge inherits it, so the field lands once and appears on both stacks);
     check style: `benchmarks/compare/register_recorder_check.py`
   - Files: benchmarks/compare/register_recorder.py,
     benchmarks/compare/register_recorder_mixin.py (if the walk needs it),
-    benchmarks/compare/register_recorder_check.py
+    benchmarks/compare/register_recorder_check.py,
+    benchmarks/compare/bridge_coverage_check.py
   - Decisions: field name `site_caller` (owner delegated naming for internal
     instrumentation, 2026-08-24); content `file:line` plus function name of the
     first frame OUTSIDE the register client (and outside the recorder itself);
@@ -37,10 +39,14 @@ recognised rather than discovered.
     module. Keep the field inside the JSON line — no new promoted column.
     Update the check script to assert the field's presence and shape on a real
     line from both stacks (legacy via `drive_login`, bridge via the same driver
-    on 8098).
+    on 8098). The legacy wrapper path is asserted in register_recorder_check.py
+    (legacy venv), the bridge mixin path in bridge_coverage_check.py (bridge
+    interpreter): the mixin does not import on the legacy venv, measured
+    2026-08-24.
   - Done: `python benchmarks/compare/register_recorder_check.py` passes;
-    a `drive_login` smoke on each stack produces register lines whose
-    `site_caller` names a real `gnr/web` file and line.
+    `python benchmarks/compare/bridge_coverage_check.py` passes on the bridge
+    interpreter; a `drive_login` smoke on each stack produces register lines
+    whose `site_caller` names a real `gnr/web` file and line.
   - Verify: now — read one sample line per stack: the named caller is the SITE
     code you expect (not the recorder, not the client), and the field reads
     well enough to diagnose Phase 5 with.
