@@ -22,10 +22,31 @@ never inherited from whatever ran last on that thread.
 
 What a line carries: the verb, the surface it was intercepted on (`client` for a
 method declared on the legacy class, `passthrough` for a name its `__getattr__`
-forwards, `store` for a call on a `ServerStore`), the arguments and the answer,
+forwards, `store` for a call on a `ServerStore`), the site code that made the
+call, the arguments and the answer,
 the wire attempts and the error class, the ordinal within its
 exchange, the duration, thread and pid. Store lines carry as well the
 `register_name` and `register_item_id` of the store the call happened on.
+
+`site_caller` is that site code: `file:line function` of the first frame outside
+the recorder and outside the register client. It is what turns a count of calls
+into a diagnosis — a divergence of two register calls says nothing until the two
+lines name who asked. The file is cut down to the path its dotted module name
+implies, because the two stacks run the same genropy from different places (a
+frozen copy under `temp/legacy_venv`, an editable checkout under
+`genropy/gnrpy`) and two absolute paths would read as a divergence produced by
+the instrument. The module name is what says where the package begins, and the
+filesystem is not: walking up while `__init__.py` exists overshot on the
+editable side — measured, `gnrpy/` carries one too — and the same file came out
+as `gnr/lib/services/__init__.py` on one stack and `gnrpy/gnr/lib/services/__init__.py`
+on the other. A frame with no module name, or `__main__` — a site resource, a
+script — keeps its absolute path: both stacks run the same project directory, so
+it compares anyway.
+
+The frames to skip are derived, never listed: this module, the module of the
+recorder's own class, and the modules of every class in the client's MRO. The
+bridge recorder therefore needs no walk of its own — its client is a subclass,
+so the mixin's module comes in with the MRO.
 
 `wire_calls` counts the round trips one call cost, and it is counted on the Pyro
 proxy rather than guessed: the legacy retry loop lives inside the closure
@@ -231,6 +252,37 @@ class RegisterRecorder:
             self.ordinals[exchange_id] = ordinal
             return ordinal
 
+    @functools.cached_property
+    def instrument_files(self):  # wf:phase-1:new
+        """The files whose frames are the instrument or the client, never the site."""
+        files = {__file__, inspect.getfile(type(self))}
+        files.update(inspect.getfile(cls) for cls in type(self.client).__mro__
+                     if cls is not object)
+        return frozenset(files)
+
+    @property
+    def site_caller(self):  # wf:phase-1:new
+        """`file:line function` of the site code that made the call in flight."""
+        frame = inspect.currentframe()
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if filename not in self.instrument_files:
+                path = self.get_comparable_path(filename,
+                                                frame.f_globals.get("__name__"))
+                return f"{path}:{frame.f_lineno} {frame.f_code.co_name}"
+            frame = frame.f_back
+        return None
+
+    def get_comparable_path(self, filename, module_name):  # wf:phase-1:new
+        """The path the import system implies; the absolute one outside a package."""
+        if not module_name or module_name == "__main__":
+            return filename
+        depth = module_name.count(".") + 1
+        if os.path.basename(filename) == "__init__.py":
+            depth += 1
+        parts = filename.split(os.sep)[-depth:]
+        return os.sep.join(parts)
+
     def get_comparable_value(self, value):
         if value is None or isinstance(value, (bool, int, float)):
             return value
@@ -252,6 +304,7 @@ class RegisterRecorder:
                       "thread": threading.get_ident(),
                       "surface": surface,
                       "verb": verb,
+                      "site_caller": self.site_caller,
                       "args": [self.get_comparable_value(arg) for arg in args],
                       "kwargs": {key: self.get_comparable_value(value)
                                  for key, value in kwargs.items()},

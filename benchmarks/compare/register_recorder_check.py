@@ -11,6 +11,7 @@ Needs the bench venv, because the recorder imports genropy.
 Run: temp/legacy_venv/bin/python benchmarks/compare/register_recorder_check.py
 """
 
+import inspect
 import json
 import os
 import sys
@@ -311,6 +312,54 @@ recorded = lines(arc)
 check("the writer failure is recorded once the writer answers again",
       len(recorded) == 1
       and recorded[0]["recorder_error"].startswith("RuntimeError"))
+
+# 14. the line names the site code that made the call, not the instrument
+rec, site, wire, arc = fresh()
+site.enter_exchange("ex14")
+rec.get_item("p1")
+caller = lines(arc)[0]["site_caller"]
+check("the line carries the caller of the call",
+      caller is not None)
+check("the caller is this script, at a line of its own, in module scope",
+      caller.startswith(os.path.abspath(__file__))
+      and caller.endswith(" <module>")
+      and caller.split(":")[-1].split(" ")[0].isdigit())
+check("the caller is neither the recorder nor the client",
+      "register_recorder.py" not in caller
+      and "siteregister_client.py" not in caller)
+
+
+def ask_the_register(recorder):
+    """A named frame, so the check sees the function the caller names."""
+    return recorder.pageStore("p1").register_item
+
+
+rec, site, wire, arc = fresh()
+site.enter_exchange("ex14b")
+ask_the_register(rec)
+callers = [line["site_caller"] for line in lines(arc)]
+check("the calling function is named, on the store line as on the client one",
+      all(caller.endswith(" ask_the_register") for caller in callers))
+
+# 15. a file inside a package is named as its dotted module name implies, so the
+#     two stacks compare: the same genropy read from two places gives one path
+rec, site, wire, arc = fresh()
+check("a module in a package is named from the package root down",
+      rec.get_comparable_path(inspect.getfile(SiteRegisterClient),
+                              SiteRegisterClient.__module__)
+      == "gnr/web/daemon/siteregister_client.py")
+check("a package's own __init__ keeps the package directory",
+      rec.get_comparable_path("/any/where/gnr/lib/services/__init__.py",
+                              "gnr.lib.services")
+      == "gnr/lib/services/__init__.py")
+check("a directory above the package root never reaches the path",
+      rec.get_comparable_path("/a/genropy/gnrpy/gnr/lib/services/__init__.py",
+                              "gnr.lib.services")
+      == rec.get_comparable_path("/b/site-packages/gnr/lib/services/__init__.py",
+                                 "gnr.lib.services"))
+check("a file with no module name keeps its absolute path",
+      rec.get_comparable_path(os.path.abspath(__file__), "__main__")
+      == os.path.abspath(__file__))
 
 drop_archive()
 print()

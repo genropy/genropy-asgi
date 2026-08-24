@@ -20,7 +20,10 @@ What it asserts:
 5. the bench recipe and the shipped recipe build the same document — the whole
    tree, not the pool alone — except for the worker class;
 6. the recorder writes one line for the call the site made and none for the
-   calls the client makes on itself, and hands back a wrapped store;
+   calls the client makes on itself, hands back a wrapped store, and names on
+   every line the site code that made the call — the mixin's own frames and the
+   client's excluded, which on this side is what the legacy wrapper got for
+   free by standing outside the client;
 7. the debug the run row declares is the debug the recipe actually applies.
 
 No site, no server, no database: a throwaway archive in `temp/` and the real
@@ -218,6 +221,27 @@ check("a store line names the register and the item it happened on",
           for line in written[1:]))
 check("the ordinals within the exchange are unbroken",
       [line.get("ordinal") for line in written] == [1, 2, 3])
+
+
+def ask_the_register(client):
+    """A named frame, so the check sees the function the caller names."""
+    client.dump()
+
+
+client, archive = fresh_client()
+ask_the_register(client)
+caller = lines(archive)[0].get("site_caller")
+check("the line names the site code that made the call", caller is not None)
+check("the caller is the calling function of this script, at a line of its own",
+      caller.startswith(os.path.abspath(__file__))
+      and caller.endswith(" ask_the_register")
+      and caller.split(":")[-1].split(" ")[0].isdigit())
+check("neither the mixin nor the client is mistaken for the site",
+      "register_recorder" not in caller and "siteregister_client" not in caller)
+check("the client's own module is excluded through the MRO, not by a list",
+      inspect.getfile(SiteRegisterClient) in client.recording.instrument_files
+      and inspect.getfile(RecordingRegisterClient)
+      in client.recording.instrument_files)
 
 # 7. the declared debug is the debug the recipe applies
 #
