@@ -61,11 +61,9 @@ is installed.
 
 from __future__ import annotations
 
-import atexit
 import logging
 import os
 import shutil
-from types import SimpleNamespace
 from typing import Any
 
 from genro_asgi.spa import RegisterRegistry
@@ -73,6 +71,7 @@ from genro_asgi.spa.orchestration import SpaWorker
 from gnr.core.gnrbag import Bag
 
 from .legacy_bag import LegacyBagCollector
+from .site_engine_factory import GenropySiteEngineFactory
 
 log = logging.getLogger("genropy_asgi.spa")
 
@@ -107,12 +106,17 @@ class GenropyWorker(SpaWorker):
         *,
         source: str,
         debug: bool = False,
+        group_engine: Any = None,
         **kwargs: Any,
     ) -> None:
         """Args:
         name: the worker's name (the one its handler minted).
         source: the GenroPy site — a site name or a site directory path.
+            Ignored when ``group_engine`` arrives: the site is already built.
         debug: True wraps the site in the Werkzeug debugger middleware.
+        group_engine: the ``GnrWsgiSite`` the group's template built, handed
+            to a worker born by fork (fork contract §8, 2026-08-24). When it
+            is None the worker was spawned and builds its own site.
         kwargs: forwarded to ``SpaWorker`` — the spawn grammar
             (``freeze_handler``, ``group``, the pools) plus the policies.
             ``user_idle_freeze_minutes`` not named here is read from the
@@ -122,7 +126,11 @@ class GenropyWorker(SpaWorker):
         """
         idle_from_site = "user_idle_freeze_minutes" not in kwargs
         super().__init__(name, **kwargs)
-        self._gnr_site = self._create_site(source, debug)
+        # The forked worker receives the site its template built; the spawned
+        # one builds its own. Nothing below this line differs between them.
+        self._gnr_site = group_engine
+        if self._gnr_site is None:
+            self._gnr_site = self._create_site(source, debug)
         if idle_from_site:
             cleanup = self._gnr_site.custom_config.getAttr("cleanup") or {}
             seconds = int(cleanup.get(IDLE_FREEZE_LEGACY_KEY) or IDLE_FREEZE_DEFAULT_SECONDS)
@@ -282,44 +290,12 @@ class GenropyWorker(SpaWorker):
         super().exit_process()
 
     def _create_site(self, source: str, debug: bool) -> Any:
-        """Create the ``GnrWsgiSite`` from a site name or a site directory path.
+        """The spawned worker's site, built through the group's own factory.
 
-        ``GnrWsgiSite`` wants the site NAME — every path it needs it re-resolves
-        from the name through genropy's own two routes (``*/sites/<name>/``,
-        then ``*/instances/<name>/`` with the ``root.py`` marker) — so a path
-        is turned into its name deliberately (genropy-asgi#4): the folder's
-        basename, or the instance's name when the folder is the ``site/`` of
-        the instances layout. Handing the path itself through would ride the
-        resolver's join accident into ``get_instanceconfig``, which then reads
-        ``instanceconfig.xml`` INSIDE the site folder and fails. No file is
-        required in the site folder: the site is configuration, not code.
-
-        The ``gnr`` imports are deferred, transcribed from the pre-rebase
-        host: this module must stay importable (for ``GenropyRegistry`` and
-        the capture) even while the site machinery cannot load.
+        One construction for both births (fork contract §8, 2026-08-24): the
+        forked worker receives a site the template built with this very
+        factory. ``build_site`` and not ``build_group_engine`` — closing the
+        db connection is what a template owes its children, and a worker
+        building for itself has none to close.
         """
-        from gnr.core.gnrconfig import getGnrConfig
-        from gnr.web.gnrwsgisite import GnrWsgiSite
-
-        gnr_config = getGnrConfig(set_environment=True)
-        site = source
-        if os.path.isdir(source):
-            path = os.path.abspath(source)
-            site = os.path.basename(path)
-            if site == "site":
-                site = os.path.basename(os.path.dirname(path))
-        options = SimpleNamespace(
-            debug=debug,
-            noclean=False,
-            reload=False,
-            remote_edit=None,
-            source_instance=None,
-            restore=None,
-        )
-
-        log.info("Creating GnrWsgiSite for %r", site)
-        gnr_site = GnrWsgiSite(site, _gnrconfig=gnr_config, options=options)
-        gnr_site._local_mode = True
-        atexit.register(gnr_site.on_site_stop)
-        log.info("GnrWsgiSite %r ready", gnr_site.site_name)
-        return gnr_site
+        return GenropySiteEngineFactory(source=source, debug=debug).build_site()
