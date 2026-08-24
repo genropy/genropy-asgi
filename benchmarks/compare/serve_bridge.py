@@ -47,6 +47,7 @@ import sys
 from datetime import datetime
 
 from genropy_asgi.spa.cli import cmd_serve, resolve_instance_path
+from genropy_asgi.spa.config import DEBUG_OFF_WORDS
 from gnr.app.gnrdeploy import PathResolver
 from gnr.core.gnrbag import Bag
 
@@ -96,6 +97,23 @@ class RunConditions:
         return importlib.import_module(WORKER_MAX_NUMBER_SOURCE).WORKER_MAX_NUMBER
 
     @property
+    def debug(self):
+        """Debug as the RECIPE will read it, not as the command line looks.
+
+        The two are not the same question. ``--nodebug`` makes the CLI write an
+        empty ``GNR_ASGI_DEBUG``, but with the flag absent the recipe reads
+        whatever the environment already holds — so a variable exported in the
+        shell decides the run while the command line says nothing. Reading the
+        flag alone would let the run row declare a debug the worker never had,
+        and debug changes what the site measures. The rule is imported from the
+        recipe's own module rather than restated, so the two cannot drift.
+        """
+        if "--nodebug" in self.argv:
+            return False
+        value = os.environ.get("GNR_ASGI_DEBUG")
+        return True if value is None else value.strip().lower() not in DEBUG_OFF_WORDS
+
+    @property
     def declared(self):
         """The run row: the keys the legacy run declares, plus the ones only this stack has."""
         host = self.get_option("-H", "--host") or "127.0.0.1"
@@ -106,7 +124,7 @@ class RunConditions:
                 "workers": self.worker_max_number,
                 "threads": None,
                 "worker_class": RECORDING_WORKER,
-                "debug": "--nodebug" not in self.argv,
+                "debug": self.debug,
                 "recorders": ["http", "register"],
                 "database": self.database,
                 "genropy": importlib.metadata.version("genropy"),

@@ -17,10 +17,11 @@ What it asserts:
 3. every recorded verb really is an override on the recording client, bound to
    the parent implementation it shadows;
 4. the store surface the recorder reads as properties is the store's own;
-5. the bench recipe and the shipped recipe build the SAME pool, except for the
-   worker class;
+5. the bench recipe and the shipped recipe build the same document — the whole
+   tree, not the pool alone — except for the worker class;
 6. the recorder writes one line for the call the site made and none for the
-   calls the client makes on itself, and hands back a wrapped store.
+   calls the client makes on itself, and hands back a wrapped store;
+7. the debug the run row declares is the debug the recipe actually applies.
 
 No site, no server, no database: a throwaway archive in `temp/` and the real
 client on a stub site. It runs on the bridge's own interpreter, where genropy,
@@ -32,6 +33,7 @@ Run, from the repository root:
       python benchmarks/compare/bridge_coverage_check.py
 """
 
+import difflib
 import inspect
 import json
 import os
@@ -43,6 +45,7 @@ from gnr.web import gnrwsgisite
 from gnr.web.daemon.siteregister_client import SiteRegisterClient
 
 from bridge_recipe import RECORDING_WORKER
+from serve_bridge import RunConditions
 from register_recorder import STORE_READ_PROPERTIES, ServerStore, StoreRecorder
 from register_recorder_mixin import RECORDED_VERBS, RecordedVerb, RecordingRegisterClient
 from run_archive import RunArchive
@@ -52,6 +55,9 @@ ARCHIVE = os.path.join(BENCH_ROOT, "temp", "bridge_coverage_check.sqlite")
 
 SHIPPED_RECIPE = os.path.join(BENCH_ROOT, "src", "genropy_asgi", "spa", "config.py")
 BENCH_RECIPE = os.path.join(BENCH_ROOT, "benchmarks", "compare", "bridge_recipe.py")
+
+# The worker the package's own recipe names — the one line the bench replaces.
+SHIPPED_WORKER = "genropy_asgi.spa.genropy_worker:GenropyWorker"
 
 CONDITIONS = {"stack": "bridge", "sitename": "test_invoice_pg"}
 
@@ -94,6 +100,18 @@ def lines(archive):
 def built_pool(recipe_path):
     """The pool the recipe declares, read back through the runtime's own door."""
     return ConfigurationHandler(recipe_path).group_kwargs("site")
+
+
+def built_document(recipe_path):
+    """The WHOLE document the recipe builds, as the XML of its tree.
+
+    Not the pool alone: the recipe transcribes the listener, the middleware,
+    the applications, the console gate and the commander as well, and drift in
+    any of them would leave the bench serving a different server from the one
+    under comparison. Comparing the rendered tree is what makes the check say
+    what its name promises.
+    """
+    return ConfigurationHandler(recipe_path).node("").value.to_xml()
 
 
 # 1. one client class in the process, and it is the bridge's
@@ -148,10 +166,25 @@ check("the bench recipe names the recording worker",
       bench["pool"].get("worker_class") == RECORDING_WORKER)
 difference = {key for key in set(shipped["pool"]) | set(bench["pool"])
               if shipped["pool"].get(key) != bench["pool"].get(key)}
-check("nothing else in the pool differs — the transcription has not drifted",
-      difference == {"worker_class"})
+check("nothing else in the pool differs", difference == {"worker_class"})
 if difference != {"worker_class"}:
-    print(f"     the copy has drifted on: {sorted(difference)}")
+    print(f"     the pool has drifted on: {sorted(difference)}")
+
+# ...and the SAME comparison over the whole document, not the pool alone. The
+# pool-only version of this check passed on 2026-08-24 with the bench recipe's
+# listener port changed and its entire middleware section deleted: a bench that
+# serves a different server measures a different server, in silence.
+shipped_xml = built_document(SHIPPED_RECIPE)
+# The worker class is the one licensed difference, so it is put back before the
+# comparison: what survives is drift and nothing else.
+bench_xml = built_document(BENCH_RECIPE).replace(RECORDING_WORKER, SHIPPED_WORKER)
+check("the whole document is the shipped one, once the worker class is put back",
+      bench_xml == shipped_xml)
+if bench_xml != shipped_xml:
+    for line in difflib.unified_diff(shipped_xml.split("><"), bench_xml.split("><"),
+                                     "shipped", "bench", lineterm="", n=0):
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            print(f"     {line.strip()[:150]}")
 
 # 6. one line per call the SITE made, and none for the client's own inner calls
 client, archive = fresh_client()
@@ -185,6 +218,30 @@ check("a store line names the register and the item it happened on",
           for line in written[1:]))
 check("the ordinals within the exchange are unbroken",
       [line.get("ordinal") for line in written] == [1, 2, 3])
+
+# 7. the declared debug is the debug the recipe applies
+#
+# Two different readings of the same condition: the launcher writes the run row
+# before the CLI has touched the environment, the recipe reads the environment
+# afterwards. Reading only the command line let a shell variable decide the run
+# while the archive declared the opposite — and debug changes what the site
+# measures, so two runs would be believed comparable when they were not.
+# The order is the real one: the launcher writes the run row BEFORE the CLI
+# touches the environment, and the recipe is built after it — so the simulation
+# below reads the condition first and only then applies the CLI's own write.
+for flag, env_value in (("--nodebug", None), (None, None), (None, "false"),
+                        (None, ""), (None, "1"), ("--nodebug", "1")):
+    argv = ["test_invoice_pg", "-p", "8098"] + ([flag] if flag else [])
+    os.environ.pop("GNR_ASGI_DEBUG", None)
+    if env_value is not None:
+        os.environ["GNR_ASGI_DEBUG"] = env_value
+    declared = RunConditions(argv, "/tmp/site_for_the_check").debug
+    if flag == "--nodebug":                     # what cmd_serve writes, verbatim
+        os.environ["GNR_ASGI_DEBUG"] = ""
+    applied = built_pool(BENCH_RECIPE)["pool"]["worker_kwargs"]["debug"]
+    check(f"debug declared == debug applied (flag={flag!r}, env={env_value!r}): {applied}",
+          declared == applied)
+os.environ.pop("GNR_ASGI_DEBUG", None)
 
 drop_archive()
 print()

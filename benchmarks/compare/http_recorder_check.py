@@ -195,6 +195,49 @@ check("response intact when the archive writer fails",
 check("the writer failure is recorded once the writer answers again",
       recorded and recorded[0].get("recorder_error", "").startswith("RuntimeError"))
 
+# 7. a site that dies before returning a body still leaves its line
+#
+# The exchange id is injected into the environ BEFORE the application is
+# called, so the register recorder is already stamping calls with it. An
+# exchange that produced no HTTP line at all would leave those calls naming an
+# exchange the trace does not contain — the unjoinable line the stub exists to
+# prevent, on the one case macro-phase 2 most wants to compare: the request
+# that errored.
+rec, arc = fresh()
+
+
+def exploding_app(environ, start_response):
+    raise RuntimeError("the site died before there was a body")
+
+
+rec.application = exploding_app
+raised = None
+try:
+    rec({"REQUEST_METHOD": "POST", "PATH_INFO": "/sys/rpc", "QUERY_STRING": ""},
+        lambda *args, **kwargs: None)
+except RuntimeError as exc:
+    raised = exc
+recorded = lines(arc)
+check("the site's failure reaches the caller untouched", isinstance(raised, RuntimeError))
+check("the exchange still leaves exactly one line", len(recorded) == 1)
+check("the line says no reply was ever produced",
+      recorded and recorded[0]["status"] is None and recorded[0]["resp_body"] == "")
+check("a request that died is not filed as a filtered exchange",
+      recorded and "filtered" not in recorded[0])
+
+# ...and the ping shape does not fool it: a /_ping that dies has no reply, so
+# the empty-ping filter has nothing to read and must not claim the exchange.
+rec, arc = fresh()
+rec.application = exploding_app
+try:
+    rec({"REQUEST_METHOD": "POST", "PATH_INFO": "/_ping", "QUERY_STRING": ""},
+        lambda *args, **kwargs: None)
+except RuntimeError:
+    pass
+recorded = lines(arc)
+check("a ping that died is a record, not an empty-ping stub",
+      len(recorded) == 1 and "filtered" not in recorded[0])
+
 drop_archive()
 print()
 if failures:

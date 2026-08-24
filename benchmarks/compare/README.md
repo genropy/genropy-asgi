@@ -785,9 +785,11 @@ python3 benchmarks/compare/drive_login.py [username]
 ```
 
 `http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder
-wrapping it, a throwaway archive, and 24 assertions over the filters, the stub of
-a filtered exchange, the whole bodies and the three guarantees about failure —
-on the request side, on the reply side, and inside the archive writer itself. It
+wrapping it, a throwaway archive, and 29 assertions over the filters, the stub of
+a filtered exchange, the whole bodies and the four guarantees about failure —
+on the request side, on the reply side, inside the archive writer itself, and
+the one added on 2026-08-24: a site that dies before returning a body still
+leaves its line. It
 is the machine evidence that a fault inside the recorder never reaches the
 response — kept versioned rather than in a scratch file, because evidence that
 gets deleted is not evidence.
@@ -811,14 +813,20 @@ that is not a routine untouched, and `inspect.isroutine` is the guard, not
 `callable`.
 
 `bridge_coverage_check.py` needs nothing running and runs on the bridge's own
-interpreter: 22 assertions, and it is the one check whose job is to fail *later*
+interpreter: 29 assertions, and it is the one check whose job is to fail *later*
 rather than now. The bridge recorder is a mixin over an explicit list of verbs,
 which can silently fall behind the client it shadows — the legacy wrapper never
 could, since it caught everything — so this check compares the list against the
 client's live surface in both directions and says which name appeared or
 disappeared. It guards the second copy this side needs as well: it builds the
-bench recipe and the shipped one through the runtime's own read door and fails
-if they come to differ in anything but the worker class. Then it pins the
+bench recipe and the shipped one through the runtime's own read door and
+compares the WHOLE rendered document — listener, middleware, applications,
+console gate, commander and pool — failing if anything but the worker class
+differs. Comparing the pool alone was not enough, measured on 2026-08-24: with
+the bench recipe's listener port changed and its entire middleware section
+deleted, the pool-only version still reported no drift. It also checks that the
+debug the run row declares is the debug the recipe applies, for every
+combination of the flag and the environment variable. Then it pins the
 module-identity trap described above, and exercises the recorder itself on a
 stub site — one line for the call the site made, none for the calls the client
 makes on itself, the store handed back wrapped and its own conversation

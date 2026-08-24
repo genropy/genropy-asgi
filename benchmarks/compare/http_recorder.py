@@ -80,7 +80,18 @@ class HttpRecorder:
             reply["headers"] = headers
             return start_response(status, headers, exc_info)
 
-        body = self.application(environ, recording_start_response)
+        try:
+            body = self.application(environ, recording_start_response)
+        except BaseException:
+            # The site died before there was a body to relay, so the generator
+            # below — the only writer — will never exist. The line is written
+            # here instead and the failure re-raised untouched: the exchange id
+            # is already in the environ, the register recorder is already
+            # stamping calls with it, and an exchange with no HTTP line at all
+            # is precisely the unjoinable register line the stub exists to
+            # prevent. What the record says is that no reply was ever produced.
+            self.write_record(record, reply, [], started)
+            raise
         return self.relay_body(body, record, reply, started)
 
     def relay_body(self, body, record, reply, started):
@@ -157,7 +168,13 @@ class HttpRecorder:
             headers = reply.get("headers") or []
             path = record.get("path")
             status = reply.get("status") or ""
-            filtered = self.get_filter_reason(path, headers, body)
+            # No status means no reply was ever started, so there is nothing to
+            # filter ON: the content type that recognises a static and the body
+            # that recognises an empty ping both belong to a reply that does not
+            # exist. Filtering here would file a request that died as a ping
+            # that answered nothing. It gets a full record instead, whose null
+            # status says what happened.
+            filtered = self.get_filter_reason(path, headers, body) if status else None
             if filtered:
                 self.append_record(self.get_stub_record(record, status, filtered))
                 return

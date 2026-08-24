@@ -493,3 +493,45 @@
   and its `main` are fixed by the runtime, which looks the recipe up by that
   class name. The `RunConditions` surface is deliberately ricalcata from
   `serve_legacy.py`, so the two run rows read side by side.
+
+## Quality check 2026-08-24
+
+Three defects found by the whole-diff review and repaired before the stamp.
+None was in the recording mechanism itself; all three were in what the bench
+would have TOLD us later, which is the worse kind.
+
+- **A request that died left no HTTP line at all** (`http_recorder.py`). The
+  exchange id is injected into the environ before the application is called, so
+  the register recorder was already stamping calls with it — but the only writer
+  is the `finally` of the generator `relay_body` returns, and an application
+  that raises before returning an iterable never gets there. Measured: id
+  injected, zero rows. The result was unjoinable register lines, the exact
+  invariant the stub was invented to protect, broken on the one case
+  macro-phase 2 most wants to compare. Repaired by writing the line from the
+  `except` and re-raising untouched. Second half of the same repair: with no
+  reply there is nothing to filter ON, so the filters are skipped and the
+  exchange gets a full record whose null status says what happened — otherwise
+  a `/_ping` that died would have been filed as an empty ping that answered
+  nothing.
+- **The anti-drift check compared the pool and nothing else**
+  (`bridge_coverage_check.py`). The bench recipe transcribes the whole document
+  — listener, middleware, applications, console gate, commander — and only the
+  group kwargs were being compared. Measured: with the default port changed to
+  9999 and `cfg.middleware()` deleted, the check still said the transcription
+  had not drifted. Repaired by comparing the rendered XML of the whole tree,
+  with the worker class substituted back so the one licensed difference does not
+  mask the others.
+- **The declared debug could lie** (`serve_bridge.py`). The run row derived it
+  from `--nodebug` on the command line while the recipe derives it from
+  `GNR_ASGI_DEBUG`; a variable exported in the shell would decide the run while
+  the archive declared the opposite, and debug changes what the site measures.
+  Repaired by importing the recipe's own rule (`DEBUG_OFF_WORDS`) instead of
+  restating it, and by a check that simulates the real order — the launcher
+  reads the condition, then the CLI writes the environment, then the recipe is
+  built — over six combinations of flag and variable.
+
+Each repair carries a check that fails when the defect is put back; verified by
+putting each one back. The two archived reference runs are unaffected: the
+bridge run has zero unjoinable lines, its declared debug matches what ran, and
+the recipe was a faithful transcription on the day it was performed (diffed line
+by line: only comments and the worker-class line).
