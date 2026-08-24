@@ -29,7 +29,7 @@ commits make that visible.
 
 Run, from the repository root:
 
-  temp/../ python benchmarks/compare/serve_bridge.py test_invoice_pg \
+  PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
       -p 8098 --nodebug
 
 Every argument is the ``gnrasgiserve`` command line: this launcher adds only
@@ -62,10 +62,10 @@ RECIPE = os.path.join(BENCH_DIR, "bridge_recipe.py")
 WORKER_MAX_NUMBER_SOURCE = "genro_asgi.spa.orchestration.group_handler"
 
 
-class RunConditions:  # wf:phase-5:new
+class RunConditions:
     """The declared conditions of a bridge run, read from where each one is true."""
 
-    def __init__(self, argv, path):  # wf:phase-5:new
+    def __init__(self, argv, path):
         self.argv = argv
         self.path = path
         self.run_id = f"bridge-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
@@ -133,10 +133,10 @@ class RunConditions:  # wf:phase-5:new
                               capture_output=True, text=True).stdout.strip()
 
 
-class BridgeLauncher:  # wf:phase-5:new
+class BridgeLauncher:
     """Puts the bench on the import path, mints the run, then hands over to the CLI."""
 
-    def __init__(self, argv):  # wf:phase-5:new
+    def __init__(self, argv):
         self.argv = list(argv)
 
     @property
@@ -146,12 +146,12 @@ class BridgeLauncher:  # wf:phase-5:new
             return self.argv
         return self.argv + ["--config", RECIPE]
 
-    def publish_import_path(self):  # wf:phase-5:new
+    def publish_import_path(self):
         """The bench directory, importable here and in every worker the pool spawns."""
         entries = [BENCH_DIR] + [p for p in (os.environ.get("PYTHONPATH") or "").split(os.pathsep) if p]
         os.environ["PYTHONPATH"] = os.pathsep.join(entries)
 
-    def start_run(self, path):  # wf:phase-5:new
+    def start_run(self, path):
         """Mint the archive of this run and publish it to the workers to come."""
         conditions = RunConditions(self.argv, path)
         archive_dir = os.environ.get(ARCHIVE_DIR_ENV) or DEFAULT_ARCHIVE_DIR
@@ -160,7 +160,7 @@ class BridgeLauncher:  # wf:phase-5:new
         os.environ[RUN_ENV] = archive.path
         print(f"recording run {conditions.run_id} into {archive.path}")
 
-    def serve(self):  # wf:phase-5:new
+    def serve(self):
         """The whole launch: import path, run, then the CLI's own command."""
         self.publish_import_path()
         self.start_run(resolve_instance_path(self.argv[0]))

@@ -28,10 +28,10 @@ from http_recorder import HttpRecorder
 from register_recorder_mixin import RecordingRegisterClient
 
 
-class RecordingGenropyWorker(GenropyWorker):  # wf:phase-5:new
+class RecordingGenropyWorker(GenropyWorker):
     """A bridge worker whose site and register both write into the run archive."""
 
-    def __init__(self, name, **kwargs):  # wf:phase-5:new
+    def __init__(self, name, **kwargs):
         gnrwsgisite.SiteRegisterClient = RecordingRegisterClient
         super().__init__(name, **kwargs)
         self.wsgi_app = HttpRecorder(self.wsgi_app)

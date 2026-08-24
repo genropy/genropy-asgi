@@ -34,7 +34,7 @@ from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 RECORDING_WORKER = "recording_worker:RecordingGenropyWorker"
 
 
-class ServerConfiguration(BridgeConfiguration):  # wf:phase-5:new
+class ServerConfiguration(BridgeConfiguration):
     """The shipped recipe, with the recording worker in the pool."""
 
     def main(self, root: Any) -> None:

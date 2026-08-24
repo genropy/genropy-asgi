@@ -485,3 +485,11 @@
   editable working trees rather than getting a frozen venv of its own, because
   macro-phase 2 edits genro-asgi and genropy-asgi at every turn of the
   convergence loop and a frozen environment would have to be rebuilt each time.
+- **Naming review: accept all** (owner, 2026-08-24). Thirteen free names, three
+  minimality flags presented and waved through — `RecordedVerb.call`,
+  `BridgeLauncher.publish_import_path` and `.start_run`, each with a single
+  caller and each kept because it names a step the reader would otherwise have
+  to reconstruct from a closure or a three-statement block. `ServerConfiguration`
+  and its `main` are fixed by the runtime, which looks the recipe up by that
+  class name. The `RunConditions` surface is deliberately ricalcata from
+  `serve_legacy.py`, so the two run rows read side by side.

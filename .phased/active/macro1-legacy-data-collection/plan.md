@@ -410,9 +410,70 @@ loop stay in macro-phase 2.
   - Verify: now — the archive answers a question you would actually ask: pick one
     RPC exchange and read its register conversation out of the SQLite file
 
-- [>] **Phase 5**: the two recorders on the bridge, and its reference session
-  > In execution since 2026-08-23T22:12:55Z
-  > Testing: awaiting the human's `Verify: now` checks — the reference session on the bridge, recording into bridge-20260824T063348 | commit: d0036a1
+- [x] **Phase 5**: the two recorders on the bridge, and its reference session
+  > Done: both recorders installed on the bridge with nothing patched into
+    genro-asgi or genropy-asgi. The install rides the RECIPE: `bridge_recipe.py`
+    is the shipped recipe transcribed with ONE line changed — the worker class —
+    and the pool resolves that import string in the worker process itself, so
+    naming `RecordingGenropyWorker` installs both recorders in every worker.
+    That worker assigns the recording client into `gnr.web.gnrwsgisite` BEFORE
+    the site is built (the site's `__init__` forces `site.register` into
+    existence) and wraps `wsgi_app` outermost afterwards. On the register side
+    the mechanism is a MIXIN over the client's 49 explicit methods, each override
+    delegating to the parent — the bridge's client has no `__getattr__` for a
+    wrapper to ride. The line-building machinery is INHERITED from the legacy
+    recorder rather than rewritten, which is what keeps the record shape from
+    drifting. Only the OUTERMOST call is recorded: a subclass sits inside the
+    client's own call path where the legacy wrapper never did, and without the
+    guard the bridge's trace would carry lines the legacy one cannot have.
+    `serve_bridge.py` owns the RUN, as `serve_legacy.py` does on the other stack:
+    it puts `benchmarks/compare` on the import path for the spawned workers,
+    mints the archive with the conditions read where each is true — including the
+    working-tree commits, because every package on this side is editable and a
+    version string would name the moment of installation, not the code — and
+    publishes it in `GNR_BENCH_RUN`. `bridge_coverage_check.py` is the tripwire
+    the mixin needs: the verb list against the client's live surface in both
+    directions, the bench recipe against the shipped one, and the module-identity
+    trap that would have silenced every store line.
+  > Files: benchmarks/compare/bridge_recipe.py,
+    benchmarks/compare/recording_worker.py,
+    benchmarks/compare/register_recorder_mixin.py,
+    benchmarks/compare/serve_bridge.py,
+    benchmarks/compare/bridge_coverage_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro1-legacy-data-collection/plan.md,
+    .phased/active/macro1-legacy-data-collection/notes.md.
+    Outside git: ~/genro_bench/runs/bridge-20260824T063348.sqlite (the bridge
+    reference, never committed)
+  > Verified: `bridge_coverage_check.py` 22 assertions green against the current
+    client; `ruff check benchmarks/compare/` clean; the three earlier checks still
+    green (http 24, register 35, archive 17). The owner performed the reference
+    session in the browser on 2026-08-24, archived as `bridge-20260824T063348`:
+    267 HTTP exchanges (33 full, 234 stubs — 223 `static`, 11 `empty_ping`, the
+    same split as the legacy run), 2059 register calls on 13 threads (1050
+    `client`, 1009 `store`, 0 `passthrough`), ZERO unjoinable register lines, 4
+    calls with the exchange NULL (the worker's boot), 0 `recorder_error`. The
+    record shape is identical to the legacy archive in all three variants: 17
+    keys for a full HTTP line, 9 for a stub, 16 for a register line.
+  > Review: normalised per RPC exchange the two stacks cost the same — 33.2
+    register calls against 32.5 on average — so the 271 extra calls are three
+    extra RPC exchanges in the session, not traffic the bridge makes on itself.
+    One real divergence stands out and belongs to macro-phase 2: `login_doLogin`
+    costs 37 register calls on the bridge against 21 on legacy, on two exchanges
+    each.
+  > Review: the register line does not name its CALLER. On the bridge nothing but
+    genropy calls the client — the only other holder captures it at
+    `genropy_worker.py:134` and never calls through it — so it is knowable
+    structurally but not per line. A `caller` field would change the record
+    shape, which the first `Must not break:` line requires identical on both
+    stacks, so it would mean re-performing both reference sessions; deferred to
+    macro-phase 2, where they get re-run anyway (owner, 2026-08-24).
+  > Verify: now — PERFORMED by the owner and this session, 2026-08-24, confirmed:
+    the two archived runs read side by side on `saveRecordCluster` — 32 calls on
+    each stack, the same verbs in the same order, position by position. The only
+    differences are the two declared ones: five verbs marked `passthrough` on
+    legacy are `client` here (no `__getattr__` to cross), and `wire_calls` is 1
+    throughout (no wire). The differences are the stacks', not the instruments'.
   - Run: opus / high
   - Pattern: `benchmarks/compare/register_recorder.py` and
     `benchmarks/compare/http_recorder.py` (the record shape is the contract),

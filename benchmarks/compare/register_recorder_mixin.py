@@ -68,7 +68,7 @@ RECORDED_VERBS = (
 )
 
 
-class BridgeCallRecorder(RegisterRecorder):  # wf:phase-5:new
+class BridgeCallRecorder(RegisterRecorder):
     """The legacy recorder's machinery, on a client that is subclassed, not wrapped.
 
     It inherits everything that builds a line — the comparable values, the
@@ -81,7 +81,7 @@ class BridgeCallRecorder(RegisterRecorder):  # wf:phase-5:new
     same thing it means on legacy: the object the site talks to.
     """
 
-    def __init__(self, client, archive=None):  # wf:phase-5:new
+    def __init__(self, client, archive=None):
         self.client = client
         self.archive = archive or RunArchive(os.environ[RUN_ENV])
         self.wire_count = threading.local()
@@ -107,7 +107,7 @@ class BridgeCallRecorder(RegisterRecorder):  # wf:phase-5:new
         return state
 
 
-class RecordedVerb:  # wf:phase-5:new
+class RecordedVerb:
     """One recording override, bound to the parent implementation it shadows.
 
     A descriptor rather than a closure so the override carries its own name and
@@ -115,30 +115,30 @@ class RecordedVerb:  # wf:phase-5:new
     whole set with one loop instead of fifty repeated bodies.
     """
 
-    def __init__(self, verb):  # wf:phase-5:new
+    def __init__(self, verb):
         self.verb = verb
         self.parent_method = getattr(SiteRegisterClient, verb)
 
-    def __get__(self, client, owner=None):  # wf:phase-5:new
+    def __get__(self, client, owner=None):
         if client is None:
             return self
         return functools.partial(self.call, client)
 
-    def call(self, client, *args, **kwargs):  # wf:phase-5:new
+    def call(self, client, *args, **kwargs):
         target = functools.partial(self.parent_method, client)
         return client.recording.perform_recorded_call(target, self.verb, "client",
                                                       {}, args, kwargs)
 
 
-class RegisterRecorderMixin:  # wf:phase-5:new
+class RegisterRecorderMixin:
     """Gives its subclass a recording override for every verb the client declares."""
 
-    def __init_subclass__(cls, **kwargs):  # wf:phase-5:new
+    def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         for verb in RECORDED_VERBS:
             setattr(cls, verb, RecordedVerb(verb))
 
-    def __init__(self, site, archive=None):  # wf:phase-5:new
+    def __init__(self, site, archive=None):
         """Built by the site as ``SiteRegisterClient(site)``; the archive is the run's.
 
         Without one it attaches to the run the bench recipe published in
@@ -149,5 +149,5 @@ class RegisterRecorderMixin:  # wf:phase-5:new
         self.recording = BridgeCallRecorder(self, archive)
 
 
-class RecordingRegisterClient(RegisterRecorderMixin, SiteRegisterClient):  # wf:phase-5:new
+class RecordingRegisterClient(RegisterRecorderMixin, SiteRegisterClient):
     """The bridge's register client with every command recorded."""
