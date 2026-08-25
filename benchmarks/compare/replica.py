@@ -350,7 +350,7 @@ class Replica:
         self.compared = []
         self.uncompared = []
         self.replayed = {}
-        self.timings = []
+        self.rows = []
         self.elapsed_ms = 0.0
         # where this replay begins in the target's archive: the stack answers
         # every cycle into the file it minted at startup.
@@ -392,12 +392,10 @@ class Replica:
             if self.target is not None:
                 self.replayed[record["exchange_id"]] = self.get_replayed_exchange(record)
             divergence = self.compare_exchange(record, position, race)
-            label = (f"{record.get('method')} {record.get('path')} "
-                     f"{record.get('rpc_method') or ''}").strip()
-            self.timings.append((position, label, *self.get_durations(record)))
-            print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
-                  f"{record.get('path')} {record.get('rpc_method') or ''} "
-                  f"-> {status}  {self.get_timing(record)}{mark}")
+            row = self.get_row(record, position, status)
+            self.rows.append(row)
+            print(f"[{position:2d}/{len(exchanges)}] {row['label']} -> {status}  "
+                  f"{self.get_timing(row)}{mark}")
             if self.uncompared and self.uncompared[-1][0] == position:
                 print(f"     not compared — {self.uncompared[-1][2]}")
             if divergence is not None:
@@ -407,21 +405,73 @@ class Replica:
 
     @property
     def summary(self):  # wf:phase-7:new
-        """What the run actually exercised, in numbers, for the report to close on.
+        """The closing table: one row per exchange, everything the run measured.
 
-        The seconds are the wall clock of the whole replay — how long the cycle
-        took, nothing else. The per-exchange durations are another thing entirely:
-        see `get_timing`.
+        Register calls are the ones the structural comparison read; an exchange it
+        did not compare shows a dash there and its reason under the table. The
+        milliseconds are the RESPONSE TIME — request in, last chunk of the reply
+        out — measured by the same HTTP recorder in the process that served the
+        request on BOTH stacks, so the two columns are the same metre on the same
+        call: the replay sends the recorded method, path and body, with only the
+        identifiers the target mints rewritten.
+
+        Not a benchmark: both stacks run under two recorders, and the reference was
+        served while a driver or a browser was driving it. Macro-phase 3 measures
+        performance, under its own declared conditions.
         """
-        lines = [f"{len(self.compared)} exchange(s) compared, "
-                 f"{len(self.uncompared)} not compared, "
-                 f"{self.elapsed_ms / 1000:.1f} s of wall clock"]
-        for position, path, reference_lines, replica_lines in self.compared:
-            lines.append(f"  [{position}] {path}: {reference_lines} register calls "
-                         f"on the reference, {replica_lines} on the replica")
-        for position, path, reason in self.uncompared:
-            lines.append(f"  [{position}] {path}: not compared — {reason}")
+        reference, replica = self.reference_stack, self.replica_stack
+        headers = ["#", "exchange", "status",
+                   f"register {reference}", f"register {replica}",
+                   f"ms {reference}", f"ms {replica}", "delta"]
+        rows = [[row["position"], row["label"], row["status"],
+                 self.get_cell(row["reference_lines"]),
+                 self.get_cell(row["replica_lines"]),
+                 self.get_cell(row["reference_ms"], "{:.0f}"),
+                 self.get_cell(row["replica_ms"], "{:.0f}"),
+                 self.get_delta(row["reference_ms"], row["replica_ms"])]
+                for row in self.rows]
+        rows.append(self.total_row)
+        lines = [f"{len(self.rows)} exchange(s) replayed, {len(self.compared)} compared, "
+                 f"{self.elapsed_ms / 1000:.1f} s of wall clock", ""]
+        lines.append(self.get_table(headers, rows))
+        lines.append("")
+        for position, label, reason in self.uncompared:
+            lines.append(f"  [{position}] {label}: register calls not compared — {reason}")
+        lines.append("  ms = response time, request in to reply out, the same metre on "
+                     "both stacks; not a benchmark, both run under two recorders")
         return "\n".join(lines)
+
+    @property
+    def total_row(self):  # wf:phase-7:new
+        """The last row of the table: what the whole session cost on each stack."""
+        def total(key):
+            values = [row[key] for row in self.rows if row[key] is not None]
+            return sum(values) if values else None
+        reference_ms, replica_ms = total("reference_ms"), total("replica_ms")
+        return ["", "total", "",
+                self.get_cell(total("reference_lines")),
+                self.get_cell(total("replica_lines")),
+                self.get_cell(reference_ms, "{:.0f}"),
+                self.get_cell(replica_ms, "{:.0f}"),
+                self.get_delta(reference_ms, replica_ms)]
+
+    def get_cell(self, value, shape="{}"):  # wf:phase-7:new
+        """One cell: the value, or a dash where there is nothing to show."""
+        return "-" if value is None else shape.format(value)
+
+    def get_table(self, headers, rows):  # wf:phase-7:new
+        """Headers, a rule, one line per row; the numbers right, the words left."""
+        widths = [max(len(str(cell)) for cell in column)
+                  for column in zip(headers, *rows)]
+
+        def line(cells):
+            return "  " + "  ".join(
+                str(cell).ljust(width) if index == 1 else str(cell).rjust(width)
+                for index, (cell, width) in enumerate(zip(cells, widths)))
+
+        return "\n".join([line(headers),
+                          "  " + "  ".join("-" * width for width in widths)]
+                         + [line(row) for row in rows])
 
     def compare_exchange(self, record, position, race):
         """Compare the exchange just replayed with its reference; the divergence, or None.
@@ -434,7 +484,7 @@ class Replica:
         """
         if self.diff is None:
             return None
-        label = f"{record.get('method')} {record.get('path')} {record.get('rpc_method') or ''}".strip()
+        label = self.get_label(record)
         if race:
             return self.not_compared(position, label, race)
         if record.get("exchange_id") in self.cold_start:
@@ -458,79 +508,46 @@ class Replica:
         self.uncompared.append((position, label, reason))
         return None
 
-    def get_timing(self, record):  # wf:phase-7:new
-        """The two stacks' own durations for this exchange, measured the same way.
+    def get_label(self, record):  # wf:phase-7:new
+        """The exchange as one readable name: its method, its path, its RPC."""
+        return (f"{record.get('method')} {record.get('path')} "
+                f"{record.get('rpc_method') or ''}").strip()
 
-        Both numbers come from the HTTP recorder wrapping the application, in the
-        process that served the request: it starts when the application receives
-        the request and stops when the body is complete, network excluded. So they
-        are the same metre on the same call — the replay sends the recorded method,
-        path and body, with only the identifiers the target mints rewritten.
+    def get_row(self, record, position, status):  # wf:phase-7:new
+        """Everything this exchange measured, for the live line and for the table."""
+        compared = next((entry for entry in self.compared if entry[0] == position), None)
+        replayed = self.replayed.get(record["exchange_id"]) or {}
+        return {"position": position, "label": self.get_label(record), "status": status,
+                "reference_lines": compared[2] if compared else None,
+                "replica_lines": compared[3] if compared else None,
+                "reference_ms": record.get("duration_ms"),
+                "replica_ms": replayed.get("duration_ms")}
 
-        They are still not a benchmark: both stacks run under two recorders, and
-        the reference was served while a browser or a driver was driving it.
-        Timings are macro-phase 3's work, under its own declared conditions.
-        """
-        reference_ms, replica_ms = self.get_durations(record)
-        if reference_ms is None:
+    def get_timing(self, row):  # wf:phase-7:new
+        """The live line's timing: what each stack recorded for this exchange."""
+        if row["reference_ms"] is None:
             return ""
-        if replica_ms is None:
-            return f"{self.reference_stack} {reference_ms:.0f} ms"
-        return (f"{self.reference_stack} {reference_ms:.0f} ms  "
-                f"{self.replica_stack} {replica_ms:.0f} ms  "
-                f"({self.get_delta(reference_ms, replica_ms)})")
-
-    def get_durations(self, record):  # wf:phase-7:new
-        """What the two stacks recorded for this exchange, reference first."""
-        replayed = self.replayed.get(record.get("exchange_id"))
-        return record.get("duration_ms"), (replayed or {}).get("duration_ms")
+        if row["replica_ms"] is None:
+            return f"{self.reference_stack} {row['reference_ms']:.0f} ms"
+        return (f"{self.reference_stack} {row['reference_ms']:.0f} ms  "
+                f"{self.replica_stack} {row['replica_ms']:.0f} ms  "
+                f"({self.get_delta(row['reference_ms'], row['replica_ms'])})")
 
     def get_delta(self, reference_ms, replica_ms):  # wf:phase-7:new
         """The replica's time against the reference's, as a signed percentage."""
-        if not reference_ms:
-            return "no baseline"
-        delta = (replica_ms - reference_ms) / reference_ms * 100
-        return f"{delta:+.0f}%"
+        if not reference_ms or replica_ms is None:
+            return "-"
+        return f"{(replica_ms - reference_ms) / reference_ms * 100:+.0f}%"
 
     @property
     def reference_stack(self):  # wf:phase-7:new
+        """The stack the reference archive declares."""
         return self.trace.conditions.get("stack") or "reference"
 
     @property
     def replica_stack(self):  # wf:phase-7:new
+        """The stack the target archive declares."""
         return (self.target.conditions.get("stack") if self.target else None) or "replica"
-
-    @property
-    def response_times(self):  # wf:phase-7:new
-        """The response-time comparison over every exchange both stacks timed.
-
-        Response time is measured identically on the two stacks: the HTTP recorder
-        wraps the application, starts when the request arrives and stops when the
-        last chunk of the reply has been handed back — the network and the server's
-        own socket write are outside it. The replay sends the recorded method, path
-        and body, with only the identifiers the target mints rewritten, so it is the
-        same call on the same metre.
-
-        Not a benchmark: both stacks run under two recorders, and the reference was
-        served while a driver or a browser was driving it. Macro-phase 3 measures
-        performance, under its own declared conditions.
-        """
-        pairs = [(position, label, a, b) for position, label, a, b in self.timings
-                 if a is not None and b is not None]
-        if not pairs:
-            return ""
-        reference_total = sum(pair[2] for pair in pairs)
-        replica_total = sum(pair[3] for pair in pairs)
-        lines = [f"response time, {self.reference_stack} against {self.replica_stack} "
-                 f"(same metre: request in, reply out; not a benchmark)"]
-        for position, label, reference_ms, replica_ms in pairs:
-            lines.append(f"  [{position}] {label}: {reference_ms:.0f} ms -> "
-                         f"{replica_ms:.0f} ms  "
-                         f"({self.get_delta(reference_ms, replica_ms)})")
-        lines.append(f"  total over {len(pairs)} exchange(s): "
-                     f"{reference_total:.0f} ms -> {replica_total:.0f} ms  "
-                     f"({self.get_delta(reference_total, replica_total)})")
-        return "\n".join(lines)
 
     def get_replayed_exchange(self, record):
         """The target's own exchange for this one, once the target has written it."""
@@ -617,10 +634,6 @@ if __name__ == "__main__":
                   f"expected {expected}, got {status}")
         sys.exit(1)
     print(replica.summary)
-    if replica.response_times:
-        print()
-        print(replica.response_times)
-    print()
     print(f"every exchange answered the status the trace carries, "
           f"{len(replica.races)} of them as a recognised race of the reference")
     if replica.diff:

@@ -981,13 +981,14 @@ the reference holds. Then one line per exchange — the request, the status, and
 the duration each STACK recorded for it. Both numbers come from the HTTP recorder
 wrapping the application, in the process that served the request, so they are the
 same metre on the same call: the replay sends the recorded method, path and body,
-with only the identifiers the target mints rewritten. Then the summary: how many
-exchanges were compared, how many were not and why, the wall clock of the whole
-replay, and the register-call count of each compared exchange on both sides.
-Then the response-time comparison: every exchange both stacks timed, the two
-durations and the signed percentage between them, and the total. It covers every
-exchange the replay performed, the cold start included — a response time is a
-response time even where the register lines are not compared.
+with only the identifiers the target mints rewritten. Then the closing TABLE, one row per exchange
+and a total: the exchange, its status, the register calls each stack made and the
+response time each stack recorded, with the signed percentage between the two.
+The columns are titled with the stack names the archives declare — `legacy` and
+`bridge` — not "reference" and "replica". An exchange the comparison left out
+shows a dash in the register columns and its reason under the table, but keeps
+its times: a response time is a response time even where the register lines are
+not compared.
 **Those durations are still not a benchmark** — both stacks run under two
 recorders and the reference was served while a driver or a browser was driving
 it; timings are macro-phase 3's work, under its own declared conditions.

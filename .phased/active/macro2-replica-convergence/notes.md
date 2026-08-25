@@ -587,6 +587,10 @@ line are not a comparison. The report now closes on one — every exchange the
 replay performed, the two durations, the signed percentage, and the total — with
 the stacks named from the conditions each archive declares rather than called
 "reference" and "replica". The cold-start exchange is in it: its register lines
-are not compared, but a response time is a response time. Measured on the closing
-cycle: 622 ms on the legacy against 447 on the bridge over the four exchanges,
--28%.
+are not compared, but a response time is a response time. Then he asked for it as a table with column titles, and the report now closes on
+one: a row per exchange and a total row, the columns titled with the stack names
+the archives declare, the words left and the numbers right, widths taken from the
+content. Everything about an exchange is on its own row — status, register calls
+per stack, response time per stack, and the percentage between them. Measured on
+the closing cycle: 622 ms on the legacy against 443 on the bridge over the four
+exchanges, -29%, with 111 register calls on each side of the three compared.
