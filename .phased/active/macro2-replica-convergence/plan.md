@@ -584,10 +584,35 @@ recognised rather than discovered.
     divergence has a named cause, and every recognised one a declared rule you
     signed.
 
-- [ ] **Phase 8**: full-session convergence
-  - Run: opus / medium
-  - Pattern: the Phase 7 loop, on the owner's own browser session
-  - Files: unknown until the divergences show — same routing rule as Phase 7
+- [ ] **Phase 8**: the live twin proxy, converging the owner's own session
+  - Run: opus / high
+  - Pattern: `benchmarks/compare/replica.py` for identifier adaptation and the
+    stop, `structural_diff.py` for the comparison and the declared rules,
+    `run_archive.py` for the archive, `serve_legacy.py` / `serve_bridge.py` for
+    the two launchers — all reused; what changes is the DRIVER
+  - Files: benchmarks/compare/twin_proxy.py (new, the CLI and the proxy),
+    benchmarks/compare/twin_proxy_check.py (new),
+    benchmarks/compare/run_archive.py (the declared run name),
+    benchmarks/compare/README.md
+  - Decisions (owner, 2026-08-25, replacing the record-then-replay shape this
+    phase carried until today): the driver is a PROXY the owner browses through,
+    not a replay of a recorded session. One CLI takes the legacy instance name,
+    a run name the owner declares, `-w N` for gunicorn and
+    `--max-users-per-worker` for the bridge; it copies the db, starts both
+    stacks, and serves. Every HTTP request is dispatched to BOTH stacks, IN
+    SEQUENCE not in parallel (parallel makes them contend for CPU and database
+    and dirties both timings; sequential warms the second, and timings stay
+    indicative either way — the speed verdict is macro-phase 3's, with
+    collection off). The LEGACY answer is the one the browser receives; the
+    bridge is the shadow, so a bridge fault never blocks the owner's work. The
+    proxy compares result and timings on return, writes them under the declared
+    run, and STOPS at the first divergence so the owner analyses it at once.
+    This reverses the foreman's Phase 5 ruling that the db copy is a hand-run
+    step and the driver never orchestrates: with a live proxy the owner drives
+    from a browser in real time, so the orchestration must live in one process.
+    The archive's `run` table gains the owner's declared name; the rows already
+    point at the run. ONE user in this phase: the patrol of imitating users is
+    the NEXT piece of work, deliberately after this one (see Notes).
   - Inherited from Phase 7, both binding here: (a) the COLD-START rule — the
     register lines of the exchanges BEFORE the first RPC are not compared, each
     stack finishing its lazy build there and the bridge doing it in the template
@@ -599,22 +624,23 @@ recognised rather than discovered.
     exchanges tie 33/33, 35/35, 43/43. THIS phase's session is a browser session,
     so it is the one run where anything of it would reappear — if it does, it is
     a new measurement with attribution, not a continuation of the old figure.
-  - Decisions: known divergences (S1/S2/S3/S5) are recognised by the Phase 3
-    rules and reported, never "fixed" here — they are core work with their own
-    track; every unexplained divergence is either fixed or becomes a named,
-    declared rule with the owner's sign-off (nothing is silently tolerated);
-    the db is copied for repeat replays of THIS reference even same-stack, as
-    it carries `saveRecordCluster` (Phase 5's caveat).
-  - Details: the owner performs a fresh reference session in the browser on the
-    legacy stack, with the recorders as Phase 1 shaped them; then iterate the
-    full cycle — copy db, replay, stop, judge, fix, restart — until the whole
-    session replicates with no unexplained divergence.
-  - Done: one full cycle of the owner's reference session against the bridge
-    completes with zero unexplained divergences; the closing run is archived;
-    the recognised-divergence list in the report matches the declared rules
-    exactly.
-  - Verify: now — the roadmap border: you performed the reference session, the
-    replica reproduced it on the bridge, and the final report satisfies you
+  - Decisions, carried from the earlier shape: known divergences (S1/S2/S3/S5)
+    are recognised by the Phase 3 rules and reported, never "fixed" here — they
+    are core work with their own track; every unexplained divergence is either
+    fixed or becomes a named, declared rule with the owner's sign-off (nothing
+    is silently tolerated). The db copy is made by the CLI at start, so the two
+    stacks never write the same database.
+  - Details: build the CLI and the proxy; the owner then works in the browser
+    against it and iterates — stop, judge where the fault lies, fix, restart —
+    until a whole session of his own passes with no unexplained divergence. Each
+    closed divergence gets a paragraph in notes.md under `## Phase 8`.
+  - Done: `python benchmarks/compare/twin_proxy_check.py` passes;
+    `pytest tests/` green and `ruff check .` clean; one full session the owner
+    performs through the proxy completes with zero unexplained divergences; the
+    run is archived under the name he declared, carrying per-exchange results
+    and timings for both stacks.
+  - Verify: now — the roadmap border: you worked in the browser through the
+    proxy, it followed you on both stacks, and the final report satisfies you
     that "no divergence left unexplained" is true in your own judgment.
 
 ## Notes
@@ -669,6 +695,36 @@ recognised rather than discovered.
   against a post-fix stack would report ~239 divergences the stacks did not
   cause. Every measurement quoted anywhere above this line was taken on
   `6da02feda`.
+- **The patrol of imitating users — the next piece of work, deliberately after
+  Phase 8** (owner, 2026-08-25). A leader the owner drives in the browser and
+  fifteen followers that imitate his actions after a short random delay, all
+  dispatched to both stacks. What it buys: with `--max-users-per-worker 1` the
+  bridge's pool actually grows, so the cross-worker behaviour — register
+  population, the stores, datachanges between users — is exercised for the first
+  time; and macro-phase 3 gets a load driver made of real usage. Why it comes
+  after and not inside Phase 8: comparison and load are two jobs. Phase 8 stops
+  at the FIRST divergence, which is only legible with one stream; with sixteen
+  interleaved streams attribution gets hard and different users legitimately
+  produce different sequences. Three design points already named, to settle when
+  it is planned: a follower cannot replay the leader's requests as they stand
+  (page ids, connection ids, record pkeys, datapaths are all the leader's — the
+  same identifier adaptation the replica has, times fifteen); sixteen users
+  saving the SAME record contend on one row and the errors would be about the
+  test, so either each follower works on its own record or only the leader
+  writes; and the arrest rule has to change, since first-divergence does not fit
+  a crowd.
+- **A max-users-per-worker cap is core work** (owner, 2026-08-25), written as
+  problem→solution→prompt for the genro-asgi session, not implemented here. It
+  does NOT reopen the cemented no-worker-count decision: that decision forbids
+  setting how many PROCESSES exist, while this is a placement policy the pool
+  still answers by sizing itself. The insertion point is measured:
+  `GroupHandler.assign_user` (group_handler.py:330) places a user on the fullest
+  worker that still takes him, and `WorkerHandler.assign_user` already refuses
+  with `AssignmentRefused`, the refusal that rings the wake and leads to growth —
+  a user-count cap is a second reason to refuse, beside the occupancy one. It
+  also fills a gap the Phase 4/5 measurements exposed: growth is gated on ~1 GB
+  of measured RSS, unreachable under realistic load, so today the pool cannot be
+  made to grow at all.
 - Two marker debts for `/quality-check` at the close: Phase 5 wrote no
   `wf:phase-5:new` markers on its new callables (recorded in its notes), and two
   Phase 4 markers still stand in `benchmarks/compare/recording_engine_factory.py`
