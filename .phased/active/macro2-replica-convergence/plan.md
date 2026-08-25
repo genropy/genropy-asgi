@@ -713,18 +713,22 @@ recognised rather than discovered.
   test, so either each follower works on its own record or only the leader
   writes; and the arrest rule has to change, since first-divergence does not fit
   a crowd.
-- **A max-users-per-worker cap is core work** (owner, 2026-08-25), written as
-  problem→solution→prompt for the genro-asgi session, not implemented here. It
-  does NOT reopen the cemented no-worker-count decision: that decision forbids
-  setting how many PROCESSES exist, while this is a placement policy the pool
-  still answers by sizing itself. The insertion point is measured:
-  `GroupHandler.assign_user` (group_handler.py:330) places a user on the fullest
-  worker that still takes him, and `WorkerHandler.assign_user` already refuses
-  with `AssignmentRefused`, the refusal that rings the wake and leads to growth —
-  a user-count cap is a second reason to refuse, beside the occupancy one. It
-  also fills a gap the Phase 4/5 measurements exposed: growth is gated on ~1 GB
-  of measured RSS, unreachable under realistic load, so today the pool cannot be
-  made to grow at all.
+- **`worker_max_users` already exists in the core** — commit 6080c33, "a
+  placement ceiling per worker, the bench's lever", landed while this was being
+  written as a proposal. Verified: it is a `group(...)` parameter
+  (`spa_app.py:137`, `config/handler.py:366`, default `math.inf`);
+  `WorkerHandler.assign_user` counts the users already placed off
+  `user_worker_map` and refuses with `NoRoomError` at the ceiling
+  (`worker_handler.py:307`); `NoRoomError` subclasses `AssignmentRefused`, so the
+  group catches it, tries the next worker, and rings the wake that leads to
+  growth when all refuse. Its own docstring says the bench sets it to 1. TWO
+  THINGS REMAIN, both ours and both small: (a) `spa/config.py:105-116` builds
+  `group_kwargs` WITHOUT `worker_max_users` — Phase 8 adds it, fed by the CLI;
+  (b) growth stays REACTIVE with this lever, because `_placeable_newcomers`
+  counts room in occupancy percent only and never in users, so a new worker is
+  born after the refusal rather than before it. Phase 8 measures whether that
+  one-beat delay is felt; if it is, it is a report to the core session, never a
+  fix of ours.
 - Two marker debts for `/quality-check` at the close: Phase 5 wrote no
   `wf:phase-5:new` markers on its new callables (recorded in its notes), and two
   Phase 4 markers still stand in `benchmarks/compare/recording_engine_factory.py`
