@@ -39,6 +39,17 @@ no new field in the record.
 one after another on a single keep-alive connection, with no waiting in
 between. A replica reproduces what was done, never how long the hands took.
 
+**And that is why one recorded status can never be reproduced.** A browser
+sends calls that overlap; the bench does not. When the reply recorded in the
+trace says the connection had already been rotated, AND the trace shows that
+exchange running while an earlier one was still in flight on the same
+pre-rotation cookie, the recorded status is a RACE of the reference session,
+not a divergence of the stack. The replay names it and carries on; it never
+passes it in silence. Measured on the 2026-08-23 session: the two `login_doLogin`
+calls overlap by 22.8 ms, the first rotates the connection, the second answers
+400 — and a replica replaying them one after the other gets the 200 the site
+owes a legitimate call. The rule is Phase 3's to hold as a declared one.
+
 **Parity first.** The run refuses to start while the two stacks carry different
 genropy source (`genropy_parity_check.py`).
 
@@ -49,6 +60,7 @@ Run, from the repository root:
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -65,6 +77,11 @@ from scaling_probe import StickyClient            # noqa: E402
 REPLICA_HEADER = "X-Bench-Replica-Of"
 PAGE_ID_RE = re.compile(r"page_id:'([A-Za-z0-9_-]{22})'")
 FORM_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=UTF-8"
+
+# What the site answers a call arriving on a connection a login already replaced.
+# Copied verbatim from `gnr/web/gnrwebpage.py:307`, typo and all: it is a literal
+# the site writes, not a sentence, and correcting it here would match nothing.
+CONNECTION_ROTATED = "The connection is not longer valid"
 
 
 class TraceReader:
@@ -99,6 +116,40 @@ class TraceReader:
             return "static"
         if "_ping" in (record.get("path") or "").split("/"):
             return "ping"
+        return None
+
+    def get_race_reason(self, record):  # wf:phase-2:new
+        """Why this exchange's recorded status is a race of the session, or None.
+
+        Two conditions, and both are read from the trace itself: the recorded
+        reply says the connection had already been rotated, and the exchange was
+        running while an earlier one was still in flight on the same cookie. A
+        reply of the first kind alone proves nothing — a stale tab produces one
+        too, and that one IS reproducible.
+        """
+        if CONNECTION_ROTATED not in (record.get("resp_body") or ""):
+            return None
+        overlapped = self.get_overlapped_exchange(record)
+        if overlapped is None:
+            return None
+        return (f"the connection was rotated by {overlapped.get('rpc_method') or overlapped.get('path')}, "
+                f"still in flight on the same cookie")
+
+    def get_overlapped_exchange(self, record):  # wf:phase-2:new
+        """The earlier exchange still running when this one started, or None."""
+        started = datetime.datetime.fromisoformat(record["ts"])
+        cookie = (record.get("req_headers") or {}).get("Cookie")
+        for earlier in self.records:
+            # by id, never by identity: `records` answers with fresh dicts every
+            # time it is read, so the record handed in here is not the one this
+            # loop meets again.
+            if (earlier.get("exchange_id") == record.get("exchange_id")
+                    or not earlier.get("duration_ms")):
+                continue
+            began = datetime.datetime.fromisoformat(earlier["ts"])
+            ended = began + datetime.timedelta(milliseconds=earlier["duration_ms"])
+            if began < started < ended and (earlier.get("req_headers") or {}).get("Cookie") == cookie:
+                return earlier
         return None
 
 
@@ -162,6 +213,7 @@ class Replica:
         self.identity = IdentityMap()
         self.client = ReplicaClient(host, port)
         self.failures = []
+        self.races = []
 
     def run(self):
         """Replay every exchange in order; return the failures met on the way."""
@@ -173,13 +225,20 @@ class Replica:
         for position, record in enumerate(exchanges, 1):
             status = self.replay_exchange(record)
             expected = record.get("status")
-            mark = "" if status == expected else f"   FAIL expected {expected}"
+            race = None if status == expected else self.trace.get_race_reason(record)
+            if status == expected:
+                mark = ""
+            elif race:
+                mark = f"   RACE of the reference, expected {expected}"
+                self.races.append((position, record.get("path"),
+                                   record.get("rpc_method"), expected, status, race))
+            else:
+                mark = f"   FAIL expected {expected}"
+                self.failures.append((position, record.get("path"),
+                                      record.get("rpc_method"), expected, status))
             print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
                   f"{record.get('path')} {record.get('rpc_method') or ''} "
                   f"-> {status}{mark}")
-            if status != expected:
-                self.failures.append((position, record.get("path"),
-                                      record.get("rpc_method"), expected, status))
         return self.failures
 
     def replay_exchange(self, record):  # wf:phase-2:new
@@ -232,10 +291,14 @@ if __name__ == "__main__":
                       host, int(port or "8099"))
     failures = replica.run()
     print()
+    for position, path, rpc_method, expected, status, race in replica.races:
+        print(f"recognised race [{position}] {path} {rpc_method or ''}: "
+              f"the trace carries {expected}, the replay got {status} — {race}")
     if failures:
         print(f"{len(failures)} exchange(s) answered a status the trace does not carry:")
         for position, path, rpc_method, expected, status in failures:
             print(f"  [{position}] {path} {rpc_method or ''}: "
                   f"expected {expected}, got {status}")
         sys.exit(1)
-    print("every exchange answered the status the trace carries")
+    print(f"every exchange answered the status the trace carries, "
+          f"{len(replica.races)} of them as a recognised race of the reference")

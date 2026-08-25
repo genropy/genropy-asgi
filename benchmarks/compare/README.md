@@ -18,26 +18,75 @@ archive* below.
 
 | Piece | Where | Why separate |
 |---|---|---|
+| The pinned genropy | `<genropy>/worktrees/bench-baseline/` (detached) | the code both stacks run; the developer's own checkout moves, this does not |
+| The bench configuration | `temp/gnr/` | names the pinned trees; never committed — it carries the daemon key and the admin password |
 | The venv | `temp/legacy_venv/` | never committed; genropy-asgi must not enter it |
 | The instance | `<genropy>/projects/test_invoice/instances/test_invoice_pg_legacy/` | twin of `test_invoice_pg`, same db, different site name |
 | The recorders | `benchmarks/compare/` | versioned; genropy itself is never modified |
 | The run archives | `~/genro_bench/runs/` (outside the tree) | whole bodies, the login, the cookies — and this repository is public |
-| The bridge | the pyenv interpreter, `genropy_asgi` + `genro_asgi` + genropy installed **editable** | it is the software under comparison; macro-phase 2 edits it at every turn of the loop, so it is not frozen |
+| The bridge | the pyenv interpreter, `genropy_asgi` + `genro_asgi` editable; genropy from the pin, through `PYTHONPATH` | the bridge is the software under comparison and is edited at every turn of the loop; genropy under it is not |
 
-`<genropy>` is `~/Sviluppo/Genropy/genropy` — the value of `gnrhome` in
-`~/.gnr/environment.xml`.
+`<genropy>` is `~/Sviluppo/Genropy/genropy` — the developer's own checkout.
 
 ## Bring-up
+
+### 0. The pinned genropy
+
+**The bench declares which genropy it runs, and both stacks read that one.** The
+developer's checkout moves: on 2026-08-25 it sat on a branch whose single commit
+removes the register read for services not configured in the database — 242 of
+the 384 register calls a login makes. The bridge, installed editable, was already
+running it; the legacy stack, a frozen copy, was not. A difference like that
+reads as a difference between the stacks, which is the one thing this bench must
+never confuse.
+
+```bash
+git -C ~/Sviluppo/Genropy/genropy worktree add --detach worktrees/bench-baseline develop
+```
+
+Detached on purpose: a branch would move again. To change the baseline, remove
+the worktree and add it back on the commit you want — never `git switch` inside
+it.
+
+**The configuration folder of the bench** names the pinned trees, so
+`resources/`, `packages/`, `webtools/` and the static trees are pinned too, not
+only the `gnr` package. It is a copy of `~/.gnr` with the genropy paths moved:
+
+```bash
+cp -R ~/.gnr temp/gnr
+# then edit temp/gnr/environment.xml: environment.gnrhome, packages.genropy,
+# resources.genropy, webtools.genropy and the two static.js paths point at
+# worktrees/bench-baseline. projects.genropy does NOT move: the bench instances
+# live in the developer's checkout, untracked, and never travel with a commit.
+```
+
+**It must be called `gnr`.** genropy loads the whole folder as one Bag whose top
+node is the folder's own name, and every lookup is written `gnr.environment_xml…`.
+A folder named otherwise loads without complaint and answers `None` to every
+question — measured 2026-08-25 on a folder called `bench_gnr`, where the
+sitedaemon died with `TypeError: argument of type 'NoneType' is not iterable`.
+
+Every command of this bench then carries `GENRO_GNRFOLDER=$PWD/temp/gnr`, and
+every command on the BRIDGE side also carries
+`PYTHONPATH=<genropy>/worktrees/bench-baseline/gnrpy`. Nothing global is touched:
+the developer's `~/.gnr` and the editable genropy in the pyenv are left exactly
+as they were. `PYTHONPATH` wins over the editable install because its finder
+appends itself to `sys.meta_path`, so the ordinary path lookup answers first
+(measured 2026-08-25).
+
+`genropy_parity_check.py` proves all of this before any comparative run, and
+refuses otherwise — see *The replica* below.
 
 ### 1. The venv
 
 ```bash
 uv venv temp/legacy_venv --python 3.12
-uv pip install --python temp/legacy_venv/bin/python "$HOME/Sviluppo/Genropy/genropy/gnrpy[pgsql]"
+uv pip install --python temp/legacy_venv/bin/python \
+    "$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy[pgsql]"
 ```
 
-Not editable: an editable install points at the genropy working tree and
-forbids isolated trials. The `[pgsql]` extra is **mandatory** — the Postgres
+From the PIN, never from the checkout. Not editable either: an editable install
+points at a working tree and forbids isolated trials. The `[pgsql]` extra is **mandatory** — the Postgres
 driver (`psycopg2-binary`, `psycopg`) is an optional dependency of genropy, and
 without it the site cannot reach the database. `gunicorn` is a base dependency
 and needs no extra step.
@@ -112,7 +161,8 @@ register are the whole identity.
 ### 4. The sitedaemon, in the foreground
 
 ```bash
-PGGSSENCMODE=disable temp/legacy_venv/bin/gnrdaemon test_invoice_pg_legacy
+GENRO_GNRFOLDER=$PWD/temp/gnr PGGSSENCMODE=disable \
+    temp/legacy_venv/bin/gnrdaemon test_invoice_pg_legacy
 ```
 
 With a sitename that command runs the site register server directly and stays in
@@ -131,7 +181,8 @@ here. The hmac key does come from `~/.gnr/environment.xml`.
 ### 5. Gunicorn: one process, 16 threads
 
 ```bash
-PGGSSENCMODE=disable temp/legacy_venv/bin/gnr web serveprod test_invoice_pg_legacy \
+GENRO_GNRFOLDER=$PWD/temp/gnr PGGSSENCMODE=disable \
+    temp/legacy_venv/bin/gnr web serveprod test_invoice_pg_legacy \
     -b 127.0.0.1:8099 -w 1 -k gthread --threads 16
 ```
 
@@ -251,7 +302,7 @@ repository root. Step 5's plain command stays valid and is the declared
 condition of a run **without** recorders:
 
 ```bash
-PGGSSENCMODE=disable temp/legacy_venv/bin/python \
+GENRO_GNRFOLDER=$PWD/temp/gnr PGGSSENCMODE=disable temp/legacy_venv/bin/python \
     benchmarks/compare/serve_legacy.py test_invoice_pg_legacy \
     -b 127.0.0.1:8099 -w 1 -k gthread --threads 16 \
     -c benchmarks/compare/gunicorn_recorders.conf.py
@@ -619,7 +670,9 @@ Hygiene first, as always: no stale process on 8098, and the legacy stack down if
 it is still up. Then, from the repository root:
 
 ```bash
-PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
     -p 8098 --nodebug
 ```
 
@@ -771,9 +824,86 @@ connection and page stores, then `get_dbenv`, then `subscribed_tables` →
 for the reason given above, and every `*Store` builder costs 0: the store is
 built in process.
 
+## The replica
+
+`replica.py` reads an archived run and performs it again, by network calls,
+against a live stack. There is no script beside the archive: the recorded lines
+ARE what the replica reads, so nothing can drift away from what really happened.
+Any archived run serves — the reference session is a role, not a format.
+
+```bash
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python benchmarks/compare/replica.py ~/genro_bench/runs/<run_id>.sqlite \
+    --target 127.0.0.1:8099
+```
+
+**Parity first, and it is a refusal.** `genropy_parity_check.py` runs before the
+first request and the replica stops dead if it fails. It asks two questions,
+which are not the same question: is this interpreter importing the pinned tree,
+and does the frozen copy in `temp/legacy_venv` carry the same source as the pin?
+The first is a path comparison, the second a file-by-file comparison of every
+`*.py` under `gnr/`, skipping `__pycache__` and the five top-level subtrees the
+wheel copies in but no runtime reads there (`projects`, `resources`, `webtools`,
+`dojo_libs`, `gnrjs`). With those out the two sets match file for file, 320
+against 320. The report names what is wrong and prints the remedy.
+
+**What it replays, and what it leaves out.** Two declared rules — declared,
+because a silent skip is a divergence nobody can see afterwards:
+
+| Left out | Why | What is therefore never compared |
+|---|---|---|
+| `/_ping` | a heartbeat on a timer; what a ping carries depends on when it fires | the delivery of datachanges through a ping |
+| statics | 223 of the 266 exchanges of the reference session, each producing the same pair of register calls (`globalStore`, `getItem`) | the serving of static assets |
+
+The 2026-08-23 reference session therefore replays as **31 exchanges**: login,
+the TH page of `invc/customer`, its grid, one record opened, one field changed
+and saved.
+
+**Identifiers.** A page id minted by one stack means nothing to the other. The
+replica keeps a map from the token in the trace to the token the target minted
+in its place, learned from the HTML the target returns, and rewrites it wherever
+it appears — in the form values AND in the query string, because the GET of a TH
+page carries `_calling_page_id` there. Cookies are never replayed: the client
+keeps its own jar. `callcounter` is not adapted either — the sequence replayed
+is the sequence recorded, so the counter of the trace is the right one.
+
+**The pairing.** Every request carries the exchange it is replaying, as the
+`X-Bench-Replica-Of` request header. The HTTP recorder already writes every
+request header into its line, so the replica run's archive says by itself which
+reference exchange each of its own reproduces — no recorder changes, no new
+field in the record.
+
+**Order, not timing — and the one status that follows from it.** The exchanges
+go out one after another on a single keep-alive connection, with no waiting in
+between. A browser does not: it sends calls that overlap. When the reply recorded
+in the trace says the connection had already been rotated, AND the trace shows
+that exchange running while an earlier one was still in flight on the same
+pre-rotation cookie, the recorded status is a **race of the reference session**,
+not a divergence of the stack. The replay names it and carries on; it never
+passes it in silence.
+
+Measured on the reference session: the two `login_doLogin` calls overlap by
+22.8 ms — the first starts at 23:48:03.859 on thread 6245068800 and lasts
+32.2 ms, the second starts 23:48:03.882 on another thread, both carrying the
+pre-login cookie. The first rotates the connection, so the second answers 400
+with genropy's own `The connection is not longer valid`. A replica replaying
+them one after the other gets the 200 the site owes a legitimate call.
+
+**Recorded evidence, replay of 2026-08-25** (`legacy-20260825T080505`), the
+reference session against the legacy stack under the pin:
+
+| | |
+|---|---|
+| Exchanges replayed | 31 of 31 |
+| Statuses matching the trace | 30 exact, 1 recognised race |
+| Register lines recorded | 1379 |
+| Exchanges carrying the pairing header | 31 |
+| Unjoinable register lines | 0 |
+
 ### Exercising the recorders without a browser
 
-Five scripts in this folder, all runnable from the repository root.
+Six scripts in this folder, all runnable from the repository root.
 
 ```bash
 python3 benchmarks/compare/http_recorder_check.py
@@ -782,6 +912,9 @@ temp/legacy_venv/bin/python benchmarks/compare/run_archive_check.py
 GNR_DAEMON_PROVIDER=genropy-asgi PYTHONPATH=benchmarks/compare \
     python benchmarks/compare/bridge_coverage_check.py
 python3 benchmarks/compare/drive_login.py [username]
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python benchmarks/compare/replica_check.py
 ```
 
 `http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder

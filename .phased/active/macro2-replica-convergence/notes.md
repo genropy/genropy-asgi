@@ -63,3 +63,83 @@
   `bridge_coverage_check.py` passes with its two recipe-drift assertions
   excepted. They fail for the drift described above, which is now Phase 4's
   work, not this phase's.
+
+## Phase 2
+
+- The bench now PINS genropy, and that was not in the plan. The precondition the
+  phase owns — `genropy_parity_check.py` — refused at first run with 9 differing
+  files, and the reason was not drift between two frozen copies: the developer's
+  checkout had moved onto `fix-1153-service-freshness`, whose one commit
+  (`e2bdb1e60`) skips the register read for services not configured in the
+  database, which is 242 of the 384 register calls a login makes. The bridge,
+  installed editable, was already running it. The legacy stack was not. Owner's
+  decision, 2026-08-25: keep the two stacks still, on a dedicated worktree.
+  `<genropy>/worktrees/bench-baseline`, detached at `6da02feda` — the commit
+  `develop` carries and the one the bridge ran during Phase 1.
+- Pinning the `gnr` package alone would not have been enough, and this is the
+  part that was nearly missed: `resources/`, `packages/` and `webtools/` are
+  executed code, resolved through `~/.gnr/environment.xml`, which names the
+  developer's checkout. They would have kept moving under the bench. The way out
+  is genropy's own `GENRO_GNRFOLDER`: a configuration folder of the bench,
+  `temp/gnr`, whose `environment.xml` names the pinned trees. `projects.genropy`
+  deliberately does NOT move — the bench instances live in the checkout,
+  untracked, and never travel with a commit.
+- Nothing global was touched, and that was a constraint, not a preference: the
+  bridge's genropy is installed editable in the pyenv 3.12.9 that every project
+  on this machine shares, so re-pointing that install would have changed genropy
+  everywhere. `PYTHONPATH` does the same job per process and wins, because the
+  editable finder appends itself to `sys.meta_path` and the ordinary path lookup
+  answers first (measured 2026-08-25).
+- The bench configuration folder MUST be called `gnr`. genropy loads the whole
+  folder as one Bag whose top node is the folder's own name, and every lookup is
+  written `gnr.environment_xml…`. A folder called `bench_gnr` loaded without
+  complaint and answered `None` to every question; the sitedaemon died with
+  `TypeError: argument of type 'NoneType' is not iterable`. Cost: one failed
+  start. Written into the code and the README so it costs nobody else.
+- `serve_legacy.py` now declares `genropy_source` and `genropy_commit`. The
+  source is read from the installer's own `direct_url.json`, not guessed: a
+  version string records when a copy was installed, never what it holds, and a
+  frozen copy is no working tree of its own. Both archives now name the same
+  commit, so two runs that disagree about their genropy say so in the run row.
+- What the replica does NOT replay, both declared because a silent skip is a
+  divergence nobody can see afterwards: `/_ping` (a heartbeat on a timer — what
+  it carries depends on when it fires; consequence, the delivery of datachanges
+  through a ping is never compared; in the reference session the rule costs one
+  non-empty ping, the 412 before the login) and statics (223 of 266 exchanges,
+  each producing the same pair of register calls, `globalStore` and `getItem`,
+  446 lines carrying no information; consequence, the serving of static assets is
+  never compared). Owner's decision, 2026-08-25.
+- The pairing between the reference run and the replica run rides a REQUEST
+  HEADER, `X-Bench-Replica-Of`. The HTTP recorder already writes every request
+  header into its line, so the join Phase 3 needs exists in the archive with no
+  recorder change and no new field in the record — the "no format versioning"
+  rule of the roadmap is untouched. Rejected: writing a pairing file beside the
+  archive, which would have been a second source of truth, and pairing by
+  position in the replayed sequence, which is true only until the first skipped
+  exchange changes.
+- One recorded status cannot be reproduced, and the rule that says so is
+  declared. In the reference session the two `login_doLogin` calls OVERLAP by
+  22.8 ms on different threads, both carrying the pre-login cookie: the first
+  rotates the connection, the second answers 400 with `The connection is not
+  longer valid`. A replica replaying in order on one connection gets the 200 the
+  site owes a legitimate call. Foreman decision, 2026-08-25 (`1ab7029`): an
+  exchange whose recorded reply says the connection was already rotated AND
+  which the trace shows overlapping an earlier one on the same pre-rotation
+  cookie is a recognised race of the reference, not a divergence of the stack —
+  reported by the replay, never passed in silence, and promoted to a named rule
+  in Phase 3's declared-rules table. Both conditions are required: the same
+  error with no overlap is a stale tab, and that one IS reproducible.
+- The marker string is copied verbatim from `gnr/web/gnrwebpage.py:307`, typo
+  included: the site writes `is not longer valid`. The first implementation
+  wrote the grammatical `no longer` and matched nothing — the race went
+  unrecognised and the replay exited 1. It is a literal the site emits, not a
+  sentence.
+- The identity map is a plain token substitution over the whole text of every
+  form value and of the query string, not a list of keys to rewrite. The GET of
+  a TH page carries `_calling_page_id` in its query string, and `main` carries
+  `_calling_page_id`/`_root_page_id`/`_parent_page_id` in its form: a key list
+  would have to grow every time the application uses a new one. `callcounter` is
+  deliberately NOT adapted — the sequence replayed is the sequence recorded.
+- `TraceReader.records` answers with fresh dicts on every read, so the overlap
+  search compares exchanges by `exchange_id` and never by identity. The first
+  implementation used `is`, which silently never matched the record handed in.

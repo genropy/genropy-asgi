@@ -9,7 +9,7 @@ assert the mock. What IS asserted is everything that decides WHAT goes on the
 wire, which is where a replica gets a comparison wrong.
 
 It runs on the bridge interpreter, because `genropy_parity_check` imports `gnr`
-to find the checkout it must compare against.
+to see which tree this process resolves it from.
 
 Run: python benchmarks/compare/replica_check.py
 """
@@ -18,7 +18,7 @@ import os
 import shutil
 import sys
 
-from genropy_parity_check import GenropyParity
+from genropy_parity_check import GNR_FOLDER_ENV, GenropyParity
 from replica import IdentityMap, Replica, ReplicaClient, TraceReader
 from run_archive import RunArchive
 
@@ -77,14 +77,31 @@ archive.append_record("http", {"exchange_id": "e4", "ts": "2026-08-23T10:00:04",
 archive.append_record("http", {"exchange_id": "e5", "ts": "2026-08-23T10:00:05",
                                "method": "POST", "path": "/_ping", "status": 412,
                                "resp_body": "<GenRoBag><dataChanges/></GenRoBag>"})
+archive.append_record("http", {"exchange_id": "e6", "ts": "2026-08-23T10:00:06.000",
+                               "method": "POST", "path": "/", "rpc_method": "doLogin",
+                               "status": 200, "duration_ms": 40.0, "form": {},
+                               "req_headers": {"Cookie": "site=old"}})
+archive.append_record("http", {"exchange_id": "e7", "ts": "2026-08-23T10:00:06.020",
+                               "method": "POST", "path": "/", "rpc_method": "doLogin",
+                               "status": 400, "duration_ms": 7.0, "form": {},
+                               "req_headers": {"Cookie": "site=old"},
+                               "resp_body": "ERROR REASON : The connection is not "
+                                            "longer valid; PATH_INFO='/'"})
+archive.append_record("http", {"exchange_id": "e8", "ts": "2026-08-23T10:00:09.000",
+                               "method": "POST", "path": "/", "rpc_method": "main",
+                               "status": 400, "duration_ms": 5.0, "form": {},
+                               "req_headers": {"Cookie": "site=stale"},
+                               "resp_body": "ERROR REASON : The connection is not "
+                                            "longer valid; PATH_INFO='/'"})
 archive.append_record("register", {"exchange_id": "e1", "verb": "getItem",
                                    "ts": "2026-08-23T10:00:01"})
 
 trace = TraceReader(ARCHIVE)
 check("the trace reads only HTTP lines, never the register ones",
-      len(trace.records) == 5)
+      len(trace.records) == 8)
 check("the trace reads them oldest first, not in the order they were written",
-      [record["exchange_id"] for record in trace.records] == ["e1", "e2", "e3", "e4", "e5"])
+      [record["exchange_id"] for record in trace.records]
+      == ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"])
 check("the trace carries the conditions of the run it holds",
       trace.conditions["stack"] == "legacy")
 
@@ -95,7 +112,20 @@ check("a ping that carried datachanges is left out too — the rule is the path"
       trace.get_skip_reason(trace.records[4]) == "ping")
 check("everything else is replayed", trace.get_skip_reason(trace.records[0]) is None)
 check("the exchanges to replay are the trace minus the skipped ones",
-      [record["exchange_id"] for record in trace.exchanges] == ["e1", "e3"])
+      [record["exchange_id"] for record in trace.exchanges] == ["e1", "e3", "e6", "e7", "e8"])
+
+# 2b. the race of the reference: a status only concurrency could have produced
+by_id = {record["exchange_id"]: record for record in trace.records}
+check("an exchange overlapping an earlier one on the same pre-rotation cookie, "
+      "answered with the site's connection-rotated error, is a race of the reference",
+      "doLogin" in (trace.get_race_reason(by_id["e7"]) or ""))
+check("the race names the exchange that rotated the connection under it",
+      trace.get_overlapped_exchange(by_id["e7"])["exchange_id"] == "e6")
+check("the same reply with no overlap is NOT a race — a stale tab makes one too, "
+      "and that one replays",
+      trace.get_race_reason(by_id["e8"]) is None)
+check("an exchange that answered normally is no race at all",
+      trace.get_race_reason(by_id["e6"]) is None)
 
 # 3. identifiers: learned from the HTML, rewritten wherever they appear
 identity = IdentityMap()
@@ -115,8 +145,29 @@ check("a token nobody minted is left alone",
       identity.get_adapted("pkey=beDqiRjkNXe_LHB5ySyYdw")
       == "pkey=beDqiRjkNXe_LHB5ySyYdw")
 
-replica = Replica(trace, "127.0.0.1", 8099,
-                  parity=GenropyParity(legacy_root=TEMP, bridge_root=TEMP))
+PIN = os.path.join(TREES, "pin", "gnrpy", "gnr")
+FROZEN = os.path.join(TREES, "frozen")
+CONFIG = os.path.join(TREES, "config")
+
+
+def write_config(home):
+    os.makedirs(CONFIG, exist_ok=True)
+    with open(os.path.join(CONFIG, "environment.xml"), "w") as target:
+        target.write('<?xml version="1.0"?><GenRoBag><environment>'
+                     f'<gnrhome value="{home}"/></environment></GenRoBag>')
+
+
+def pinned_parity():
+    """A parity whose pinned tree is read the way a run reads it: from the config."""
+    os.environ[GNR_FOLDER_ENV] = CONFIG
+    return GenropyParity(legacy_root=FROZEN, bridge_root=PIN)
+
+
+write_tree(PIN, {"__init__.py": ""})
+write_tree(FROZEN, {"__init__.py": ""})
+write_config(os.path.join(TREES, "pin"))
+
+replica = Replica(trace, "127.0.0.1", 8099, parity=pinned_parity())
 replica.identity = identity
 check("the identifiers inside a form value are rewritten",
       replica.get_adapted_form({"form": {"page_id": "AAAAAAAAAAAAAAAAAAAAAA",
@@ -146,50 +197,63 @@ client.cookies["spa_connection_id"] = "cid"
 check("the cookie jar still rides on the same request",
       client._headers()["Cookie"] == "spa_connection_id=cid")
 
-# 5. parity: the gate that refuses before anything is sent
+# 5. the pin: which tree the bench declared, and whether this process is on it
+check("the pinned tree is read from the bench's own environment.xml",
+      pinned_parity().pinned_root == PIN)
+os.environ.pop(GNR_FOLDER_ENV, None)
+try:
+    GenropyParity(legacy_root=FROZEN, bridge_root=PIN).pinned_root
+    unset = None
+except RuntimeError as exc:
+    unset = str(exc)
+check("with no configuration folder the bench cannot say what it pinned, and says so",
+      unset is not None and GNR_FOLDER_ENV in unset)
+
+parity = pinned_parity()
+check("an interpreter importing the pinned tree is on the pin", parity.bridge_on_pin)
+off_pin = GenropyParity(legacy_root=FROZEN, bridge_root=FROZEN)
+check("an interpreter importing anything else is not on the pin",
+      not off_pin.bridge_on_pin and not off_pin.aligned)
+check("the report of a bridge off the pin names PYTHONPATH as the remedy",
+      "PYTHONPATH" in off_pin.report)
+
+# 6. the frozen copy: same content as the pin, or the legacy stack is not on it
 same = {"__init__.py": "", "web/gnrwsgisite.py": "one\ntwo\n",
         "web/__pycache__/gnrwsgisite.pyc": "binary junk",
         "web/notes.txt": "not python"}
-write_tree(os.path.join(TREES, "legacy"), same)
-write_tree(os.path.join(TREES, "bridge"), same)
-parity = GenropyParity(legacy_root=os.path.join(TREES, "legacy"),
-                       bridge_root=os.path.join(TREES, "bridge"))
-check("two identical trees are in parity", parity.aligned)
-check("the report of aligned trees says so, and names both roots",
-      "identical genropy source" in parity.report
-      and os.path.join(TREES, "legacy") in parity.report)
+write_tree(PIN, same)
+write_tree(FROZEN, same)
+check("a frozen copy identical to the pin is in parity", parity.aligned)
+check("the report of an aligned bench says both stacks run the pinned genropy",
+      "both stacks run the pinned genropy" in parity.report)
 
-write_tree(os.path.join(TREES, "bridge"),
-           dict(same, **{"web/gnrwsgisite.py": "one\nTWO\n"}))
+write_tree(FROZEN, dict(same, **{"web/gnrwsgisite.py": "one\nTWO\n"}))
 check("a differing file breaks parity", not parity.aligned)
-check("the report NAMES the differing file",
-      "web/gnrwsgisite.py" in parity.report)
-check("the report carries the remedy, not only the verdict",
+check("the report NAMES the differing file", "web/gnrwsgisite.py" in parity.report)
+check("the report carries the re-freeze remedy, not only the verdict",
       "legacy_venv" in parity.report)
 check("the difference is reported as differing, not as missing",
       parity.differences == (["web/gnrwsgisite.py"], [], []))
 
-write_tree(os.path.join(TREES, "bridge"), dict(same, **{"web/extra.py": "x"}))
-check("a file only the bridge carries breaks parity too",
+write_tree(FROZEN, dict(same, **{"web/extra.py": "x"}))
+check("a file only the frozen copy carries breaks parity too",
       parity.differences == ([], [], ["web/extra.py"]))
 
-write_tree(os.path.join(TREES, "legacy"),
-           dict(same, **{"resources/adm/menu.py": "packaged copy",
-                         "projects/demo/main.py": "packaged copy",
-                         "webtools/tool.py": "packaged copy"}))
-write_tree(os.path.join(TREES, "bridge"), same)
+write_tree(PIN, dict(same, **{"resources/adm/menu.py": "packaged copy",
+                              "projects/demo/main.py": "packaged copy",
+                              "webtools/tool.py": "packaged copy"}))
+write_tree(FROZEN, same)
 check("the subtrees the wheel copies but no runtime reads are not compared",
       parity.aligned)
 
-write_tree(os.path.join(TREES, "legacy"),
-           dict(same, **{"web/resources/inner.py": "deep, and real code"}))
+write_tree(PIN, dict(same, **{"web/resources/inner.py": "deep, and real code"}))
 check("a subtree of the same name deeper down IS compared — only the top level "
       "is packaging",
       parity.differences == ([], ["web/resources/inner.py"], []))
 
-# 6. the refusal: the replica never reaches the wire while parity is broken
-write_tree(os.path.join(TREES, "bridge"), dict(same, **{"web/gnrwsgisite.py": "one\nTWO\n"}))
-write_tree(os.path.join(TREES, "legacy"), same)
+# 7. the refusal: the replica never reaches the wire while the bench is not pinned
+write_tree(PIN, dict(same, **{"web/gnrwsgisite.py": "one\nTWO\n"}))
+write_tree(FROZEN, same)
 refused = Replica(trace, "127.0.0.1", 8099, parity=parity)
 try:
     refused.run()

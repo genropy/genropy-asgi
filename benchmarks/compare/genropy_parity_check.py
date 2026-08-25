@@ -1,56 +1,99 @@
-"""Do the two stacks run the same genropy source? The comparison refuses to
-start until they do.
+"""Do the two stacks run the same genropy? The comparison refuses to start until
+they do.
 
-The legacy stack imports a frozen copy of genropy under `temp/legacy_venv`; the
-bridge imports the checkout, editable. Nothing keeps the two in step, and a
-difference between them reads as a difference between the stacks — which is the
-one thing a comparison bench must never confuse. Measured on 2026-08-24: the two
-trees already differed in 9 source files, one of them shifting `gnrwsgisite.py`
-by six lines, and an uncommitted edit was about to remove the very register
-calls the comparison counts. Either would have been read as a bridge divergence.
+**One pinned tree, and both stacks read it.** The bench does not follow the
+genropy the developer happens to have checked out — that tree moves under the
+bench between one run and the next, and a difference between two runs then reads
+as a difference between the stacks. Measured on 2026-08-25: the checkout had
+moved onto a branch whose one commit removes the register read for services not
+configured in the database, which is 242 of the 384 register calls a login
+makes. The bridge was already running it. The legacy stack was not.
 
-So this is a REFUSAL, not a warning: it names the differing files, prints the
-remedy, and exits non-zero. `replica.py` calls it first at every cycle start.
+So the bench declares a genropy of its own — a detached worktree — and the two
+stacks reach it differently, because they are installed differently:
 
-**What is compared, and what is not.** Only `*.py`, only inside the importable
-`gnr` package, and never `__pycache__`. Five top-level subtrees are excluded —
-`projects`, `resources`, `webtools`, `dojo_libs`, `gnrjs`: the wheel copies them
-into `gnr/` but no runtime reads them there. Both stacks resolve those trees
-through `~/.gnr/environment.xml`, which names the checkout, so they are already
-shared by construction. With them out, the two sets match file for file (320
-against 320, measured 2026-08-25), and any asymmetry left is real drift.
+- the **bridge** imports it directly, put first on the import path by
+  `PYTHONPATH`, which wins over the editable install of the developer's own
+  checkout (measured 2026-08-25: the editable finder appends itself to
+  `sys.meta_path`, so the ordinary path lookup answers first);
+- the **legacy** stack imports a frozen copy inside `temp/legacy_venv`, so what
+  is asked of it is not a path but the same content.
 
-Run: python benchmarks/compare/genropy_parity_check.py
+Hence the two questions this asks, and they are not the same question:
+
+1. is this interpreter importing the pinned tree, or something else?
+2. does the frozen copy carry the same source as the pinned tree?
+
+**What the two stacks share by construction.** `resources/`, `packages/`,
+`webtools/` and the two static trees are named by the bench's own
+`environment.xml`, which both launchers point at through `GENRO_GNRFOLDER`. Both
+stacks therefore read the same directories, and there is nothing to compare: a
+shared tree is parity by definition. `projects/` stays on the developer's
+checkout, where the bench instances live untracked — the bench application is
+not genropy, and both stacks read that one too.
+
+**What is compared, then.** Only `*.py`, only inside the `gnr` package, never
+`__pycache__`, and never the five top-level subtrees the wheel copies in but no
+runtime reads there — `projects`, `resources`, `webtools`, `dojo_libs`, `gnrjs`.
+With them out the two sets match file for file (320 against 320, measured
+2026-08-25), and any asymmetry left is real drift.
+
+This is a REFUSAL, not a warning: it names what is wrong, prints the remedy, and
+exits non-zero. `replica.py` calls it first at every cycle start.
+
+Run, from the repository root:
+
+  GENRO_GNRFOLDER=$PWD/temp/gnr PYTHONPATH=<pinned>/gnrpy \\
+      python benchmarks/compare/genropy_parity_check.py
 """
 
 import filecmp
 import glob
 import os
 import sys
+import xml.etree.ElementTree
 
 import gnr
 
 BENCH_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LEGACY_GLOB = os.path.join(BENCH_ROOT, "temp", "legacy_venv", "lib", "python*",
                            "site-packages", "gnr")
+# The folder MUST be called `gnr`: genropy loads the whole configuration folder
+# as one Bag whose top node is the folder's own name, and every lookup is written
+# `gnr.environment_xml...`. A folder named otherwise loads fine and answers None
+# to every question (measured 2026-08-25, on a folder called `bench_gnr`).
+BENCH_GNR_FOLDER = os.path.join(BENCH_ROOT, "temp", "gnr")
 
-# Copied into the wheel, read from the checkout: see the module docstring.
+# genropy's own name for "read the configuration from here instead of ~/.gnr"
+GNR_FOLDER_ENV = "GENRO_GNRFOLDER"
+
+# Copied into the wheel, read from the trees the bench config names: see above.
 PACKAGED_ONLY = ("projects", "resources", "webtools", "dojo_libs", "gnrjs")
-
-REMEDY = """Re-freeze the legacy venv from the checkout, per benchmarks/compare/README.md:
-
-  uv pip install --python temp/legacy_venv/bin/python \\
-      "$HOME/Sviluppo/Genropy/genropy/gnrpy[pgsql]"
-
-Then run this check again. Until it exits 0, no comparative run may start."""
 
 
 class GenropyParity:
-    """The two genropy source trees, and whether they carry the same code."""
+    """The pinned genropy, and whether both stacks are actually on it."""
 
-    def __init__(self, legacy_root=None, bridge_root=None):
+    def __init__(self, pinned_root=None, legacy_root=None, bridge_root=None):
+        self.pinned_root = pinned_root or self.declared_root
         self.legacy_root = legacy_root or self.frozen_root
         self.bridge_root = bridge_root or os.path.dirname(gnr.__file__)
+
+    @property
+    def gnr_folder(self):  # wf:phase-2:new
+        """The configuration folder this process is running under."""
+        return os.environ.get(GNR_FOLDER_ENV)
+
+    @property
+    def declared_root(self):  # wf:phase-2:new
+        """The `gnr` package of the tree the bench's own environment.xml names."""
+        if not self.gnr_folder:
+            raise RuntimeError(
+                f"{GNR_FOLDER_ENV} is unset: the bench cannot say which genropy "
+                f"it pinned. Set it to {BENCH_GNR_FOLDER}.")
+        environment = os.path.join(self.gnr_folder, "environment.xml")
+        home = xml.etree.ElementTree.parse(environment).find("./environment/gnrhome")
+        return os.path.join(home.get("value"), "gnrpy", "gnr")
 
     @property
     def frozen_root(self):  # wf:phase-2:new
@@ -74,38 +117,51 @@ class GenropyParity:
         return found
 
     @property
+    def bridge_on_pin(self):  # wf:phase-2:new
+        """Is this interpreter importing the pinned tree, and not another one?"""
+        return os.path.realpath(self.bridge_root) == os.path.realpath(self.pinned_root)
+
+    @property
     def differences(self):  # wf:phase-2:new
-        """(differing, legacy_only, bridge_only) — all empty means parity."""
-        legacy = self.get_source_files(self.legacy_root)
-        bridge = self.get_source_files(self.bridge_root)
-        differing = [name for name in sorted(legacy & bridge)
-                     if not filecmp.cmp(os.path.join(self.legacy_root, name),
-                                        os.path.join(self.bridge_root, name),
+        """(differing, pinned_only, frozen_only) between the pin and the copy."""
+        pinned = self.get_source_files(self.pinned_root)
+        frozen = self.get_source_files(self.legacy_root)
+        differing = [name for name in sorted(pinned & frozen)
+                     if not filecmp.cmp(os.path.join(self.pinned_root, name),
+                                        os.path.join(self.legacy_root, name),
                                         shallow=False)]
-        return differing, sorted(legacy - bridge), sorted(bridge - legacy)
+        return differing, sorted(pinned - frozen), sorted(frozen - pinned)
 
     @property
     def aligned(self):  # wf:phase-2:new
-        return not any(self.differences)
+        return self.bridge_on_pin and not any(self.differences)
 
     @property
     def report(self):  # wf:phase-2:new
-        """What a human reads: the two roots, what differs, what to do."""
-        differing, legacy_only, bridge_only = self.differences
-        lines = [f"legacy tree: {self.legacy_root}",
-                 f"bridge tree: {self.bridge_root}"]
-        if not (differing or legacy_only or bridge_only):
-            lines.append("the two stacks run identical genropy source")
-            return "\n".join(lines)
+        """What a human reads: where each stack stands, and what to do about it."""
+        lines = [f"pinned genropy: {self.pinned_root}",
+                 f"bridge imports: {self.bridge_root}",
+                 f"legacy copy:    {self.legacy_root}"]
+        if not self.bridge_on_pin:
+            lines.append("\nthe bridge is NOT importing the pinned tree. Remedy:\n"
+                         f"  export PYTHONPATH={os.path.dirname(self.pinned_root)}")
+        differing, pinned_only, frozen_only = self.differences
         for name in differing:
             lines.append(f"  differs:      {name}")
-        for name in legacy_only:
-            lines.append(f"  legacy only:  {name}")
-        for name in bridge_only:
-            lines.append(f"  bridge only:  {name}")
-        lines.append(f"\n{len(differing) + len(legacy_only) + len(bridge_only)} "
-                     f"file(s) out of parity\n")
-        lines.append(REMEDY)
+        for name in pinned_only:
+            lines.append(f"  pinned only:  {name}")
+        for name in frozen_only:
+            lines.append(f"  frozen only:  {name}")
+        if differing or pinned_only or frozen_only:
+            lines.append(
+                f"\n{len(differing) + len(pinned_only) + len(frozen_only)} file(s): "
+                f"the frozen copy is not the pinned tree. Remedy:\n"
+                f'  uv pip install --python temp/legacy_venv/bin/python '
+                f'"{os.path.dirname(os.path.dirname(self.pinned_root))}/gnrpy[pgsql]"')
+        if self.aligned:
+            lines.append("\nboth stacks run the pinned genropy")
+        else:
+            lines.append("\nUntil this exits 0, no comparative run may start.")
         return "\n".join(lines)
 
 

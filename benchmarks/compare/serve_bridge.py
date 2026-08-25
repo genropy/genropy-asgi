@@ -29,8 +29,15 @@ commits make that visible.
 
 Run, from the repository root:
 
-  PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
+  GENRO_GNRFOLDER=$PWD/temp/gnr \
+      PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+      PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py test_invoice_pg \
       -p 8098 --nodebug
+
+`PYTHONPATH` is what puts the bench's pinned genropy ahead of the editable one
+in the developer's pyenv, and `GENRO_GNRFOLDER` points at the configuration that
+names the pinned resources and packages. Both are read at import time, so they
+belong on the command line and not in this launcher.
 
 Every argument is the ``gnrasgiserve`` command line: this launcher adds only
 ``--config``, and refuses to override one the caller named. The archive lands

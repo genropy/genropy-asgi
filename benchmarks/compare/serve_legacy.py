@@ -20,11 +20,13 @@ client as `SiteRegisterClient(site)`, with no room for a second argument.
 The conditions are read where they are true and never assumed: the workers, the
 threads, the bind and the debug flag from this very command line, the database
 from the instance's own `instanceconfig.xml`, the versions from the installed
-distributions, the bench commit from git.
+distributions, the bench commit from git. `GENRO_GNRFOLDER` points genropy at
+the bench's own configuration folder, which names the pinned trees — without it
+the run reads the developer's `~/.gnr` and is not comparable.
 
 Run, from the repository root:
 
-  PGGSSENCMODE=disable temp/legacy_venv/bin/python \
+  GENRO_GNRFOLDER=$PWD/temp/gnr PGGSSENCMODE=disable temp/legacy_venv/bin/python \
       benchmarks/compare/serve_legacy.py test_invoice_pg_legacy \
       -b 127.0.0.1:8099 -w 1 -k gthread --threads 16 \
       -c benchmarks/compare/gunicorn_recorders.conf.py
@@ -36,10 +38,13 @@ launcher adds nothing to it and takes nothing away. The archive lands in
 
 import functools
 import importlib.metadata
+import json
 import os
 import platform
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 import gunicorn
@@ -89,9 +94,30 @@ class RunConditions:
                 "recorders": ["http", "register"],
                 "database": self.database,
                 "genropy": importlib.metadata.version("genropy"),
+                "genropy_source": self.genropy_source,
+                "genropy_commit": self.genropy_commit,
                 "gunicorn": gunicorn.__version__,
                 "python": platform.python_version(),
                 "bench_commit": self.bench_commit}
+
+    @property
+    def genropy_source(self):  # wf:phase-2:new
+        """The tree this frozen copy was built from — the bench's pinned worktree.
+
+        The installed version string records the moment of installation, never
+        the code, and a frozen copy is no working tree of its own. What can be
+        asked is where it came from, which the installer writes down.
+        """
+        url = json.loads(importlib.metadata.distribution("genropy")
+                         .read_text("direct_url.json"))["url"]
+        return urllib.request.url2pathname(urllib.parse.urlparse(url).path)
+
+    @property
+    def genropy_commit(self):  # wf:phase-2:new
+        """The commit of that tree: what the bridge run declares for its own."""
+        return subprocess.run(["git", "-C", self.genropy_source,
+                               "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
 
     @property
     def bench_commit(self):
