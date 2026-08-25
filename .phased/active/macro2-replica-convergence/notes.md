@@ -143,3 +143,10 @@
 - `TraceReader.records` answers with fresh dicts on every read, so the overlap
   search compares exchanges by `exchange_id` and never by identity. The first
   implementation used `is`, which silently never matched the record handed in.
+- `TraceReader.conditions` was written and then removed at the close: it read the
+  declared conditions of the archived run, and only the check script ever called
+  it — the replay never looks at them. Minimality applied honestly: Phase 3
+  compares two runs and has a reason to read them, and it adds the property the
+  day it does. Owner delegated the naming of this bench to the executing session
+  (2026-08-25: "per questo progetto di comparatore non serve fare il battesimo
+  nomi"), so every other proposed name stands as written.

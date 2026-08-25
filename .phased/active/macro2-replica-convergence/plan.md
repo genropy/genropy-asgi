@@ -86,9 +86,32 @@ recognised rather than discovered.
     code you expect (not the recorder, not the client), and the field reads
     well enough to diagnose Phase 6 with.
 
-- [>] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
-  > In execution since 2026-08-25T07:40:00+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: d92bc6c
+- [x] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
+  > Done: `replica.py` reads an archived run and performs it again against a live
+    stack by network calls, adapting the identifiers the target mints; two
+    declared rules say what it never replays (`/_ping`, statics) and one says
+    which recorded status is a race of the reference session rather than a
+    divergence of the stack. `genropy_parity_check.py` refuses every comparative
+    run while the two stacks are not on the same genropy, and the bench now PINS
+    that genropy on a detached worktree both stacks read.
+  > Files: benchmarks/compare/replica.py,
+    benchmarks/compare/replica_check.py,
+    benchmarks/compare/genropy_parity_check.py,
+    benchmarks/compare/serve_legacy.py,
+    benchmarks/compare/serve_bridge.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro2-replica-convergence/notes.md
+  > Verified: replica_check.py 39 assertions green; genropy_parity_check.py exits
+    0 on the pinned trees and 1 naming web/gnrdummysite.py on a difference
+    introduced on purpose and then restored; the replay of
+    legacy-20260823T232924.sqlite against the legacy stack answered 30 statuses
+    exactly and 1 as a recognised race, exit 0, archived as
+    legacy-20260825T080505.sqlite — 1379 register lines, 0 naming an absent
+    exchange, all 31 exchanges carrying `X-Bench-Replica-Of`; ruff clean.
+  > Verify: now — done 2026-08-25: the owner watched a replica run end to end and
+    inspected the pin — the worktree detached at 6da02feda, temp/gnr/environment.xml
+    naming it for gnrhome/packages/resources/webtools/static and NOT for projects,
+    and the legacy venv's direct_url.json pointing at the worktree.
   - Run: opus / high
   - Pattern: `benchmarks/replay_a1.py:build_plan` (extracting an ordered call
     plan from a capture) and `benchmarks/scaling_probe.py:login_user` (replaying

@@ -101,7 +101,7 @@ class RunConditions:
                 "bench_commit": self.bench_commit}
 
     @property
-    def genropy_source(self):  # wf:phase-2:new
+    def genropy_source(self):
         """The tree this frozen copy was built from — the bench's pinned worktree.
 
         The installed version string records the moment of installation, never
@@ -113,7 +113,7 @@ class RunConditions:
         return urllib.request.url2pathname(urllib.parse.urlparse(url).path)
 
     @property
-    def genropy_commit(self):  # wf:phase-2:new
+    def genropy_commit(self):
         """The commit of that tree: what the bridge run declares for its own."""
         return subprocess.run(["git", "-C", self.genropy_source,
                                "rev-parse", "--short", "HEAD"],

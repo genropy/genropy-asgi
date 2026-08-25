@@ -80,12 +80,12 @@ class GenropyParity:
         self.bridge_root = bridge_root or os.path.dirname(gnr.__file__)
 
     @property
-    def gnr_folder(self):  # wf:phase-2:new
+    def gnr_folder(self):
         """The configuration folder this process is running under."""
         return os.environ.get(GNR_FOLDER_ENV)
 
     @property
-    def declared_root(self):  # wf:phase-2:new
+    def declared_root(self):
         """The `gnr` package of the tree the bench's own environment.xml names."""
         if not self.gnr_folder:
             raise RuntimeError(
@@ -96,14 +96,14 @@ class GenropyParity:
         return os.path.join(home.get("value"), "gnrpy", "gnr")
 
     @property
-    def frozen_root(self):  # wf:phase-2:new
+    def frozen_root(self):
         """The `gnr` package inside the legacy venv, whatever python built it."""
         roots = sorted(glob.glob(LEGACY_GLOB))
         if not roots:
             raise RuntimeError(f"no frozen genropy under {LEGACY_GLOB}")
         return roots[-1]
 
-    def get_source_files(self, root):  # wf:phase-2:new
+    def get_source_files(self, root):
         """Relative paths of the `*.py` files this tree contributes at runtime."""
         found = set()
         for folder, subfolders, names in os.walk(root):
@@ -117,12 +117,12 @@ class GenropyParity:
         return found
 
     @property
-    def bridge_on_pin(self):  # wf:phase-2:new
+    def bridge_on_pin(self):
         """Is this interpreter importing the pinned tree, and not another one?"""
         return os.path.realpath(self.bridge_root) == os.path.realpath(self.pinned_root)
 
     @property
-    def differences(self):  # wf:phase-2:new
+    def differences(self):
         """(differing, pinned_only, frozen_only) between the pin and the copy."""
         pinned = self.get_source_files(self.pinned_root)
         frozen = self.get_source_files(self.legacy_root)
@@ -133,11 +133,11 @@ class GenropyParity:
         return differing, sorted(pinned - frozen), sorted(frozen - pinned)
 
     @property
-    def aligned(self):  # wf:phase-2:new
+    def aligned(self):
         return self.bridge_on_pin and not any(self.differences)
 
     @property
-    def report(self):  # wf:phase-2:new
+    def report(self):
         """What a human reads: where each stack stands, and what to do about it."""
         lines = [f"pinned genropy: {self.pinned_root}",
                  f"bridge imports: {self.bridge_root}",

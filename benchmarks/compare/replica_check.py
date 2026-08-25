@@ -102,8 +102,6 @@ check("the trace reads only HTTP lines, never the register ones",
 check("the trace reads them oldest first, not in the order they were written",
       [record["exchange_id"] for record in trace.records]
       == ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"])
-check("the trace carries the conditions of the run it holds",
-      trace.conditions["stack"] == "legacy")
 
 # 2. what is left out, and why: the two declared rules
 check("a static is left out", trace.get_skip_reason(trace.records[1]) == "static")

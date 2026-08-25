@@ -92,25 +92,19 @@ class TraceReader:
         self.connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 
     @property
-    def conditions(self):  # wf:phase-2:new
-        row = self.connection.execute(
-            "SELECT conditions FROM run ORDER BY started LIMIT 1").fetchone()
-        return json.loads(row[0])
-
-    @property
-    def records(self):  # wf:phase-2:new
+    def records(self):
         """Every recorded HTTP line, oldest first."""
         rows = self.connection.execute(
             "SELECT line FROM record WHERE kind = 'http' ORDER BY ts, id").fetchall()
         return [json.loads(row[0]) for row in rows]
 
     @property
-    def exchanges(self):  # wf:phase-2:new
+    def exchanges(self):
         """The lines the replica performs again: everything not skipped."""
         return [record for record in self.records
                 if self.get_skip_reason(record) is None]
 
-    def get_skip_reason(self, record):  # wf:phase-2:new
+    def get_skip_reason(self, record):
         """Why this exchange is not replayed, or None when it is."""
         if record.get("filtered") == "static":
             return "static"
@@ -118,7 +112,7 @@ class TraceReader:
             return "ping"
         return None
 
-    def get_race_reason(self, record):  # wf:phase-2:new
+    def get_race_reason(self, record):
         """Why this exchange's recorded status is a race of the session, or None.
 
         Two conditions, and both are read from the trace itself: the recorded
@@ -135,7 +129,7 @@ class TraceReader:
         return (f"the connection was rotated by {overlapped.get('rpc_method') or overlapped.get('path')}, "
                 f"still in flight on the same cookie")
 
-    def get_overlapped_exchange(self, record):  # wf:phase-2:new
+    def get_overlapped_exchange(self, record):
         """The earlier exchange still running when this one started, or None."""
         started = datetime.datetime.fromisoformat(record["ts"])
         cookie = (record.get("req_headers") or {}).get("Cookie")
@@ -159,18 +153,18 @@ class IdentityMap:
     def __init__(self):
         self.tokens = {}
 
-    def learn_page_id(self, trace_body, target_body):  # wf:phase-2:new
+    def learn_page_id(self, trace_body, target_body):
         """Pair the page the trace was given with the page the target minted."""
         trace_id = self.get_page_id(trace_body)
         target_id = self.get_page_id(target_body)
         if trace_id and target_id:
             self.tokens[trace_id] = target_id
 
-    def get_page_id(self, html):  # wf:phase-2:new
+    def get_page_id(self, html):
         found = PAGE_ID_RE.search(html or "")
         return found.group(1) if found else None
 
-    def get_adapted(self, text):  # wf:phase-2:new
+    def get_adapted(self, text):
         """The same text with every known trace token replaced by the target's."""
         for trace_id, target_id in self.tokens.items():
             text = text.replace(trace_id, target_id)
@@ -190,7 +184,7 @@ class ReplicaClient(StickyClient):
             headers[REPLICA_HEADER] = self.replaying
         return headers
 
-    def send_request(self, method, path, body=None, content_type=None):  # wf:phase-2:new
+    def send_request(self, method, path, body=None, content_type=None):
         """One request, one reply: the body verbatim, the cookies remembered."""
         headers = self._headers()
         if content_type:
@@ -241,7 +235,7 @@ class Replica:
                   f"-> {status}{mark}")
         return self.failures
 
-    def replay_exchange(self, record):  # wf:phase-2:new
+    def replay_exchange(self, record):
         """Send one recorded exchange to the target; return the status it answered."""
         self.client.replaying = record.get("exchange_id")
         path = self.get_adapted_path(record)
@@ -261,13 +255,13 @@ class Replica:
                                     body.decode("utf-8", "replace"))
         return status
 
-    def get_adapted_path(self, record):  # wf:phase-2:new
+    def get_adapted_path(self, record):
         """The recorded path, with the query string's identifiers rewritten."""
         path = record.get("path") or "/"
         query = record.get("query")
         return f"{path}?{self.identity.get_adapted(query)}" if query else path
 
-    def get_adapted_form(self, record):  # wf:phase-2:new
+    def get_adapted_form(self, record):
         """The recorded form, with every identifier rewritten in every value."""
         adapted = {}
         for key, value in record["form"].items():
