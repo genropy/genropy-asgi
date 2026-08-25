@@ -271,11 +271,9 @@ recognised rather than discovered.
     README's updated run recipe: the install point (register recorder in the
     template through the engine factory, HTTP recorder in the child) is
     documented, and the line is indistinguishable in shape from Phase 1's sample.
-  > Verify: now — the four register calls the site makes while it is being built
-    are no longer recorded on the bridge, by decision: they carry no exchange, no
-    comparison reads them, and writing them would kill every forked worker. Say
-    whether that drop is acceptable, or whether the bench should pay a helper
-    process to keep them.
+  > Verify: now — done 2026-08-25: the owner ACCEPTED the loss of the four
+    register calls the site makes while it is being built, with no helper process
+    to keep them. The no-write template stands as the design.
   - Run: opus / high
   - Pattern: the shipped recipe `src/genropy_asgi/spa/config.py` as of commit
     7cd15de (engine_factory/engine_kwargs — workers fork from a template);

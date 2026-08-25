@@ -265,3 +265,13 @@
   chains** (0 unique to either recipe). 0 lines without a caller, 0 without an
   exchange, 0 unjoinable, and every register line written by the forked worker's
   pid — none by the template's.
+- Owner's decisions on the above, 2026-08-25, relayed through the foreman:
+  - the loss of the four template-build register calls is ACCEPTED; no helper
+    process is to be built to keep them;
+  - the no-write template is the RIGHT DESIGN independently of the sqlite bug —
+    a template that hands its children no archive state is what is wanted — so a
+    future interpreter upgrade does not revert it;
+  - upgrading the bridge interpreter to a sqlite 3.53.x build is macro-phase
+    boundary hygiene, NEVER mid-workflow. Phases 5 and 7 do not attempt it: a
+    change of interpreter changes what every comparison measures, and the bench
+    is mid-comparison.
