@@ -349,6 +349,7 @@ class Replica:
         self.divergence = None
         self.compared = []
         self.uncompared = []
+        self.replayed = {}
         self.elapsed_ms = 0.0
         # where this replay begins in the target's archive: the stack answers
         # every cycle into the file it minted at startup.
@@ -373,9 +374,7 @@ class Replica:
             print(self.diff.header)
         started = time.time()
         for position, record in enumerate(exchanges, 1):
-            sent = time.time()
             status = self.replay_exchange(record)
-            took_ms = (time.time() - sent) * 1000
             expected = record.get("status")
             race = (None if status == expected
                     else self.rules.get_status_reason(self.trace, record))
@@ -389,13 +388,13 @@ class Replica:
                 mark = f"   FAIL expected {expected}"
                 self.failures.append((position, record.get("path"),
                                       record.get("rpc_method"), expected, status))
-            recorded_ms = record.get("duration_ms")
-            timing = (f"{took_ms:6.0f} ms (the reference took {recorded_ms:.0f})"
-                      if recorded_ms else f"{took_ms:6.0f} ms")
+            divergence = self.compare_exchange(record, position, race)
             print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
                   f"{record.get('path')} {record.get('rpc_method') or ''} "
-                  f"-> {status}  {timing}{mark}")
-            if self.compare_exchange(record, position, race) is not None:
+                  f"-> {status}  {self.get_timing(record)}{mark}")
+            if self.uncompared and self.uncompared[-1][0] == position:
+                print(f"     not compared — {self.uncompared[-1][2]}")
+            if divergence is not None:
                 break
         self.elapsed_ms = (time.time() - started) * 1000
         return self.failures
@@ -404,15 +403,13 @@ class Replica:
     def summary(self):  # wf:phase-7:new
         """What the run actually exercised, in numbers, for the report to close on.
 
-        The milliseconds are WALL CLOCK of the replay, not a measurement of either
-        stack: both run under two recorders, and the reference was recorded by a
-        browser or a driver, not by this replay. Timings are macro-phase 3's work,
-        under its own declared conditions. These are here to say how long the cycle
-        took, nothing else.
+        The seconds are the wall clock of the whole replay — how long the cycle
+        took, nothing else. The per-exchange durations are another thing entirely:
+        see `get_timing`.
         """
         lines = [f"{len(self.compared)} exchange(s) compared, "
                  f"{len(self.uncompared)} not compared, "
-                 f"{self.elapsed_ms / 1000:.1f} s of replay"]
+                 f"{self.elapsed_ms / 1000:.1f} s of wall clock"]
         for position, path, reference_lines, replica_lines in self.compared:
             lines.append(f"  [{position}] {path}: {reference_lines} register calls "
                          f"on the reference, {replica_lines} on the replica")
@@ -443,6 +440,7 @@ class Replica:
             return self.not_compared(position, label,
                                      f"the target archive carries no exchange stamped "
                                      f"with {record.get('exchange_id')}")
+        self.replayed[record["exchange_id"]] = replayed
         self.compared.append((
             position, label,
             len(self.trace.get_register_lines(record["exchange_id"])),
@@ -451,10 +449,31 @@ class Replica:
         return self.divergence
 
     def not_compared(self, position, label, reason):  # wf:phase-7:new
-        """Record and print why this exchange was left out; never a silent skip."""
+        """Record why this exchange was left out; the caller prints it, never silent."""
         self.uncompared.append((position, label, reason))
-        print(f"     not compared — {reason}")
         return None
+
+    def get_timing(self, record):  # wf:phase-7:new
+        """The two stacks' own durations for this exchange, measured the same way.
+
+        Both numbers come from the HTTP recorder wrapping the application, in the
+        process that served the request: it starts when the application receives
+        the request and stops when the body is complete, network excluded. So they
+        are the same metre on the same call — the replay sends the recorded method,
+        path and body, with only the identifiers the target mints rewritten.
+
+        They are still not a benchmark: both stacks run under two recorders, and
+        the reference was served while a browser or a driver was driving it.
+        Timings are macro-phase 3's work, under its own declared conditions.
+        """
+        reference_ms = record.get("duration_ms")
+        replayed = self.replayed.get(record.get("exchange_id"))
+        replica_ms = (replayed or {}).get("duration_ms")
+        if reference_ms is None:
+            return ""
+        if replica_ms is None:
+            return f"{reference_ms:.0f} ms on the reference"
+        return f"{reference_ms:.0f} ms on the reference, {replica_ms:.0f} on the replica"
 
     def get_replayed_exchange(self, record):
         """The target's own exchange for this one, once the target has written it."""

@@ -568,10 +568,15 @@ every defect was fixed.
 asked for what it did not carry: which run, under which parameters, and how long
 it took. Added, all of it read from the archives themselves so the report stays
 readable months later beside the two files it names — the instance and the
-database of each side, the exchange count of the reference, the wall clock of
-each exchange beside the duration the reference recorded, and a closing summary
+database of each side, the exchange count of the reference, the duration EACH STACK
+recorded for each exchange, and a closing summary
 with the exchanges compared, the ones not compared and why, and the register-call
-count of each compared exchange on both sides. The milliseconds are labelled for
-what they are: wall clock of the replay, not a measurement of either stack — both
-run under two recorders, and timings belong to macro-phase 3 under its own
-declared conditions.
+count of each compared exchange on both sides. The first version printed the replay's own wall clock beside the reference's
+recorded duration, and the owner rejected the pair: two different measurement
+points invite a comparison that does not hold. It is now the same metre on both
+sides — the HTTP recorder wrapping the application, in the process that served
+the request, network excluded — which holds because the replay sends the same
+call, with only the identifiers the target mints rewritten. Still not a
+benchmark, and the report says so: both stacks run under two recorders, and
+timings belong to macro-phase 3 under its own declared conditions. The wall clock
+survives in one place only, the closing line, as how long the cycle took.
