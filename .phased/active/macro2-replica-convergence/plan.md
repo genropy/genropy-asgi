@@ -427,6 +427,21 @@ recognised rather than discovered.
     working; `datacollector.stale_connections` reads one bare and would
     KeyError, but it has no caller in genropy AND it would KeyError on a
     never-refreshed legacy row too — parity, not a regression.
+    THE THREE CONTRACT TESTS ARE REWRITTEN IN THIS PHASE (owner, 2026-08-25,
+    on the principle he stated: translating incoming calls into the legacy
+    format IS one of genropy-asgi's jobs — so a test asserting the bridge's own
+    shape asserted the wrong thing). What falls is three assertions, not three
+    tests: `test_connected_users_reads_a_freshly_created_row:387` loses the
+    `isinstance(last_user_ts, datetime)` line and KEEPS `last_event_age == 0`
+    (the guarded reader falls back to `start_ts` on a just-born item);
+    `test_stale_connections_reads_the_connection_rows:423` falls whole — it was
+    written for the unguarded reader that has no caller in the live checkout;
+    `test_the_core_rows_keep_the_stamps_the_sweep_reads:438` loses the
+    dressed-datetime line and KEEPS the raw-item-stays-float line, which is the
+    view/core separation and is not in question. The rewritten assertions state
+    the LEGACY behaviour: a never-refreshed item does not carry the three
+    clocks. The neighbouring refreshed-item test already passes and stays as it
+    is. Record the reasoning in notes.md under `## Phase 6`.
   - Details: the first cycle against the bridge stops in the FIRST exchange, at
     register call 5, on the key set of the connection register item answered by
     `client:new_connection` — reference `datachanges`, `datachanges_idx`,
