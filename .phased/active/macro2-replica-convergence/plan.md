@@ -507,7 +507,8 @@ recognised rather than discovered.
     it, and whatever the replay stops on next (if anything) is named precisely
     enough to work from.
 
-- [ ] **Phase 7**: converge the drive_login reference end to end
+- [>] **Phase 7**: converge the drive_login reference end to end
+  > In execution since 2026-08-25T14:56:39+02:00
   - Run: opus / high
   - Pattern: the Phase 5 cycle, repeated; the excluded hypotheses on the +28%
     are on record (bridge code does not call the register itself; the register
@@ -591,6 +592,25 @@ recognised rather than discovered.
   `refresh()` with client clocks — the legacy behaviour is "present exactly
   when refreshed", not "never present". If they must, that is Phase 8 work, not
   a defect of Phase 6's fix.
+- **The pinned genropy moved on 2026-08-25**, with the owner's approval, from
+  `6da02feda` to `a1c0a8dd0` (genropy develop). The worktree
+  `<genropy>/worktrees/bench-baseline` was re-detached, `temp/legacy_venv` was
+  re-frozen from it, and `genropy_parity_check.py` exits 0 on both stacks.
+  Two merged PRs are why: #1154 drops the services freshness check from 242 to
+  3 register round-trips per login (so a login's ~384 register lines become
+  roughly 145 — the exact figure is Phase 7's to measure), and #1159 makes the
+  client send `_lastUserEventTs`/`_lastRpc` on every RPC. #1159 changes nothing
+  for either stack today: `_rpcDispatcher` pops both onto page attributes
+  nothing reads (`gnrwebpage.py:641-642`), and only `handle_ping` calls
+  `refresh()` — verified across gnrpy. The owner wanted the client half for
+  genro-asgi's benefit and deliberately left the daemon alone, so Phase 6's
+  premise is untouched.
+  **Consequence, binding on Phase 7:** every reference archive recorded before
+  today belongs to `6da02feda`. The first step of Phase 7's cycle is to RE-RECORD
+  the drive_login reference on the new baseline — replaying a pre-fix reference
+  against a post-fix stack would report ~239 divergences the stacks did not
+  cause. Every measurement quoted anywhere above this line was taken on
+  `6da02feda`.
 - Two marker debts for `/quality-check` at the close: Phase 5 wrote no
   `wf:phase-5:new` markers on its new callables (recorded in its notes), and two
   Phase 4 markers still stand in `benchmarks/compare/recording_engine_factory.py`
