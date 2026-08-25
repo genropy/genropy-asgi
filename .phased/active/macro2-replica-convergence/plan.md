@@ -389,7 +389,7 @@ recognised rather than discovered.
     enough to start Phase 6 from.
 
 - [ ] **Phase 6**: uniform the connection register item
-  - Run: opus / high
+  - Run: opus / medium
   - Pattern: `src/genropy_asgi/siteregister/siteregister_client.py`, where the
     item's shape is defined today (`EPOCH_STAMPS:90`, `avatar_extra:1380`,
     `subscribed_paths:159`); the legacy answer recorded in the Phase 5 report
