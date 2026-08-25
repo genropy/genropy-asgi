@@ -600,19 +600,30 @@ recognised rather than discovered.
   - Files: benchmarks/compare/twin_proxy.py (new, the CLI and the proxy),
     benchmarks/compare/twin_proxy_check.py (new),
     benchmarks/compare/run_archive.py (the declared run name),
-    benchmarks/compare/README.md
+    benchmarks/compare/README.md,
+    src/genropy_asgi/spa/config.py (pass `worker_max_users` into the group, on
+    the `GNR_ASGI_IDLE_FREEZE_MINUTES` precedent right above it),
+    benchmarks/compare/bridge_recipe.py (the same lines, or
+    `bridge_coverage_check.py` goes red on the drift).
+    `src/` is product code, so `pytest tests/` is a GATE on this phase and a
+    failing contract test is a STOP, as it was for Phase 6.
   - Decisions (owner, 2026-08-25, replacing the record-then-replay shape this
     phase carried until today): the driver is a PROXY the owner browses through,
     not a replay of a recorded session. One CLI takes the legacy instance name,
-    a run name the owner declares and `-w N` for gunicorn; it copies the db, starts
-    both stacks, and serves. NO `--max-users-per-worker` here (foreman,
-    2026-08-25, answering this phase's clarify): one user never fills a pool, so
-    this phase cannot exercise the cap, and an option that records a number
-    nothing acts on is a false promise in the interface. The lever — the two
-    lines that pass `worker_max_users` through `src/genropy_asgi/spa/config.py`
-    and its transcription in `benchmarks/compare/bridge_recipe.py` — lands in the
-    PATROL's phase, where sixteen users can actually verify it, and where the
-    core fix it also waits on will have landed. Every HTTP request is dispatched to BOTH stacks, IN
+    a run name the owner declares, `-w N` for gunicorn and
+    `--max-users-per-worker` for the bridge; it copies the db, starts both
+    stacks, and serves. The user cap IS in scope here — reversing the foreman's
+    own ruling of the same morning, whose two premises both fell the same day:
+    (1) genro-asgi 2682ad7, 19:59, moved the birth INSIDE the placement, so a
+    user nobody admits now gets a worker instead of a 503 with Retry-After 30
+    (only the genuine surrender — quota spent, launch failed — still refuses);
+    (2) the owner wants MORE THAN ONE user in this phase, to compare chat and
+    subscribe, and delivery between connections is the behaviour he wants to see.
+    With the group's default ceiling both users land in one worker and only the
+    in-worker path runs; `worker_max_users=1` is what puts them on two workers
+    and exercises the cross-worker path, which has never run on the bridge. So
+    the cap is exercisable here, by hand, and the minimality objection is
+    answered: the code lands where it can be verified. Every HTTP request is dispatched to BOTH stacks, IN
     SEQUENCE not in parallel (parallel makes them contend for CPU and database
     and dirties both timings; sequential warms the second, and timings stay
     indicative either way — the speed verdict is macro-phase 3's, with
@@ -726,23 +737,26 @@ recognised rather than discovered.
   test, so either each follower works on its own record or only the leader
   writes; and the arrest rule has to change, since first-divergence does not fit
   a crowd.
-- **The patrol is blocked on a core defect, and the defect is the fork's own
-  doing** (measured 2026-08-25). A placement refusal answers 503 with
-  `Retry-After: 30` — `SHAPE_REVIEW_SECONDS = HEARTBEAT_SECONDS *
-  CHECK_OCCUPANCY_BEATS` = 5.0 x 6 (`spa_commander.py:207`, set at `:847`,
-  served at `applications/spa_app.py:352-361`). Those 30 seconds are calibrated
-  on the occupancy-check cadence, not on the cost of a birth: they were right
-  when a worker was born by spawn, and since 7cd15de a worker is forked from a
-  template that has already built the site, so the birth costs about a
-  millisecond and `GroupHandler.assign_user` already rings `ping_now()` before
-  re-raising. So the pool knows it must grow, grows in a millisecond, and has
-  already turned away the very request that asked for it. With
-  `worker_max_users=1` a patrol of 16 users would see 15 refused at login. The
-  fix belongs to the core session — proposal, insertion points and the open
-  questions in `temp/proposta_core_attesa_nascita_worker_2026-08-25.md`; the
-  existing `_wait_out_hold`/`await_user_release` machinery
-  (`spa_commander.py:834`) is the shape to follow. PHASE 8 DOES NOT NEED THIS:
-  one user never fills a pool. It is the patrol that waits on it.
+- **The 503-instead-of-waiting defect is FIXED** — genro-asgi 2682ad7,
+  2026-08-25 19:59, verified at the source: `GroupHandler.assign_user` is async
+  and owns the whole task, so when nobody admits a user and the group may grow,
+  the placement itself brings the worker into being and places him on it
+  (`start_worker` returns at the presentation, a moment under a template), with
+  a `_placement_lock` serialising simultaneous arrivals. Only the genuine
+  surrender — quota spent, launch failed — still travels up as
+  `AssignmentRefused` and becomes a 503. This supersedes the note committed at
+  11970f4 this morning, which described the core as it then was; the proposal
+  that asked for it (`temp/proposta_core_attesa_nascita_worker_2026-08-25.md`)
+  is answered and closed. Consequence: `worker_max_users=1` is usable by hand
+  from Phase 8 on, and the patrol is no longer blocked on the core.
+- **genro-asgi is NOT pinned the way genropy is.** `genropy_parity_check.py`
+  pins and compares genropy only; the bridge imports the core editable from
+  `sub-projects/genro-asgi`, whose HEAD moved twice today (6080c33, 2682ad7)
+  under a running workflow. Nothing broke, and both moves were wanted — but a
+  measurement is only comparable to another taken on the same core, and today
+  nothing records or refuses on that. Macro-phase 3 should decide whether the
+  core is pinned too or merely DECLARED in the run conditions; the archive's
+  `run` row is where it would live, beside `genropy_source`/`genropy_commit`.
 - **`worker_max_users` already exists in the core** — commit 6080c33, "a
   placement ceiling per worker, the bench's lever", landed while this was being
   written as a proposal. Verified: it is a `group(...)` parameter
