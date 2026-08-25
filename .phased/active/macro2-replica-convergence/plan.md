@@ -131,7 +131,16 @@ recognised rather than discovered.
     difference; the replica refuses to start while the check fails; the replica
     replays the full archived browser session of 2026-08-23
     (legacy-20260823T232924.sqlite, 266 exchanges) against the LEGACY stack itself
-    with zero HTTP-level failures, and the new run is archived.
+    with zero HTTP-level failures, and the new run is archived. An HTTP-level
+    failure is a failure the REPLICA caused: a transport error, or a status the
+    target could not produce. An exchange whose recorded status only a race of
+    the reference session could produce — the recorded reply says the
+    connection was already rotated, AND the trace shows the exchange
+    overlapping an earlier one on the same pre-rotation cookie — is a
+    recognised race of the reference, not a divergence of the stack: declared
+    in notes.md, reported by the replay, and promoted to a DECLARED rule in
+    Phase 3's rules table (foreman, 2026-08-25, answering this phase's
+    clarify; the replica replays in order, not in timing, by approved design).
   - Verify: now — watch one replica run end to end; the exchanges scroll in the
     order of your original session and the run lands in `~/genro_bench/runs/`.
 
