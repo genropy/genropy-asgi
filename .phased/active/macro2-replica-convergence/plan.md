@@ -308,9 +308,47 @@ recognised rather than discovered.
     factory) is documented, and the line is indistinguishable in shape from
     Phase 1's sample.
 
-- [>] **Phase 5**: db copied on the fly, first run against the bridge
-  > In execution since 2026-08-25T09:45:00+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: bd90814
+- [x] **Phase 5**: db copied on the fly, first run against the bridge
+  > Done: a replica cycle against the bridge runs end to end — the copy db
+    dropped and recreated from the reference db, the bridge serving the twin
+    instance `test_invoice_pg_replica` with both recorders, then the replay — and
+    it stopped at the FIRST real divergence with the Phase 3 report. The copy is
+    a README recipe step run by hand before the launcher; `replica.py` gained the
+    refusal that makes the cycle safe: when the two archives declare different
+    stacks and the same `database.dbname`, the replay never reaches the wire.
+  > Files: benchmarks/compare/replica.py,
+    benchmarks/compare/replica_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro2-replica-convergence/notes.md
+  > Verified: replica_check.py 28 assertions green including the 8 new ones (two
+    stacks on one db refused, two stacks on two dbs allowed, same stack on one db
+    allowed so the Phase 3 self-check survives, and the refusal at Replica level);
+    structural_diff_check.py, http_recorder_check.py, run_archive_check.py,
+    register_recorder_check.py, bridge_coverage_check.py all green; ruff clean;
+    pytest tests/ 133 passed. The refusal proved on a real pair: reference
+    legacy-20260825T085605 against bridge-20260825T092537 (bridge on
+    test_invoice_pg) exits 1 naming both runs and printing the two copy commands.
+    The cycle: reference legacy-20260825T085605 (4 exchanges, 384 register lines)
+    against the bridge on the copy db, archived as bridge-20260825T113535 — the
+    template forked pool_0001, the worker presented at once, 298 register lines
+    carrying an exchange, 0 without a site_caller; exchange 1 answered 200 and the
+    comparison stopped inside it at register call 5.
+  > Review: the divergence is NOT the login one the plan expected. It stops in the
+    FIRST exchange, on the key set of the connection register item answered by
+    `client:new_connection` — the reference carries `datachanges`,
+    `datachanges_idx`, `electron_static`, `register_name`, `subscribed_paths`, the
+    bridge carries `avatar_extra`, `last_refresh_ts`, `last_rpc_ts`,
+    `last_user_ts`, `store`; both `site_caller` chains name the same site code
+    (`gnrwebpage.py:325 _register_new_page`). Phase 6's premise therefore changed:
+    it opens on this, not on the login segment, and the login divergence sits
+    behind it. Re-planning is the foreman's.
+  > Review: the shape is defined in genropy-asgi's own
+    `src/genropy_asgi/siteregister/siteregister_client.py` (`EPOCH_STAMPS`:90,
+    `avatar_extra`:1380, `subscribed_paths`:159), so uniforming lands here and not
+    in the core — no five-step routing to the core session for the shape itself.
+  > Verify: now — done 2026-08-25: the owner read the divergence report, judged it
+    precise enough to start Phase 6 from, and decided the direction is to UNIFORM
+    the connection register item — a defect to fix, not a rule to declare.
   - Run: opus / medium
   - Pattern: the twin-instance recipe of macro-phase 1 (test_invoice_pg_legacy:
     same project, own instanceconfig); `benchmarks/compare/serve_bridge.py`

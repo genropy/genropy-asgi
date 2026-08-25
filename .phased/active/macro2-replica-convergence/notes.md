@@ -318,3 +318,13 @@
   it is a rule to declare or a fault to fix is the owner's judgment — Phase 6's
   starting point, and it means Phase 6 does not open on the login segment the
   plan expected.
+- The naming review found NOTHING to review, and the reason is on record rather
+  than an omission: no `wf:phase-5:new` marker was written on the new callables
+  (a miss against the marker contract, noted honestly), and naming inside
+  `benchmarks/compare` is delegated to the executing session by the owner's own
+  decision of 2026-08-25 — so `DatabaseSeparation` and its properties carry the
+  names they were born with, with no question put to him.
+- The Done gate was re-checked on the RECORDED run, not by replaying the cycle a
+  second time. A second replay into the same stack starts from a populated
+  register, which is the one thing every run of this bench forbids: the check
+  would have measured the contamination and not the phase.
