@@ -149,6 +149,31 @@ class TraceReader:
         return records
 
     @property
+    def cold_start_exchanges(self):
+        """The exchanges this run performed before its first RPC.
+
+        Each stack finishes building lazily during them, and it builds in a
+        different process: the bridge's site is built in the TEMPLATE its workers
+        fork from, whose register lines are dropped by construction (a template
+        that touches sqlite kills the children it forks), while the legacy site
+        builds the same things in the process that serves the request and records
+        them. Measured on 2026-08-25: the template makes the very two calls the
+        bridge's first exchange was missing — the freshness check that instantiates
+        `storage_gnr` — so the two stacks make the same call and only one of them
+        is in an archive. The comparison therefore reads no register line from
+        these exchanges (owner, 2026-08-25). They are still REPLAYED: the page the
+        RPCs need is created there.
+
+        A run with no RPC at all has no cold start by this definition: the rule
+        must never be able to silence a whole comparison.
+        """
+        exchanges = self.exchanges
+        for index, record in enumerate(exchanges):
+            if record.get("rpc_method"):
+                return exchanges[:index]
+        return []
+
+    @property
     def last_record_id(self):
         """The id of the last row written so far: where a replay starting now begins."""
         row = self.connection.execute("SELECT max(id) FROM record").fetchone()
@@ -316,6 +341,8 @@ class Replica:
         self.diff = StructuralDiff(trace, target, self.rules) if target else None
         self.separation = DatabaseSeparation(trace, target) if target else None
         self.identity = IdentityMap()
+        self.cold_start = {record.get("exchange_id")
+                           for record in trace.cold_start_exchanges}
         self.client = ReplicaClient(host, port)
         self.failures = []
         self.races = []
@@ -366,15 +393,20 @@ class Replica:
     def compare_exchange(self, record, position, race):
         """Compare the exchange just replayed with its reference; the divergence, or None.
 
-        An exchange the reference raced is not compared: its recorded reply is a
-        400 the site owed nobody, so its register lines are the lines of a refused
-        call and comparing them would compare two different things. The skip is
-        printed, never silent.
+        Two exchanges are not compared, and each skip is printed, never silent.
+        One the reference raced: its recorded reply is a 400 the site owed nobody,
+        so its register lines are the lines of a refused call and comparing them
+        would compare two different things. One from the cold start, before the
+        first RPC: see `TraceReader.cold_start_exchanges`.
         """
         if self.diff is None:
             return None
         if race:
             print(f"     not compared — {race}")
+            return None
+        if record.get("exchange_id") in self.cold_start:
+            print("     not compared — before the first RPC: what each stack "
+                  "still builds lazily, it builds in a different process")
             return None
         replayed = self.get_replayed_exchange(record)
         if replayed is None:

@@ -27,6 +27,7 @@ from structural_diff import DeclaredRules
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMP = os.path.join(REPO_ROOT, "temp")
 ARCHIVE = os.path.join(TEMP, "replica_check.sqlite")
+NO_RPC_ARCHIVE = os.path.join(TEMP, "replica_check_no_rpc.sqlite")
 TREES = os.path.join(TEMP, "replica_check_trees")
 
 CONDITIONS = {"stack": "legacy", "sitename": "test_invoice_pg_legacy",
@@ -46,10 +47,10 @@ def check(label, condition):
         failures.append(label)
 
 
-def drop_archive():
+def drop_archive(path=ARCHIVE):
     for suffix in ("", "-wal", "-shm"):
-        if os.path.exists(ARCHIVE + suffix):
-            os.remove(ARCHIVE + suffix)
+        if os.path.exists(path + suffix):
+            os.remove(path + suffix)
 
 
 def write_tree(root, files):
@@ -114,6 +115,22 @@ check("a ping that carried datachanges is left out too — the rule is the path"
 check("everything else is replayed", trace.get_skip_reason(trace.records[0]) is None)
 check("the exchanges to replay are the trace minus the skipped ones",
       [record["exchange_id"] for record in trace.exchanges] == ["e1", "e3", "e6", "e7", "e8"])
+
+# 2c. the cold start: the exchanges before the first RPC, which the comparison
+# reads no register line from — each stack builds lazily there, and in a different
+# process (the bridge in the template its workers fork from, which records nothing).
+check("the cold start is every exchange up to the first RPC",
+      [record["exchange_id"] for record in trace.cold_start_exchanges] == ["e1"])
+check("a skipped exchange is not part of it — it is not replayed either",
+      "e2" not in [record["exchange_id"] for record in trace.cold_start_exchanges])
+
+drop_archive(NO_RPC_ARCHIVE)
+no_rpc = RunArchive(NO_RPC_ARCHIVE, run_id="replica-check-no-rpc", conditions=CONDITIONS)
+no_rpc.append_record("http", {"exchange_id": "n1", "ts": "2026-08-23T11:00:01",
+                              "method": "GET", "path": "/", "status": 200})
+check("a run that made no RPC at all has no cold start: the rule can never "
+      "silence a whole comparison",
+      TraceReader(NO_RPC_ARCHIVE).cold_start_exchanges == [])
 
 # 2b. the race of the reference: a status only concurrency could have produced.
 # The rule itself lives in the declared-rules table; the trace only supplies the
