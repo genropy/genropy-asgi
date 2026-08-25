@@ -974,7 +974,19 @@ node is. Measured on the browser session of 2026-08-23 against its own replay:
 of the 636 register lines whose call sequence already agreed, 29 differ on the
 raw answer and 12 on the shape — and those 12 are real.
 
-**What the report carries.** The verdict, the kind of difference, the register
+**What the report carries.** It opens on its own inputs, read from the archives
+and never from the command line: the two files, the stack and the genropy commit
+each declares, the instance and the database each ran on, and how many exchanges
+the reference holds. Then one line per exchange — the request, the status, and
+the wall clock of the replay beside the duration the reference recorded. Then the
+summary: how many exchanges were compared, how many were not and why, how long
+the replay took, and the register-call count of each compared exchange on both
+sides. **The milliseconds are wall clock, not a measurement of either stack** —
+both run under two recorders and the reference was recorded by a browser or a
+driver, not by this replay; timings are macro-phase 3's work, under its own
+declared conditions.
+
+On a divergence it also carries the verdict, the kind of difference, the register
 call number, the exchange as the replay printed it, the two lines side by side
 and the `site_caller` of both. Naming the caller is what makes it a diagnosis
 rather than a count:

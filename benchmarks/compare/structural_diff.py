@@ -301,13 +301,29 @@ class StructuralDiff:
 
     @property
     def header(self):
-        """Which two runs are being compared, and on which genropy."""
-        return "\n".join(f"{role}: {reader.path}\n"
-                         f"  stack {conditions.get('stack')}, "
-                         f"genropy {conditions.get('genropy_commit') or 'not declared'}"
-                         for role, reader, conditions in
-                         (("reference", self.reference, self.reference.conditions),
-                          ("replica", self.replica, self.replica.conditions)))
+        """Which two runs are being compared, and under which declared conditions.
+
+        Everything on these lines is read from the archives themselves, never from
+        the command line: a report that names its own inputs can be read months
+        later beside the two files it names.
+        """
+        lines = []
+        for role, reader, conditions in (
+                ("reference", self.reference, self.reference.conditions),
+                ("replica", self.replica, self.replica.conditions)):
+            database = conditions.get("database") or {}
+            # the replica's own count is 0 here by construction: the header is
+            # printed before the replay writes anything into the file the target
+            # minted at startup.
+            size = (f", {len(reader.records)} exchanges recorded"
+                    if role == "reference" else ", recording from now")
+            lines.append(
+                f"{role}: {reader.path}\n"
+                f"  stack {conditions.get('stack')}, "
+                f"genropy {conditions.get('genropy_commit') or 'not declared'}\n"
+                f"  instance {conditions.get('sitename') or 'not declared'}, "
+                f"db {database.get('dbname') or 'not declared'}{size}")
+        return "\n".join(lines)
 
     def get_divergence(self, reference_exchange, replica_exchange, position):
         """The first difference between the two exchanges, or None.

@@ -347,6 +347,9 @@ class Replica:
         self.failures = []
         self.races = []
         self.divergence = None
+        self.compared = []
+        self.uncompared = []
+        self.elapsed_ms = 0.0
         # where this replay begins in the target's archive: the stack answers
         # every cycle into the file it minted at startup.
         self.target_start = target.last_record_id if target else 0
@@ -368,8 +371,11 @@ class Replica:
               f"against {self.host}:{self.port}")
         if self.diff:
             print(self.diff.header)
+        started = time.time()
         for position, record in enumerate(exchanges, 1):
+            sent = time.time()
             status = self.replay_exchange(record)
+            took_ms = (time.time() - sent) * 1000
             expected = record.get("status")
             race = (None if status == expected
                     else self.rules.get_status_reason(self.trace, record))
@@ -383,12 +389,36 @@ class Replica:
                 mark = f"   FAIL expected {expected}"
                 self.failures.append((position, record.get("path"),
                                       record.get("rpc_method"), expected, status))
+            recorded_ms = record.get("duration_ms")
+            timing = (f"{took_ms:6.0f} ms (the reference took {recorded_ms:.0f})"
+                      if recorded_ms else f"{took_ms:6.0f} ms")
             print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
                   f"{record.get('path')} {record.get('rpc_method') or ''} "
-                  f"-> {status}{mark}")
+                  f"-> {status}  {timing}{mark}")
             if self.compare_exchange(record, position, race) is not None:
                 break
+        self.elapsed_ms = (time.time() - started) * 1000
         return self.failures
+
+    @property
+    def summary(self):  # wf:phase-7:new
+        """What the run actually exercised, in numbers, for the report to close on.
+
+        The milliseconds are WALL CLOCK of the replay, not a measurement of either
+        stack: both run under two recorders, and the reference was recorded by a
+        browser or a driver, not by this replay. Timings are macro-phase 3's work,
+        under its own declared conditions. These are here to say how long the cycle
+        took, nothing else.
+        """
+        lines = [f"{len(self.compared)} exchange(s) compared, "
+                 f"{len(self.uncompared)} not compared, "
+                 f"{self.elapsed_ms / 1000:.1f} s of replay"]
+        for position, path, reference_lines, replica_lines in self.compared:
+            lines.append(f"  [{position}] {path}: {reference_lines} register calls "
+                         f"on the reference, {replica_lines} on the replica")
+        for position, path, reason in self.uncompared:
+            lines.append(f"  [{position}] {path}: not compared — {reason}")
+        return "\n".join(lines)
 
     def compare_exchange(self, record, position, race):
         """Compare the exchange just replayed with its reference; the divergence, or None.
@@ -401,20 +431,30 @@ class Replica:
         """
         if self.diff is None:
             return None
+        label = f"{record.get('method')} {record.get('path')} {record.get('rpc_method') or ''}".strip()
         if race:
-            print(f"     not compared — {race}")
-            return None
+            return self.not_compared(position, label, race)
         if record.get("exchange_id") in self.cold_start:
-            print("     not compared — before the first RPC: what each stack "
-                  "still builds lazily, it builds in a different process")
-            return None
+            return self.not_compared(position, label,
+                                     "before the first RPC: what each stack still "
+                                     "builds lazily, it builds in a different process")
         replayed = self.get_replayed_exchange(record)
         if replayed is None:
-            print(f"     not compared — the target archive carries no exchange "
-                  f"stamped with {record.get('exchange_id')}")
-            return None
+            return self.not_compared(position, label,
+                                     f"the target archive carries no exchange stamped "
+                                     f"with {record.get('exchange_id')}")
+        self.compared.append((
+            position, label,
+            len(self.trace.get_register_lines(record["exchange_id"])),
+            len(self.target.get_register_lines(replayed["exchange_id"]))))
         self.divergence = self.diff.get_divergence(record, replayed, position)
         return self.divergence
+
+    def not_compared(self, position, label, reason):  # wf:phase-7:new
+        """Record and print why this exchange was left out; never a silent skip."""
+        self.uncompared.append((position, label, reason))
+        print(f"     not compared — {reason}")
+        return None
 
     def get_replayed_exchange(self, record):
         """The target's own exchange for this one, once the target has written it."""
@@ -491,6 +531,8 @@ if __name__ == "__main__":
             print(known.report)
     if replica.divergence:
         print(replica.divergence.report)
+        print()
+        print(replica.summary)
         sys.exit(1)
     if failures:
         print(f"{len(failures)} exchange(s) answered a status the trace does not carry:")
@@ -498,6 +540,7 @@ if __name__ == "__main__":
             print(f"  [{position}] {path} {rpc_method or ''}: "
                   f"expected {expected}, got {status}")
         sys.exit(1)
+    print(replica.summary)
     print(f"every exchange answered the status the trace carries, "
           f"{len(replica.races)} of them as a recognised race of the reference")
     if replica.diff:

@@ -563,3 +563,15 @@ trace carries, no divergence left unexplained, nothing recognised by a declared
 rule. The table still holds `reference-race` alone — this phase added no rule to
 it, which is the outcome the owner chose each time: every stop was a defect, and
 every defect was fixed.
+
+**The report was widened at the owner's check (2026-08-25).** Reading it he
+asked for what it did not carry: which run, under which parameters, and how long
+it took. Added, all of it read from the archives themselves so the report stays
+readable months later beside the two files it names — the instance and the
+database of each side, the exchange count of the reference, the wall clock of
+each exchange beside the duration the reference recorded, and a closing summary
+with the exchanges compared, the ones not compared and why, and the register-call
+count of each compared exchange on both sides. The milliseconds are labelled for
+what they are: wall clock of the replay, not a measurement of either stack — both
+run under two recorders, and timings belong to macro-phase 3 under its own
+declared conditions.

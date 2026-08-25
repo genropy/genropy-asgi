@@ -509,7 +509,7 @@ recognised rather than discovered.
 
 - [>] **Phase 7**: converge the drive_login reference end to end
   > In execution since 2026-08-25T14:56:39+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: b806a2f
+  > Testing: awaiting the human's `Verify: now` checks | commit: PENDING
   - Run: opus / high
   - Pattern: the Phase 5 cycle, repeated; the excluded hypotheses on the +28%
     are on record (bridge code does not call the register itself; the register
