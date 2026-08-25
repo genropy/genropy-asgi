@@ -84,11 +84,11 @@ RETRY_DELAY_MAX = 2.0
 # The 5-second window the daemon used for the runningBatch flag in the ping envelope.
 RUNNING_BATCH_WINDOW = 5.0
 
-# The site-facing row of each register kind: exactly the fields the daemon's own
-# registers put on it — ``ConnectionRegister.create``, ``UserRegister.create``,
+# The site-facing answer for each register kind: exactly the fields the daemon's
+# own registers put on a register item — ``ConnectionRegister.create``, ``UserRegister.create``,
 # ``PageRegister.create`` in ``gnr/web/daemon/siteregister.py`` — plus the three
 # queue fields ``BaseRegister.addRegisterItem`` puts on all three, added by
-# ``_legacy_row`` itself. What the core keeps besides these is its own
+# ``_adapt_to_legacy`` itself. What the core keeps besides these is its own
 # bookkeeping (the store, the three clocks the expiry sweep reads, the
 # collectors, the page tree) and never reaches the site.
 LEGACY_ROW_FIELDS = {
@@ -101,10 +101,10 @@ LEGACY_ROW_FIELDS = {
              "subscribed_tables", "user", "user_ip", "user_agent", "relative_url"),
 }
 
-# The fields a row grows only once the site writes them: the daemon's ``create``
-# does not seed them, so a row that never logged in does not carry them at all.
-# ``avatar_extra`` arrives with ``change_connection_user`` (the login writes it,
-# connection.py:165) and the connection row before the login has no such key.
+# The fields a register item grows only once the site writes them: the daemon's
+# ``create`` does not seed them, so an item that never logged in does not carry
+# them at all. ``avatar_extra`` arrives with ``change_connection_user`` (the login
+# writes it, connection.py:165) and a connection before the login has no such key.
 LEGACY_LATE_FIELDS = {"connection": ("avatar_extra",)}
 
 
@@ -468,17 +468,17 @@ class GenropyRegisterClient:
 
         The read primitive the whole read side builds on. ``register_name='global'``
         returns the stable global Bag; ``include_data == 'lazy'`` attaches the item's
-        in-process Bag — the row's own live store. What goes out is the LEGACY VIEW
-        of the row (``_legacy_row``): the daemon's own field set, the live Bag, the
+        in-process Bag — the item's own live store. What goes out is the LEGACY
+        ANSWER (``_adapt_to_legacy``): the daemon's own field set, the live Bag, the
         daemon-era keys — never the core's own bookkeeping.
         """
         if register_name == "global":
             return {"register_item_id": "*", "register_name": "global", "data": self.global_bag}
         item = self.local_item(register_item_id, register_name)
-        row = self._legacy_row(item, register_name=register_name)
-        if row is not None and (include_data == "lazy" or include_data):
-            row["data"] = self._ensure_item_data(item)["data"]
-        return row
+        adapted = self._adapt_to_legacy(item, register_name=register_name)
+        if adapted is not None and (include_data == "lazy" or include_data):
+            adapted["data"] = self._ensure_item_data(item)["data"]
+        return adapted
 
     def page(self, page_id: Any, include_data: Any = None) -> Any:
         """The local page item.
@@ -539,7 +539,7 @@ class GenropyRegisterClient:
         else:
             items = self._live_rows(page_items, page_items.keys())
         return {
-            item["register_item_id"]: self._legacy_row(item, register_name="page")
+            item["register_item_id"]: self._adapt_to_legacy(item, register_name="page")
             for item in self._filter_items(items, filters)
         }
 
@@ -560,7 +560,7 @@ class GenropyRegisterClient:
         else:
             items = self._live_rows(connection_items, connection_items.keys())
         return {
-            item["register_item_id"]: self._legacy_row(item, register_name="connection")
+            item["register_item_id"]: self._adapt_to_legacy(item, register_name="connection")
             for item in items
         }
 
@@ -569,14 +569,14 @@ class GenropyRegisterClient:
 
         Polled every 2 seconds by the chat component's connected-users grid, through
         ``Connection.connected_users_bag`` — the reader that captions with
-        ``user_name`` and dates the row from ``start_ts`` when no client clock is on
-        it, which on this stack is always the case (``_legacy_row``).
+        ``user_name`` and dates the item from ``start_ts`` when no client clock is
+        on it, which on this stack is always the case (``_adapt_to_legacy``).
         """
         worker = self.spa_worker
         if worker is None:
             return {}
         return {
-            item["register_item_id"]: self._legacy_row(item, register_name="user")
+            item["register_item_id"]: self._adapt_to_legacy(item, register_name="user")
             for item in self._live_rows(worker.user_items, worker.user_items.keys())
         }
 
@@ -1326,81 +1326,85 @@ class GenropyRegisterClient:
     def _item_with_data(self, item_id: Any, register_name: str) -> dict | None:
         """The answer of a lifecycle command: the legacy view, with its data Bag.
 
-        The Bag is the SAME live object the row holds — the site writes into it
-        and the collectors watch it — so what the view copies is the reference.
+        The Bag is the SAME live object the register item holds — the site writes
+        into it and the collectors watch it — so what goes out is the reference.
         """
         item = self.local_item(item_id, register_name)
-        row = self._legacy_row(item, register_name=register_name)
-        if row is not None:
-            row["data"] = self._ensure_item_data(item)["data"]
-        return row
+        adapted = self._adapt_to_legacy(item, register_name=register_name)
+        if adapted is not None:
+            adapted["data"] = self._ensure_item_data(item)["data"]
+        return adapted
 
-    def _legacy_row(self, item: dict | None, register_name: str) -> dict | None:
-        """The legacy view of a core register row — the one site-facing surface.
+    def _adapt_to_legacy(self, register_item: dict | None, register_name: str) -> dict | None:
+        """The legacy answer for one core register item — the one site-facing surface.
 
-        A PROJECTION, not a copy: the row goes out with exactly the fields the
-        daemon's own register put on it (``LEGACY_ROW_FIELDS``), so nothing the
-        core keeps for itself leaks to the site and nothing the daemon guaranteed
-        is missing. Both directions were divergences the replica measured on the
-        first bridge cycle (2026-08-25): the connection row carried five core
-        fields the daemon never had and lacked five the daemon always had, and
-        the page row diverged the same way two calls later.
+        A PROJECTION, not a copy: what goes out carries exactly the fields the
+        daemon's own register put on its register item (``LEGACY_ROW_FIELDS``),
+        so nothing the core keeps for itself leaks to the site and nothing the
+        daemon guaranteed is missing. Both directions were divergences the
+        replica measured on the first bridge cycle (2026-08-25): the connection
+        register item carried five core fields the daemon never had and lacked
+        five the daemon always had, and the page register item diverged the same
+        way two calls later.
 
         The live objects stay the same objects — the data Bag, the ``pages`` and
-        ``connections`` edge sets — and the core's own row is never touched: the
-        expiry sweep keeps reading its stamps as floats where they are.
+        ``connections`` edge sets — and the core's own register item is never
+        touched: the expiry sweep keeps reading its clocks as floats where they
+        are.
 
         What the projection adds on top of the field list:
 
-        - **The three queue fields** the daemon put on every row
+        - **The three queue fields** the daemon put on every register item
           (``addRegisterItem``, siteregister.py:135). ``subscribed_paths`` is the
-          page row's own set, cheap to read. ``datachanges`` and
+          page register item's own set, cheap to read. ``datachanges`` and
           ``datachanges_idx`` go out as the empty shape: on this stack the queue
-          is not on the row but in the page's collectors, and the surface that
-          reads it is ``ServerStore.datachanges``, which drains them there. The
-          bridge also numbers each change and not each item, so there is no item
-          counter to answer with.
-        - **``register_name``**, which the daemon seeded on the row itself.
-        - **``user`` on a PAGE row.** The daemon stored it; here ownership is
-          derived through the connection (``_page_owner``, cemented) — so the key
-          the legacy reads is answered, and still nothing is stored.
-        - **``user`` on a USER row.** The daemon seeded ``user=user``
+          is not on the register item but in the page's collectors, and the
+          surface that reads it is ``ServerStore.datachanges``, which drains them
+          there. The bridge also numbers each change and not each register item,
+          so there is no per-item counter to answer with.
+        - **``register_name``**, which the daemon seeded on the register item
+          itself.
+        - **``user`` on a PAGE register item.** The daemon stored it; here
+          ownership is derived through the connection (``_page_owner``,
+          cemented) — so the key the legacy reads is answered, and still nothing
+          is stored.
+        - **``user`` on a USER register item.** The daemon seeded ``user=user``
           (siteregister.py:319-323) and the chat keys its rooms on that attribute
           (``prepare_usersbag``, chat_component.js:180 — ``setItem(n.attr.user,
           ...)``, which crashes the client Bag on undefined). The core keys the
-          entry by name instead of storing it, so the view restores the field.
-        - **``subscribed_tables``**, the daemon's name for what the core row
-          carries as ``table_subscriptions``.
+          entry by name instead of storing it, so the answer restores the field.
+        - **``subscribed_tables``**, the daemon's name for what the core register
+          item carries as ``table_subscriptions``.
         - **``start_ts``**, read unconditionally as the "no client clock reported
           yet" fallback (connection.py:196) and as a page's birth instant
-          (gnrasync.py:379). The connection and page rows are born with it (the
-          lifecycle commands stamp it); a USER entry is created by the core
-          itself, implicitly, under a new connection, so it cannot be stamped
-          from here and falls back to the row's server stamp — the creation
-          instant, converted out of the core's epoch float.
+          (gnrasync.py:379). The connection and page register items are born with
+          it (the lifecycle commands stamp it); a USER entry is created by the
+          core itself, implicitly, under a new connection, so it cannot be
+          stamped from here and falls back to the item's server clock — the
+          creation instant, converted out of the core's epoch float.
         """
-        if item is None:
+        if register_item is None:
             return None
-        item_id = item["register_item_id"]
-        row: dict[str, Any] = {
+        item_id = register_item["register_item_id"]
+        adapted: dict[str, Any] = {
             "register_name": register_name,
             "datachanges": [],
             "datachanges_idx": 0,
             "subscribed_paths": self._item_subscribed_paths(item_id, register_name=register_name),
         }
         for field in LEGACY_ROW_FIELDS[register_name]:
-            row[field] = item.get(field)
+            adapted[field] = register_item.get(field)
         for field in LEGACY_LATE_FIELDS.get(register_name, ()):
-            if field in item:
-                row[field] = item[field]
+            if field in register_item:
+                adapted[field] = register_item[field]
         if register_name == "page":
-            row["user"] = self._page_owner(item_id)
-            row["subscribed_tables"] = set(item.get("table_subscriptions") or ())
+            adapted["user"] = self._page_owner(item_id)
+            adapted["subscribed_tables"] = set(register_item.get("table_subscriptions") or ())
         elif register_name == "user":
-            row["user"] = item_id
-        if row["start_ts"] is None:
-            row["start_ts"] = datetime.datetime.fromtimestamp(item["last_refresh_ts"])
-        return row
+            adapted["user"] = item_id
+        if adapted["start_ts"] is None:
+            adapted["start_ts"] = datetime.datetime.fromtimestamp(register_item["last_refresh_ts"])
+        return adapted
 
     def _ensure_item_data(self, item: dict | None) -> dict | None:
         """Alias the row's live store as ``data`` — the name the legacy reads.

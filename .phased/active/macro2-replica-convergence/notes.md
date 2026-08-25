@@ -392,12 +392,12 @@ Three things the projection surfaced that the plan did not name:
   daemon attaches it in `get_item` when the caller asks (`include_data`) and its
   client attaches it to a lifecycle answer; the bridge was setting the alias on
   the LIVE row at birth, so every later read of that row carried `data` where
-  the legacy read carried none. Now `_legacy_row` never carries it and the two
+  the legacy read carried none. Now `_adapt_to_legacy` never carries it and the two
   callers that owe it — `get_item` under `include_data`, and the lifecycle
   answer — add it. The alias on the live row stays, because `get_dbenv` reads it.
-- `pages()` and `connections()` were calling `_legacy_row` with no
+- `pages()` and `connections()` were calling `_adapt_to_legacy` with no
   `register_name`. Harmless while the view was a copy; with a projection it is
-  the field list, so both now pass their kind and `_legacy_row` takes it as a
+  the field list, so both now pass their kind and `_adapt_to_legacy` takes it as a
   required argument.
 - four contract assertions in `tests/test_register_client_units.py` asserted the
   OLD answer and were rewritten with the owner's approval, each preserving what
@@ -406,7 +406,7 @@ Three things the projection surfaced that the plan did not name:
   `test_new_page_seed_data_becomes_the_live_store`); the identity of two
   `new_connection` answers became the identity of the row and of its Bag
   (`test_new_connection_twice_answers_the_same_row`, renamed); the page's `user`
-  became "answered by the view, absent from the row"; and the three stamp
+  became "answered by the view, absent from the row"; and the three clock
   assertions became their absence from the view plus their presence as floats on
   the core row, the foreman having licensed exactly that.
 
@@ -414,3 +414,12 @@ No `tests/x/` folder was created. The three new tests assert the exact key set
 each kind answers, which is behavioural continuity and not a photograph of an
 implementation, so they went into `tests/` beside the other legacy-row contract
 tests. Nothing this phase built needed an implementation test.
+
+The rename the owner baptised on 2026-08-25 landed here: `_legacy_row` became
+`_adapt_to_legacy(register_item)`, and with it the vocabulary of every docstring
+and comment the method touches — `row` out, `register item` in, and the three
+fields called CLOCKS, the name the core itself uses (`CLOCK_NAMES`,
+spa_worker.py:293). The local variable is `adapted`. Two names born in this phase
+have NOT been baptised and go to the naming review: the module constants
+`LEGACY_ROW_FIELDS` and `LEGACY_LATE_FIELDS`, which still carry the rejected
+word.
