@@ -588,6 +588,17 @@ recognised rather than discovered.
   - Run: opus / medium
   - Pattern: the Phase 7 loop, on the owner's own browser session
   - Files: unknown until the divergences show — same routing rule as Phase 7
+  - Inherited from Phase 7, both binding here: (a) the COLD-START rule — the
+    register lines of the exchanges BEFORE the first RPC are not compared, each
+    stack finishing its lazy build there and the bridge doing it in the template
+    whose lines are dropped by construction; its cost is that the connection
+    register item is not compared at birth, only from the first RPC on. (b) the
+    `+28%` is NOT a pending divergence: it was measured on a browser session with
+    an instrument that could not attribute a call (`site_caller` is Phase 1's),
+    so it cannot be decomposed after the fact; on drive_login the compared
+    exchanges tie 33/33, 35/35, 43/43. THIS phase's session is a browser session,
+    so it is the one run where anything of it would reappear — if it does, it is
+    a new measurement with attribution, not a continuation of the old figure.
   - Decisions: known divergences (S1/S2/S3/S5) are recognised by the Phase 3
     rules and reported, never "fixed" here — they are core work with their own
     track; every unexplained divergence is either fixed or becomes a named,
