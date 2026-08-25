@@ -713,6 +713,23 @@ recognised rather than discovered.
   test, so either each follower works on its own record or only the leader
   writes; and the arrest rule has to change, since first-divergence does not fit
   a crowd.
+- **The patrol is blocked on a core defect, and the defect is the fork's own
+  doing** (measured 2026-08-25). A placement refusal answers 503 with
+  `Retry-After: 30` — `SHAPE_REVIEW_SECONDS = HEARTBEAT_SECONDS *
+  CHECK_OCCUPANCY_BEATS` = 5.0 x 6 (`spa_commander.py:207`, set at `:847`,
+  served at `applications/spa_app.py:352-361`). Those 30 seconds are calibrated
+  on the occupancy-check cadence, not on the cost of a birth: they were right
+  when a worker was born by spawn, and since 7cd15de a worker is forked from a
+  template that has already built the site, so the birth costs about a
+  millisecond and `GroupHandler.assign_user` already rings `ping_now()` before
+  re-raising. So the pool knows it must grow, grows in a millisecond, and has
+  already turned away the very request that asked for it. With
+  `worker_max_users=1` a patrol of 16 users would see 15 refused at login. The
+  fix belongs to the core session — proposal, insertion points and the open
+  questions in `temp/proposta_core_attesa_nascita_worker_2026-08-25.md`; the
+  existing `_wait_out_hold`/`await_user_release` machinery
+  (`spa_commander.py:834`) is the shape to follow. PHASE 8 DOES NOT NEED THIS:
+  one user never fills a pool. It is the patrol that waits on it.
 - **`worker_max_users` already exists in the core** — commit 6080c33, "a
   placement ceiling per worker, the bench's lever", landed while this was being
   written as a proposal. Verified: it is a `group(...)` parameter
