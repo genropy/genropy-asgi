@@ -178,7 +178,10 @@ check("a call the replica never made is a divergence",
 check("the missing call is named at its own position in the sequence",
       divergence.ordinal == 3)
 check("the report names the reference call and says the replica made none",
-      "passthrough:get_dbenv" in divergence.report and "(no call)" in divergence.report)
+      "client:get_dbenv" in divergence.report and "(no call)" in divergence.report)
+check("the report prints the call as the comparison read it — the passthrough "
+      "surface of the reference line does not reappear as a difference",
+      "passthrough:" not in divergence.report)
 
 # 4. a call the replica made and the reference did not
 extra = replica_of(IDENTICAL)
@@ -199,6 +202,18 @@ changed = replica_of(IDENTICAL)
 changed[1] = dict(changed[1], verb="get")
 diff, divergence = compare(IDENTICAL, changed)
 check("the same position holding a different verb is a divergence",
+      divergence is not None and divergence.kind == "different call")
+
+# 5b. the two surfaces of the register client are one call; the store's is not
+reached_by_getattr = replica_of(IDENTICAL)
+reached_by_getattr[0] = dict(reached_by_getattr[0], surface="passthrough")
+diff, divergence = compare(IDENTICAL, reached_by_getattr)
+check("a verb declared on one client and reached by __getattr__ on the other "
+      "is the same call", divergence is None)
+on_the_store = replica_of(IDENTICAL)
+on_the_store[2] = dict(on_the_store[2], surface="store")
+diff, divergence = compare(IDENTICAL, on_the_store)
+check("the store surface is not the client surface",
       divergence is not None and divergence.kind == "different call")
 
 # 6. the same call with different arguments

@@ -465,3 +465,27 @@ the register client class declares the method and `passthrough` when
 `__getattr__` reaches it (`register_recorder.py`:221): the legacy client
 declares no `get_dbenv`, the bridge declares every command explicitly by design.
 A candidate declared rule for Phase 7, not a defect.
+
+## Phase 7
+
+**The reference was re-recorded first.** The pinned genropy moved to `a1c0a8dd0`
+while this phase was at its gate, so every archive recorded before 2026-08-25
+15:13 belongs to `6da02feda`. New reference `legacy-20260825T151337`, same
+`drive_login`, 4 exchanges: **152 register lines**, where the old one had 384.
+The services freshness chain fell from 242 calls to 10 — #1154 skips the register
+read for a service whose configuration did not come from the db. The figure
+macro-phase 3 will want is 152 per login, measured, not the ~145 estimated.
+
+**Divergence 1 — the recorder's `surface` field. Closed: the instrument.**
+The replay stopped at register call 15 on `client:get_dbenv` against
+`passthrough:get_dbenv`, with identical arguments, answer and site caller. The
+field says how the recorder reached the method inside the register client:
+`client` when the class declares it, `passthrough` when `__getattr__` does. The
+legacy client hands most of its surface to `__getattr__`; the bridge declares
+every command explicitly, by architectural choice. The site cannot tell them
+apart, so the difference was the instrument's, not the stacks'. `LineShape.call`
+now reads both as `client`, and `store` — another object's surface, the live
+Bag's — stays distinct. Reported as `client` in the report too, so a line does
+not print a difference the comparison did not make. Foreman decision of
+2026-08-25, on the reasoning above; it is the same class as Phase 1's
+module-name cut.

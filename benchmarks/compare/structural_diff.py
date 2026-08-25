@@ -23,6 +23,11 @@ random identifiers as differences of the stack:
 - everything else is compared as its masked text, numbers included — a count
   that changes is a difference, and one of the cheapest to read.
 
+The CALL is the surface plus the verb, and `client` and `passthrough` are one
+surface here: they say how the recorder reached the method inside the register
+client, not what the site asked, and the site cannot tell them apart. `store`
+stays its own surface.
+
 Measured on the pair of 2026-08-23/2026-08-25 (the browser session and its own
 replay): 636 lines of the exchanges whose call sequence already agreed, 29
 differing on the raw answer, 12 on the shape — and those 12 are real, four of
@@ -72,6 +77,18 @@ DICT_KEY = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)':")
 # replica after a difference nobody can act on.
 DICT_NULL_KEY = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)':\s*None\b")
 
+# The two surfaces the recorder distinguishes INSIDE the register client: `client`
+# when the class declares the method, `passthrough` when its `__getattr__` reaches
+# it. That is how the recorder got there, not what the site asked or received, and
+# the site cannot tell them apart — the legacy client hands most of its surface to
+# `__getattr__`, the bridge declares every command explicitly by design. So the
+# comparison reads them as one call, under the name of the declared one (foreman,
+# 2026-08-25), so a declared rule matching on the call writes `client` and never
+# has to know which stack declared the verb. `store` stays distinct: it is another
+# object's surface, the live Bag's, not another way into this one.
+CLIENT_SURFACE = "client"
+REGISTER_CLIENT_SURFACES = ("client", "passthrough")
+
 # What the site answers a call arriving on a connection a login already replaced.
 # Copied verbatim from `gnr/web/gnrwebpage.py:307`, typo and all: it is a literal
 # the site writes, not a sentence, and correcting it here would match nothing.
@@ -87,7 +104,9 @@ class LineShape:
     @property
     def call(self):
         """The surface and the verb: what the site asked the register to do."""
-        return (self.record.get("surface"), self.record.get("verb"))
+        surface = self.record.get("surface")
+        return (CLIENT_SURFACE if surface in REGISTER_CLIENT_SURFACES else surface,
+                self.record.get("verb"))
 
     @property
     def arguments(self):
