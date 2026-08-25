@@ -594,3 +594,21 @@ content. Everything about an exchange is on its own row — status, register cal
 per stack, response time per stack, and the percentage between them. Measured on
 the closing cycle: 622 ms on the legacy against 443 on the bridge over the four
 exchanges, -29%, with 111 register calls on each side of the three compared.
+
+**The report names the page each request ran (2026-08-25).** Reading the table
+the owner asked what `GET /` was, and then for the path itself in the row. The
+URL alone does not answer it: genropy lets the main package and `index` be
+omitted (`siteconfig.xml` carries `wsgi mainpackage="invc"`, resolved by
+`GnrWsgiSite.mainpackage`, gnrwsgisite.py:603), so `/` on this instance means
+`/invc/index`. The middleware cannot know that on the way in — it wraps the
+application and runs before the site's dispatcher resolves anything, and knowing
+it there would mean re-implementing genropy's routing inside the bench.
+
+It comes back on the way OUT, and the owner ruled that is good enough: the report
+is read after the run. genropy writes the absolute file into the reply itself, as
+the `pageModule` of the `gnr.GenroClient` the page bootstraps with, and the HTTP
+recorder already stores that reply whole. So the row now reads
+`GET / -> packages/invc/webpages/index.py`, cut at `packages/` because the two
+stacks read their trees from different roots and a full path would read as a
+difference where there is none. An RPC exchange has no such line and keeps its
+method name.

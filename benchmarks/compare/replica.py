@@ -102,6 +102,9 @@ from structural_diff import DeclaredRules, StructuralDiff   # noqa: E402
 
 REPLICA_HEADER = "X-Bench-Replica-Of"
 PAGE_ID_RE = re.compile(r"page_id:'([A-Za-z0-9_-]{22})'")
+# The page file the site ran, as genropy writes it into the reply itself: the
+# `pageModule` of the `gnr.GenroClient` the page bootstraps with.
+PAGE_MODULE_RE = re.compile(r"pageModule:'([^']+)'")
 FORM_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=UTF-8"
 
 # How long the replay waits for the target to finish writing the exchange it just
@@ -509,9 +512,35 @@ class Replica:
         return None
 
     def get_label(self, record):  # wf:phase-7:new
-        """The exchange as one readable name: its method, its path, its RPC."""
-        return (f"{record.get('method')} {record.get('path')} "
+        """The exchange as one readable name: its method, its URL, and what it ran.
+
+        The URL is what the site was ASKED for, and the middleware has it in hand
+        the moment the request arrives. It does not always say which page that is:
+        genropy lets the main package and `index` be omitted, so `/` on this
+        instance means `/invc/index` (`siteconfig.xml`: `wsgi mainpackage="invc"`,
+        resolved by `GnrWsgiSite.mainpackage`) — and the site resolves it inside,
+        after the middleware has handed the request over. What it resolved comes
+        back on the way OUT, written into the reply, which is soon enough: the
+        report is read after the run, not during it.
+        """
+        name = (f"{record.get('method')} {record.get('path')} "
                 f"{record.get('rpc_method') or ''}").strip()
+        module = self.get_page_module(record.get("resp_body"))
+        return f"{name} -> {module}" if module else name
+
+    def get_page_module(self, body):  # wf:phase-7:new
+        """The page file the site ran for this request, shortened, or None.
+
+        Absolute in the reply; cut here at `packages/`, where a project's own tree
+        begins — the two stacks read their trees from different roots, so a full
+        path would read as a difference between them where there is none.
+        """
+        found = PAGE_MODULE_RE.search(body or "")
+        if not found:
+            return None
+        module = found.group(1)
+        _, marker, tail = module.partition("/packages/")
+        return f"packages/{tail}" if marker else module
 
     def get_row(self, record, position, status):  # wf:phase-7:new
         """Everything this exchange measured, for the live line and for the table."""

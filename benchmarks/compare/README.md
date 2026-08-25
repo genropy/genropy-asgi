@@ -985,7 +985,14 @@ with only the identifiers the target mints rewritten. Then the closing TABLE, on
 and a total: the exchange, its status, the register calls each stack made and the
 response time each stack recorded, with the signed percentage between the two.
 The columns are titled with the stack names the archives declare — `legacy` and
-`bridge` — not "reference" and "replica". An exchange the comparison left out
+`bridge` — not "reference" and "replica". An exchange names the URL it asked for
+and the page file the site ran for it: the URL is in hand the moment the request
+arrives, but it does not always say which page it is — genropy lets the main
+package and `index` be omitted, so `/` on this instance means `/invc/index` — and
+the site resolves that inside, after the middleware handed the request over. What
+it resolved comes back on the way out, written into the reply as the `pageModule`
+of the `gnr.GenroClient` the page bootstraps with, which is where the report
+reads it. An exchange the comparison left out
 shows a dash in the register columns and its reason under the table, but keeps
 its times: a response time is a response time even where the register lines are
 not compared.
