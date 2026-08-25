@@ -319,6 +319,37 @@ def test_serverstore_datachanges_peeks_without_consuming(client, worker):
     assert [c.path for c in client.subscription_storechanges(None, page_id)] == ["thermo.q"]
 
 
+def test_a_bag_read_from_a_store_is_a_copy_the_site_cannot_write_through(client, worker):
+    from gnr.core.gnrbag import Bag
+
+    seed = Bag()
+    seed["rootenv.language"] = "en"
+    _, page_id = open_page(client, worker, data=seed)
+    store = client.pageStore(page_id)
+    rootenv = store.getItem("rootenv")
+    rootenv["workdate"] = "2026-08-25"          # what WebPage._get_workdate does
+    assert store.getItem("rootenv")["workdate"] is None
+    assert "workdate" not in client.get_dbenv(page_id).keys()
+
+
+def test_a_dict_under_a_bag_node_is_copied_too(client, worker):
+    from gnr.core.gnrbag import Bag
+
+    seed = Bag()
+    seed["cache.user_authenticate"] = {"user_id": "U1", "tags": ""}
+    _, page_id = open_page(client, worker, data=seed)
+    store = client.pageStore(page_id)
+    store.getItem("cache.user_authenticate").pop("user_id")   # what GnrApp.getAvatar does
+    assert store.getItem("cache.user_authenticate") == {"user_id": "U1", "tags": ""}
+
+
+def test_a_scalar_read_from_a_store_comes_back_as_it_is(client, worker):
+    _, page_id = open_page(client, worker)
+    with client.pageStore(page_id) as store:
+        store.setItem("rootenv.language", "en")
+    assert client.pageStore(page_id).getItem("rootenv.language") == "en"
+
+
 def test_serverstore_subscribed_paths_mirrors_the_capture(client, worker):
     _, page_id = open_page(client, worker)
     client.subscribe_path(page_id, "srv.ctx", register_name="page")

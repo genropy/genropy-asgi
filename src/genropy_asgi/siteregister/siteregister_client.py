@@ -61,6 +61,7 @@ worker has attached itself via ``site.spa_worker``).
 
 from __future__ import annotations
 
+import copy
 import datetime
 import re
 import threading
@@ -224,11 +225,44 @@ class ServerStore:
         ``with`` block the lease already materialized the master locally, so the
         block reads (and sees its own writes) on the local Bag; every other
         register reads its in-process item as before.
+
+        **What comes back is a copy.** The daemon answered this read over the
+        wire, so what the site received was a pickle round-trip: a mutation
+        applied to it never reached the register. In-process the live object
+        would be handed out instead, and the same site line would write straight
+        into the register item. Two site paths measured on 2026-08-25, both of
+        which the bridge answered differently before this copy existed:
+        ``WebPage._get_workdate`` (``gnrwebpage.py:541``) reads ``rootenv`` and
+        assigns ``rootenv['workdate']`` into the Bag it read, and
+        ``GnrApp.getAvatar`` (``gnrapp.py:1468``) POPS ``user_id``, ``user_name``
+        and ``tags`` out of the dict the ``user_authenticate`` cache holds — so
+        the second login of the same page found an avatar stripped of them and
+        fell back to the username.
         """
         if self.register_name == "global" and "_lease" not in self.__dict__:
             return self.siteregister._global_read(path, default)
         data = self.data
-        return data.getItem(path, default) if data is not None else default
+        if data is None:
+            return default
+        return self._copied(data.getItem(path, default))
+
+    def _copied(self, value: Any) -> Any:  # wf:phase-7:new
+        """The value as the wire handed it over: nothing the site can write through.
+
+        A Bag is rebuilt node by node, because ``Bag.deepcopy`` keeps a node's
+        non-Bag value by reference and that reference is the whole defect. What
+        sits under a node is copied when it is mutable — every value a store held
+        on the legacy crossed a pickle, so anything in there is copyable.
+        """
+        if isinstance(value, Bag):
+            copied = Bag()
+            for node in value:
+                copied.addItem(node.label, self._copied(node.getStaticValue()),
+                               dict(node.getAttr()))
+            return copied
+        if isinstance(value, (dict, list, set)):
+            return copy.deepcopy(value)
+        return value
 
     def __getattr__(self, fname: str) -> Any:
         # Delegate Bag methods (getItem/setItem/...) to the item's data Bag.
