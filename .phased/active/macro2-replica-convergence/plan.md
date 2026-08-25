@@ -169,7 +169,7 @@ recognised rather than discovered.
 
 - [>] **Phase 3**: structural comparison, stop at the first divergence
   > In execution since 2026-08-25T08:30:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: 8a785f6
+  > Testing: awaiting the human's `Verify: now` checks | commit: ab67cde
   - Run: opus / high
   - Pattern: the join used by the timing queries (record.exchange_id links
     register lines to their HTTP exchange); check style `*_check.py`
