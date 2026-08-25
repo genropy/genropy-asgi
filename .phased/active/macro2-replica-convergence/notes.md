@@ -423,3 +423,10 @@ spa_worker.py:293). The local variable is `adapted`. Two names born in this phas
 have NOT been baptised and go to the naming review: the module constants
 `LEGACY_ROW_FIELDS` and `LEGACY_LATE_FIELDS`, which still carry the rejected
 word.
+
+The Done gate was re-measured AFTER the rename, on a fresh cycle: the archived
+run `bridge-20260825T141541` was produced by the pre-rename code, and evidence
+that does not come from the code that stays is not evidence. New copy db, new
+bridge, archive `bridge-20260825T142217`: same stop, same call 15, and the two
+key sets identical to the legacy reference — `new_connection` 17 keys,
+`new_page` 14.
