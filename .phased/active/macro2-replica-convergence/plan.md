@@ -167,7 +167,8 @@ recognised rather than discovered.
   - Verify: now — watch one replica run end to end; the exchanges scroll in the
     order of your original session and the run lands in `~/genro_bench/runs/`.
 
-- [ ] **Phase 3**: structural comparison, stop at the first divergence
+- [>] **Phase 3**: structural comparison, stop at the first divergence
+  > In execution since 2026-08-25T08:30:00
   - Run: opus / high
   - Pattern: the join used by the timing queries (record.exchange_id links
     register lines to their HTTP exchange); check style `*_check.py`
@@ -176,9 +177,17 @@ recognised rather than discovered.
   - Decisions: equal means equal by STRUCTURE (roadmap): same sequence of
     register verbs per exchange, same shape of arguments and answers — values
     that legitimately differ per run (ids, timestamps, the customer read) are
-    not divergences; the known divergences S1/S2/S3/S5 are recognised from
-    DECLARED rules (a small rules table in the module), reported as "known",
-    and do not stop the run.
+    not divergences; the declared-rules table ships as a real MECHANISM whose
+    first entry is the reference-race rule Phase 2 measured — rules are
+    written only from OBSERVED signatures, never from documents (the S1/S2/
+    S3/S5 items are cross-worker facts of the bridge, unobservable on a
+    legacy-vs-legacy run: Phases 5/7 add each S-rule the moment its divergence
+    shows, with the owner's sign-off, as Phase 7's Decisions already require;
+    foreman, 2026-08-25, answering this phase's clarify); a recognised rule is
+    reported as "known" and does not stop the run; the self-check reference is
+    a FRESH legacy run recorded with drive_login (the 2026-08-23 archive
+    predates site_caller, the genropy pin and the page-register state — 21/31
+    exchanges differ for the archive's age, measured, not for the stack).
   - Details: compare exchange by exchange, in order: for each replayed HTTP
     exchange, the register lines of the reference run and of the replica run
     must carry the same verb sequence and the same argument/answer shape.
