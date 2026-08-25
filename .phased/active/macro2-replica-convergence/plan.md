@@ -586,6 +586,12 @@ recognised rather than discovered.
 
 - [>] **Phase 8**: the live twin proxy, converging the owner's own session
   > In execution since 2026-08-25T18:05:00+02:00
+  > Testing: awaiting the human's `Verify: now` checks | commit: 972d02b
+  > The tool is built and green: twin_proxy_check.py 30 assertions, the other
+    six bench checks, pytest tests/ 139 passed, ruff clean. Proven on a login
+    driven through the proxy — four exchanges, statuses identical on both
+    stacks, register calls 33/33, 35/35, 43/43, no divergence. What remains is
+    the owner's own browser session, which is the phase's Done.
   - Run: opus / high
   - Pattern: `benchmarks/compare/replica.py` for identifier adaptation and the
     stop, `structural_diff.py` for the comparison and the declared rules,
