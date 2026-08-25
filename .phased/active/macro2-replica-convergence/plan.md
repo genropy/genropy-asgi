@@ -88,6 +88,7 @@ recognised rather than discovered.
 
 - [>] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
   > In execution since 2026-08-25T07:40:00+02:00
+  > WIP: done: the three files exist and replica_check.py passes 31 assertions (trace reader, the two skip rules, identifier rewriting in form and query, the pairing header, the parity gate and its refusal) | missing: the live replay of legacy-20260823T232924.sqlite against the legacy stack, which the parity gate refuses until the two genropy trees are aligned | next: the owner decides which genropy the two stacks freeze on, then re-freeze temp/legacy_venv and run the replay | commit: 5763ae2
   - Run: opus / high
   - Pattern: `benchmarks/replay_a1.py:build_plan` (extracting an ordered call
     plan from a capture) and `benchmarks/scaling_probe.py:login_user` (replaying
