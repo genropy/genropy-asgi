@@ -55,11 +55,13 @@ recognised rather than discovered.
     2026-08-24.
   - Done: `python benchmarks/compare/register_recorder_check.py` passes;
     `python benchmarks/compare/bridge_coverage_check.py` passes on the bridge
-    interpreter; a `drive_login` smoke on each stack produces register lines
+    interpreter (its two recipe-drift assertions excepted — they fail for the
+    drift Phase 4 repairs, out of this phase's scope, recorded in notes.md);
+    a `drive_login` smoke on each stack produces register lines
     whose `site_caller` names a real `gnr/web` file and line.
   - Verify: now — read one sample line per stack: the named caller is the SITE
     code you expect (not the recorder, not the client), and the field reads
-    well enough to diagnose Phase 5 with.
+    well enough to diagnose Phase 6 with.
 
 - [ ] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
   - Run: opus / high
@@ -113,7 +115,42 @@ recognised rather than discovered.
     artificially provoked divergence report: both must be readable without
     opening the code.
 
-- [ ] **Phase 4**: db copied on the fly, first run against the bridge
+- [ ] **Phase 4**: align the bench bridge recipe with the shipped template-fork recipe
+  - Run: opus / high
+  - Pattern: the shipped recipe `src/genropy_asgi/spa/config.py` as of commit
+    7cd15de (engine_factory/engine_kwargs — workers fork from a template);
+    the bench copy `benchmarks/compare/bridge_recipe.py`;
+    `benchmarks/compare/recording_worker.py` (today's recorder install point)
+  - Files: benchmarks/compare/bridge_recipe.py,
+    benchmarks/compare/recording_worker.py,
+    benchmarks/compare/bridge_coverage_check.py,
+    benchmarks/compare/serve_bridge.py (if the wiring moves),
+    benchmarks/compare/README.md
+  - Decisions: the bench bridge exercises the SHIPPED protocol, never a
+    bench-only variant (dev-deploy parity, the owner's standing principle):
+    workers fork from the template exactly as the shipped recipe does; the
+    recorders install in the TEMPLATE process through the engine factory, so
+    every forked worker inherits them with the site — installing in the worker
+    constructor is dead under fork, the site exists before the constructor runs.
+  - Details: port engine_factory/engine_kwargs into bridge_recipe.py mirroring
+    the shipped recipe; move the recorder installation from the worker
+    constructor into the engine factory; the two recipe-drift assertions in
+    bridge_coverage_check.py turn green again and STAY the guard against the
+    next drift. The archive SQLite connection opens in the CHILD after the
+    fork, never in the template — an inherited sqlite connection is the known
+    segfault family (sqlite 3.51.0 + WAL + fork), and one-connection-per-process
+    is the archive's standing rule. Each forked worker must also start with
+    empty recorded state (the register-empty-per-run rule).
+  - Done: `python benchmarks/compare/bridge_coverage_check.py` passes INCLUDING
+    the two recipe-drift assertions; a `drive_login` smoke on the bench bridge
+    shows workers born by fork from the template and register lines carrying
+    `site_caller` exactly as Phase 1 shaped them.
+  - Verify: now — read one register line recorded by a forked worker and the
+    README's updated run recipe: the install point (template, via engine
+    factory) is documented, and the line is indistinguishable in shape from
+    Phase 1's sample.
+
+- [ ] **Phase 5**: db copied on the fly, first run against the bridge
   - Run: opus / medium
   - Pattern: the twin-instance recipe of macro-phase 1 (test_invoice_pg_legacy:
     same project, own instanceconfig); `benchmarks/compare/serve_bridge.py`
@@ -134,11 +171,11 @@ recognised rather than discovered.
     the FIRST real divergence with the Phase 3 report; the run is archived.
   - Verify: now — the first divergence report against the bridge: expected at
     the login (the +28% register calls); confirm the report names it precisely
-    enough to start Phase 5 from.
+    enough to start Phase 6 from.
 
-- [ ] **Phase 5**: close the login divergence (+28% register calls)
+- [ ] **Phase 6**: close the login divergence (+28% register calls)
   - Run: opus / high
-  - Pattern: the divergence report of Phase 4; the excluded hypotheses are on
+  - Pattern: the divergence report of Phase 5; the excluded hypotheses are on
     record (bridge code does not call the register itself; the register does
     not answer differently) — do NOT re-test them, `temp/problemi_ponte_2026-08-22.md`
   - Files: unknown until diagnosed — the fix lands where the fault is
@@ -159,10 +196,10 @@ recognised rather than discovered.
     one-paragraph cause written in notes.md: the cause must be named, not
     described by its symptom.
 
-- [ ] **Phase 6**: full-session convergence
+- [ ] **Phase 7**: full-session convergence
   - Run: opus / medium
-  - Pattern: the Phase 4 cycle, repeated
-  - Files: unknown until the divergences show — same routing rule as Phase 5
+  - Pattern: the Phase 5 cycle, repeated
+  - Files: unknown until the divergences show — same routing rule as Phase 6
   - Decisions: known divergences (S1/S2/S3/S5) are recognised by the Phase 3
     rules and reported, never "fixed" here — they are core work with their own
     track; every unexplained divergence is either fixed or becomes a named,
@@ -183,13 +220,17 @@ recognised rather than discovered.
 - Phases run strictly in order. Phase 1 changes the register line shape, so
   the reference sessions are re-produced AFTER it lands (the owner performs
   the reference session once, with recorders updated, at the start of the
-  Phase 4 cycle; scripted `drive_login` smokes cover Phases 1-3).
+  Phase 5 cycle; scripted `drive_login` smokes cover Phases 1-4).
 - The `/_ping` heartbeat and other browser-idle traffic: what the replica
   skips is decided at Phase 2 execution and recorded in notes.md — the rule
   must be declared, never implicit.
 - The two stacks share 127.0.0.1: cookie residue across ports is a known
   artefact, not a divergence (documented in the bench README).
-- Phase 5 may block on the core session (five-step rule: the core is modified
+- Phase 6 may block on the core session (five-step rule: the core is modified
   by its own session). A `[~]` there is expected, not a failure.
-- POC template-fork proceeds in the core session independently of this
-  workflow (temp/proposta_core_template_fork_2026-08-24.md).
+- The template-fork POC landed in the shipped recipe at commit 7cd15de
+  (engine_factory/engine_kwargs, workers fork from a template) while Phase 1
+  was in flight; Phase 4 aligns the bench recipe, inserted by the foreman on
+  2026-08-24 after the phase-1 chat reported the two recipe-drift assertions
+  of bridge_coverage_check.py failing (proposal record:
+  temp/proposta_core_template_fork_2026-08-24.md).
