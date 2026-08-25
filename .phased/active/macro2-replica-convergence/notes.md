@@ -489,3 +489,77 @@ Bag's — stays distinct. Reported as `client` in the report too, so a line does
 not print a difference the comparison did not make. Foreman decision of
 2026-08-25, on the reasoning above; it is the same class as Phase 1's
 module-name cut.
+
+**Divergence 2 — the cold start. Closed: a comparison rule, the owner's.**
+The replay stopped at register call 19 of the first exchange: the legacy makes a
+freshness check for `storage_gnr` that the bridge does not — two lines, and in a
+run of identical `globalStore()`/`getItem()` calls difflib cannot tell WHERE the
+two are missing, so it charged them at the end and scrambled five following
+pairs into spurious `arguments` divergences. Measured with the template made to
+print what it swallows: the bridge DOES make that check, in the TEMPLATE its
+workers fork from, whose register lines are dropped by construction (a template
+that touches sqlite kills the children it forks — `recording_engine_factory.py`).
+The four template lines are the `_mainpref_` read the legacy master makes too,
+plus exactly the `storage_gnr` pair. So the two stacks make the same call and
+only one of them is in an archive.
+
+The owner's rule (2026-08-25): the comparison reads no register line from the
+exchanges BEFORE the first RPC. Each stack finishes building lazily there, and
+in a different process. `TraceReader.cold_start_exchanges` computes them from
+the archive — no state in any recorder, so no per-worker flag that a second
+bridge worker would not have — and `Replica.compare_exchange` prints the skip.
+A run with no RPC at all has no cold start: the rule must never be able to
+silence a whole comparison. The exchanges are still REPLAYED, the page the RPCs
+need is created there. What it costs: the connection register item is not
+compared at BIRTH; it is compared from the first login call on, with the same
+key set (`connection` in exchanges 2, 3 and 4).
+
+**Divergence 3 — the live object a store hands out. Closed: the bridge.**
+`get_dbenv` answered a `workdate` node the legacy never carried.
+`WebPage._get_workdate` (`gnrwebpage.py:541`) reads `rootenv` from the page store
+and then assigns `rootenv['workdate']` INTO the object it read. On the legacy that
+object had crossed the wire, so the write died with the request; in-process the
+store handed out the live Bag and the write landed in the register item.
+
+The owner ruled the fix, not a rule (2026-08-25): a store read hands the site a
+copy. The first copy was not enough — `Bag.deepcopy` keeps a node's non-Bag value
+by reference — and the next stop proved it, on the write side this time:
+`GnrApp.getAvatar` (`gnrapp.py:1468`) POPS `user_id`, `user_name` and `tags` out
+of the dict `tableCachedData` has just written into the page store. Evidence from
+the archives: the same cache line, read again, still carries the three keys on the
+legacy and carries none of them on the bridge — so the bridge's avatar fell back
+to the username for all three (`user_id=alexander.king`,
+`user_name=alexander.king`, `user_tags=user,alexander.king`).
+
+So `ServerStore` copies in BOTH directions, which is what the wire did: `getItem`
+answers a copy, `setItem` stores a copy, and `_copied` rebuilds a Bag node by node
+and deep-copies a mutable value under a node. Everything a legacy store held had
+crossed a pickle, so anything in there is copyable.
+
+**Divergence 4 — the answer of `change_connection_user`. Closed: the bridge.**
+The daemon's method (`daemon/siteregister.py`:778) closes without a `return`; the
+bridge answered the updated connection item. No site code reads it —
+`Connection.change_user` calls and ignores. One contract test did
+(`test_login_stays_pages_keep_their_worker`), and the owner ruled as he ruled in
+Phase 6: translating towards the legacy format is genropy-asgi's job, so the test
+asserted the wrong thing. The assertion is preserved by reading the item back
+with `client.connection(cid)`, one line below.
+
+**The `+28%` did not appear, and cannot be decomposed.** The record of
+2026-08-24 (`temp/documento_banco_2026-08-24.md`) measured 147 register calls on
+the bridge against 115 on the legacy over the three login exchanges. The same
+document names why it stayed open: the register line did not say who called, and
+that field (`site_caller`) is Phase 1's. So the old figure was taken with an
+instrument that could not attribute a single call, and no decomposition of it is
+possible after the fact. Re-measured on the closing cycle, the counts are equal
+where the comparison reads them: exchange 2 33/33, exchange 3 35/35, exchange 4
+43/43; exchange 1 is 39/37, the two template lines, and is not compared. The
+figure was taken on a browser session, not on `drive_login`, so Phase 8 is where
+it would reappear if anything of it survives.
+
+**The closing cycle.** Reference `legacy-20260825T151337` replayed against
+`bridge-20260825T164102`: four exchanges, every one answering the status the
+trace carries, no divergence left unexplained, nothing recognised by a declared
+rule. The table still holds `reference-race` alone — this phase added no rule to
+it, which is the outcome the owner chose each time: every stop was a defect, and
+every defect was fixed.

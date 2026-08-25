@@ -246,7 +246,7 @@ class ServerStore:
             return default
         return self._copied(data.getItem(path, default))
 
-    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # noqa: N802 - legacy Bag surface
+    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # wf:phase-7:new  # noqa: N802 - legacy Bag surface
         """Write one path — the store keeps a copy, never the caller's own object.
 
         The mirror of the read above, and the same reason: the daemon received
@@ -442,17 +442,18 @@ class GenropyRegisterClient:
         worker.new_page(user, page_id=page_id, connection_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
-    def change_connection_user(self, connection_id: Any, **kwargs: Any) -> dict | None:
+    def change_connection_user(self, connection_id: Any, **kwargs: Any) -> None:
         """A connection's user changes — LOGIN / avatar switch.
 
         Called by ``Connection.change_user`` (connection.py) at login. A LOCAL mutation
         on the live row (login-stays, core 0.29): nothing ships, the request keeps
-        finding its pages here. Returns the updated local connection item.
+        finding its pages here. Answers nothing, as the daemon does
+        (``daemon/siteregister.py``:778 closes without a ``return``): the caller
+        that wants the changed item reads it, and none of them does.
         """
         worker = self.spa_worker
         user = kwargs.pop("user")
         worker.change_connection_user(connection_id, user=user, **kwargs)
-        return self._item_with_data(connection_id, "connection")
 
     def drop_page(self, page_id: Any, cascade: bool = False, **kwargs: Any) -> None:
         """A page closes (client onClosePage, or a page flagged closed at end of RPC).

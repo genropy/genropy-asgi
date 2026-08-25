@@ -991,6 +991,22 @@ That one was produced on purpose, by replaying the same reference twice against
 a stack whose register the first replay had already populated — which is exactly
 what the register-empty rule of every run exists to prevent.
 
+**The cold start is not compared.** The exchanges a run performs BEFORE its
+first RPC carry no register line into the comparison, and the skip is printed on
+the run. Each stack finishes building lazily there and builds in a different
+process: the bridge's site is built in the TEMPLATE its workers fork from, whose
+register lines are dropped by construction, while the legacy builds the same
+things in the process that serves the request and records them. Measured on
+2026-08-25 by making the template print what it swallows: its four lines are the
+`_mainpref_` read the legacy master makes too, plus the freshness check that
+instantiates `storage_gnr` — the very pair the bridge's first exchange appeared
+to be missing. The rule is computed from the reference archive
+(`TraceReader.cold_start_exchanges`), so no recorder holds a flag a second
+bridge worker would not have, and a run with no RPC at all has no cold start:
+the rule can never silence a whole comparison. Those exchanges are still
+REPLAYED — the page the RPCs need is created there. What it costs: the
+connection register item is not compared at BIRTH, only from the first RPC on.
+
 **The declared-rules table.** A difference a rule recognises is reported as
 `known` and the replay carries on; everything else stops it. Nothing is
 recognised implicitly. Today the table holds one rule, `reference-race`, the one
@@ -1201,6 +1217,14 @@ comparison, which anchors itself to the archive at replay start and joins by the
 
 Teardown is the launcher's own: stop it, and the pool goes with it. The copy db
 is left standing — the next cycle drops it.
+
+**Recorded evidence, the first CLEAN cycle, 2026-08-25.** Reference
+`legacy-20260825T151337` (4 exchanges, 152 register lines — the figure a login
+costs on genropy `a1c0a8dd0`, where #1154 cut the services freshness chain from
+242 calls to 10) replayed against `bridge-20260825T164102`: every exchange
+answered the status the trace carries, no divergence left unexplained, nothing
+recognised by a declared rule. Register calls per exchange, legacy against
+bridge: 39/37 on the uncompared cold start, then 33/33, 35/35, 43/43.
 
 **Recorded evidence, the first cycle against the bridge, 2026-08-25.** Reference
 `legacy-20260825T085605` (4 exchanges, 384 register lines) replayed against the

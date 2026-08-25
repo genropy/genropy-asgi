@@ -147,8 +147,8 @@ def test_new_page_seed_data_becomes_the_live_store(client, worker):
 def test_login_stays_pages_keep_their_worker(client, worker):
     cid, page_id = open_page(client, worker)
     with call_sink(worker):
-        item = client.change_connection_user(cid, user="alice", user_id="U1")
-    assert item["user"] == "alice"
+        assert client.change_connection_user(cid, user="alice", user_id="U1") is None
+    assert client.connection(cid)["user"] == "alice"
     assert page_id in client.pages(connection_id=cid)  # the page never moved
     assert worker.registry.page_user(page_id) == "alice"
     assert client.user("alice") is not None
