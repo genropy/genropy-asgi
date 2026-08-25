@@ -323,9 +323,18 @@ recognised rather than discovered.
     proven `_legacy` twin pattern; the COPY is a README recipe step run by hand
     BEFORE serve_bridge, like every other bench launcher — replica.py does not
     orchestrate the cycle — and replica.py's cycle-start gains a REFUSAL beside
-    the parity check: the target archive's declared `database.dbname` must
-    differ from the reference run's, so a replay can never write into the
-    reference db (foreman, 2026-08-25, answering this phase's clarify);
+    the parity check: on a CROSS-STACK run — reference and target declaring
+    different `stack` values — the target archive's declared `database.dbname`
+    must differ from the reference run's, so the bridge can never write into
+    the db a legacy reference was recorded against (foreman, 2026-08-25,
+    answering this phase's clarify, and narrowed the same day on the phase
+    chat's objection: read literally the rule would refuse the Phase 3
+    self-check, legacy against legacy on one db, which is the run that proves
+    the comparison works. A same-stack replay DOES write into the db its
+    reference was recorded against — harmless for a login-only reference,
+    but Phase 7's session carries saveRecordCluster, so replaying it twice
+    starts from two different db states: copy the db for repeat same-stack
+    replays too, or expect a divergence the stacks did not cause);
     Phase 5 replays the drive_login legacy reference (the Phase 3 self-check
     reference: 4 exchanges, the login segment in full) — the owner's browser
     session is Phase 7's reference, performed at ITS cycle start, not now.
