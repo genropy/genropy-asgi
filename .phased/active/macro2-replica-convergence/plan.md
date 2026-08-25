@@ -20,7 +20,7 @@ recognised rather than discovered.
 
 - [>] **Phase 1**: `site_caller` field on every register line
   > In execution since 2026-08-24T22:26:29+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: c4547fa
+  > Testing: awaiting the human's `Verify: now` checks | commit: 0a0cb4f
   - Run: opus / medium
   - Pattern: `benchmarks/compare/register_recorder.py` (the line builder — the
     bridge inherits it, so the field lands once and appears on both stacks);
