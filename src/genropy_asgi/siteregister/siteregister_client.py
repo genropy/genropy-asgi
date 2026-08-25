@@ -246,7 +246,7 @@ class ServerStore:
             return default
         return self._copied(data.getItem(path, default))
 
-    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # wf:phase-7:new  # noqa: N802 - legacy Bag surface
+    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # noqa: N802 - legacy Bag surface
         """Write one path — the store keeps a copy, never the caller's own object.
 
         The mirror of the read above, and the same reason: the daemon received
@@ -263,7 +263,7 @@ class ServerStore:
             return None
         return data.setItem(path, self._copied(value), **kwargs)
 
-    def _copied(self, value: Any) -> Any:  # wf:phase-7:new
+    def _copied(self, value: Any) -> Any:
         """The value as the wire handed it over: nothing the site can write through.
 
         A Bag is rebuilt node by node, because ``Bag.deepcopy`` keeps a node's

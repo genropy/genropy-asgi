@@ -152,7 +152,7 @@ class TraceReader:
         return records
 
     @property
-    def cold_start_exchanges(self):  # wf:phase-7:new
+    def cold_start_exchanges(self):
         """The exchanges this run performed before its first RPC.
 
         Each stack finishes building lazily during them, and it builds in a
@@ -407,7 +407,7 @@ class Replica:
         return self.failures
 
     @property
-    def summary(self):  # wf:phase-7:new
+    def summary(self):
         """The closing table: one row per exchange, everything the run measured.
 
         Register calls are the ones the structural comparison read; an exchange it
@@ -445,7 +445,7 @@ class Replica:
         return "\n".join(lines)
 
     @property
-    def total_row(self):  # wf:phase-7:new
+    def total_row(self):
         """The last row of the table: what the whole session cost on each stack."""
         def total(key):
             values = [row[key] for row in self.rows if row[key] is not None]
@@ -458,11 +458,11 @@ class Replica:
                 self.get_cell(replica_ms, "{:.0f}"),
                 self.get_delta(reference_ms, replica_ms)]
 
-    def get_cell(self, value, shape="{}"):  # wf:phase-7:new
+    def get_cell(self, value, shape="{}"):
         """One cell: the value, or a dash where there is nothing to show."""
         return "-" if value is None else shape.format(value)
 
-    def get_table(self, headers, rows):  # wf:phase-7:new
+    def get_table(self, headers, rows):
         """Headers, a rule, one line per row; the numbers right, the words left."""
         widths = [max(len(str(cell)) for cell in column)
                   for column in zip(headers, *rows)]
@@ -506,12 +506,12 @@ class Replica:
         self.divergence = self.diff.get_divergence(record, replayed, position)
         return self.divergence
 
-    def not_compared(self, position, label, reason):  # wf:phase-7:new
+    def not_compared(self, position, label, reason):
         """Record why this exchange was left out; the caller prints it, never silent."""
         self.uncompared.append((position, label, reason))
         return None
 
-    def get_label(self, record):  # wf:phase-7:new
+    def get_label(self, record):
         """The exchange as one readable name: its method, its URL, and what it ran.
 
         The URL is what the site was ASKED for, and the middleware has it in hand
@@ -528,7 +528,7 @@ class Replica:
         module = self.get_page_module(record.get("resp_body"))
         return f"{name} -> {module}" if module else name
 
-    def get_page_module(self, body):  # wf:phase-7:new
+    def get_page_module(self, body):
         """The page file the site ran for this request, shortened, or None.
 
         Absolute in the reply; cut here at `packages/`, where a project's own tree
@@ -542,7 +542,7 @@ class Replica:
         _, marker, tail = module.partition("/packages/")
         return f"packages/{tail}" if marker else module
 
-    def get_row(self, record, position, status):  # wf:phase-7:new
+    def get_row(self, record, position, status):
         """Everything this exchange measured, for the live line and for the table."""
         compared = next((entry for entry in self.compared if entry[0] == position), None)
         replayed = self.replayed.get(record["exchange_id"]) or {}
@@ -552,7 +552,7 @@ class Replica:
                 "reference_ms": record.get("duration_ms"),
                 "replica_ms": replayed.get("duration_ms")}
 
-    def get_timing(self, row):  # wf:phase-7:new
+    def get_timing(self, row):
         """The live line's timing: what each stack recorded for this exchange."""
         if row["reference_ms"] is None:
             return ""
@@ -562,19 +562,19 @@ class Replica:
                 f"{self.replica_stack} {row['replica_ms']:.0f} ms  "
                 f"({self.get_delta(row['reference_ms'], row['replica_ms'])})")
 
-    def get_delta(self, reference_ms, replica_ms):  # wf:phase-7:new
+    def get_delta(self, reference_ms, replica_ms):
         """The replica's time against the reference's, as a signed percentage."""
         if not reference_ms or replica_ms is None:
             return "-"
         return f"{(replica_ms - reference_ms) / reference_ms * 100:+.0f}%"
 
     @property
-    def reference_stack(self):  # wf:phase-7:new
+    def reference_stack(self):
         """The stack the reference archive declares."""
         return self.trace.conditions.get("stack") or "reference"
 
     @property
-    def replica_stack(self):  # wf:phase-7:new
+    def replica_stack(self):
         """The stack the target archive declares."""
         return (self.target.conditions.get("stack") if self.target else None) or "replica"
 

@@ -507,9 +507,55 @@ recognised rather than discovered.
     it, and whatever the replay stops on next (if anything) is named precisely
     enough to work from.
 
-- [>] **Phase 7**: converge the drive_login reference end to end
-  > In execution since 2026-08-25T14:56:39+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: 071cae5
+- [x] **Phase 7**: converge the drive_login reference end to end
+  > Done: the drive_login reference replays against the bridge end to end with
+    zero unexplained divergences and nothing recognised by a declared rule; the
+    register-call counts agree exactly on every compared exchange (33/33, 35/35,
+    43/43, 111 each side); the closing run is archived. The reference was
+    re-recorded first, on the genropy the foreman re-pinned mid-gate: a login
+    costs 152 register lines on `a1c0a8dd0`, where it cost 384 on `6da02feda`.
+    Four divergences closed, each by a named cause, none tolerated by a declared
+    rule — the table still holds `reference-race` alone. (1) the recorder's
+    `surface` field, an instrument difference: `client` and `passthrough` are one
+    call now. (2) the cold start, the owner's rule: the comparison reads no
+    register line from the exchanges before the first RPC, because each stack
+    finishes building lazily there and the bridge does it in the template, whose
+    lines are dropped by construction — measured by making the template print
+    what it swallows. (3) the live object a store handed out: `ServerStore` now
+    copies in BOTH directions, values included, which is what the wire did — it
+    was answering a `workdate` the legacy never carried and, on the write side,
+    letting `getAvatar` pop `user_id`/`user_name`/`tags` out of the cached avatar
+    so the bridge logged in as `alexander.king` instead of the pkey. (4)
+    `change_connection_user` answered the changed item where the daemon answers
+    nothing.
+  > Files: benchmarks/compare/replica.py,
+    benchmarks/compare/replica_check.py,
+    benchmarks/compare/structural_diff.py,
+    benchmarks/compare/structural_diff_check.py,
+    benchmarks/compare/README.md,
+    src/genropy_asgi/siteregister/siteregister_client.py,
+    tests/test_register_client_units.py,
+    .phased/active/macro2-replica-convergence/notes.md,
+    .phased/active/macro2-replica-convergence/plan.md
+  > Verified: the closing cycle, reference legacy-20260825T151337 against the
+    bridge on the copy db — four exchanges, every status as recorded, no
+    divergence left unexplained; pytest tests/ 139 passed; ruff clean; the six
+    bench checks green (http_recorder_check, register_recorder_check,
+    run_archive_check, bridge_coverage_check, replica_check,
+    structural_diff_check).
+  > Review: the `+28%` did not appear and cannot be decomposed after the fact —
+    it was measured on 2026-08-24 with an instrument that could not attribute a
+    single call (`site_caller` is Phase 1'"'"'s), and on a browser session rather
+    than on drive_login. Phase 8 is where anything of it would reappear.
+  > Review: the report was widened three times at the owner'"'"'s check — it names
+    its own inputs, times both stacks with the same metre (the HTTP recorder,
+    request in to reply out), closes on a table whose columns are the stacks the
+    archives declare, and names the page file the site ran for each request. It
+    prints text only: the data live in the two SQLite archives, and a JSON output
+    does not exist. The `->` between the URL and the page file is a sign the owner
+    questioned and it survives in the label; two columns would read better.
+  > Verify: now — done 2026-08-25: the owner read the report and the notes and
+    judged the phase finished.
   - Run: opus / high
   - Pattern: the Phase 5 cycle, repeated; the excluded hypotheses on the +28%
     are on record (bridge code does not call the register itself; the register
