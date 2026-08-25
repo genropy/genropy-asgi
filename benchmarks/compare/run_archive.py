@@ -13,7 +13,9 @@ and on a LOCAL filesystem, because WAL does not work over network mounts.
 The `record` table is ONE JSON column holding the whole line, plus a few
 promoted ones, each promoted because it has a job: `run_id` and `exchange_id`
 to JOIN, `stack` to SEPARATE, `ts` and `thread` to ORDER, `kind`, `subject` and
-`status` to FILTER. A promoted column is a COPY of what the JSON already holds,
+`status` to FILTER, `site_caller` to GROUP — which call path a run spends its
+register calls and its milliseconds on is one query on that column, and it is
+asked of every run. A promoted column is a COPY of what the JSON already holds,
 never the only place a value lives — otherwise the blob stops being the record
 and this is a schema again. A field is promoted once it is queried often; an
 occasional query reads inside the JSON with SQLite's own `json_extract`.
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS record (
     stack       TEXT,
     kind        TEXT,
     exchange_id TEXT,
+    site_caller TEXT,
     ts          TEXT,
     thread      INTEGER,
     subject     TEXT,
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS record (
 );
 CREATE INDEX IF NOT EXISTS record_exchange ON record (run_id, exchange_id);
 CREATE INDEX IF NOT EXISTS record_kind ON record (run_id, kind, subject);
+CREATE INDEX IF NOT EXISTS record_caller ON record (run_id, site_caller);
 """
 
 # What each kind of line answers `subject` with: the path for an HTTP exchange,
@@ -134,8 +138,10 @@ class RunArchive:
         line = json.dumps(record, ensure_ascii=False, default=repr)
         with self.lock:
             self.connection.execute(
-                "INSERT INTO record (run_id, stack, kind, exchange_id, ts, "
-                "thread, subject, status, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO record (run_id, stack, kind, exchange_id, "
+                "site_caller, ts, thread, subject, status, line) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (self.run_id, self.stack, kind, record.get("exchange_id"),
+                 record.get("site_caller"),
                  record.get("ts"), record.get("thread"),
                  record.get(SUBJECT_FIELD[kind]), record.get("status"), line))

@@ -28,7 +28,10 @@ recognised rather than discovered.
   - Files: benchmarks/compare/register_recorder.py,
     benchmarks/compare/register_recorder_mixin.py (if the walk needs it),
     benchmarks/compare/register_recorder_check.py,
-    benchmarks/compare/bridge_coverage_check.py
+    benchmarks/compare/bridge_coverage_check.py,
+    benchmarks/compare/run_archive.py,
+    benchmarks/compare/run_archive_check.py,
+    benchmarks/compare/drive_login.py
   - Decisions: field name `site_caller` (owner delegated naming for internal
     instrumentation, 2026-08-24); content `file:line` plus function name of the
     first frame OUTSIDE the register client (and outside the recorder itself);

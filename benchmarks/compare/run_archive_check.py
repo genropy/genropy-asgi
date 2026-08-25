@@ -91,18 +91,19 @@ archive = fresh()
 http_record = {"exchange_id": "ex1", "ts": "2026-08-23T10:00:00", "thread": 42,
                "path": "/site/index", "status": 200, "resp_body": "<answer/>"}
 register_record = {"exchange_id": "ex1", "ts": "2026-08-23T10:00:01", "thread": 42,
-                   "verb": "get_item", "surface": "client", "wire_calls": 1}
+                   "verb": "get_item", "surface": "client", "wire_calls": 1,
+                   "site_caller": "gnr/web/gnrwebpage.py:1640 pageStore"}
 boot_record = {"ts": "2026-08-23T09:59:00", "thread": 7, "verb": "refresh"}
 archive.append_record("http", http_record)
 archive.append_record("register", register_record)
 archive.append_record("register", boot_record)
 stored = rows(archive, "kind", "exchange_id", "ts", "thread", "subject",
-              "status", "stack", "line")
+              "status", "stack", "line", "site_caller")
 check("every promoted column repeats a value the JSON still holds",
       all(json.loads(row[7]).get(field) == row[index]
           for row in stored
           for index, field in ((1, "exchange_id"), (2, "ts"), (3, "thread"),
-                               (5, "status"))))
+                               (5, "status"), (8, "site_caller"))))
 check("the whole record survives inside the JSON column",
       json.loads(stored[0][7]) == http_record)
 check("subject is the path of an HTTP line", stored[0][4] == "/site/index")
@@ -111,6 +112,11 @@ check("the stack is stamped on every row from the run's conditions",
       [row[6] for row in stored] == ["legacy"] * 3)
 check("an absent exchange goes in as NULL, never faked",
       stored[2][1] is None and "exchange_id" not in json.loads(stored[2][7]))
+check("the caller is promoted for grouping and still lives in the JSON",
+      stored[1][8] == register_record["site_caller"]
+      and json.loads(stored[1][7])["site_caller"] == register_record["site_caller"])
+check("a line with no caller promotes NULL, never a made-up path",
+      stored[0][8] is None and stored[2][8] is None)
 
 # 4. the join: no register line names an exchange the HTTP lines do not carry
 check("the join finds nothing unjoinable in a consistent run",

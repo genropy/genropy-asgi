@@ -28,10 +28,17 @@ the wire attempts and the error class, the ordinal within its
 exchange, the duration, thread and pid. Store lines carry as well the
 `register_name` and `register_item_id` of the store the call happened on.
 
-`site_caller` is that site code: `file:line function` of the first frame outside
-the recorder and outside the register client. It is what turns a count of calls
+`site_caller` is that site code: the three outermost-going frames outside the
+recorder and outside the register client, innermost first, joined by ` <- `. It
+is what turns a count of calls
 into a diagnosis — a divergence of two register calls says nothing until the two
-lines name who asked. The file is cut down to the path its dotted module name
+lines name who asked. Three frames and not one, decided by the owner on
+2026-08-24 after the first measurement: 242 of the 384 calls a login makes come
+from the service cache check inside genropy, whose innermost frame is always the
+same two lines of `gnr/lib/services/__init__.py` and never says which site code
+asked for the service. The instrument may cost time in the fidelity phases —
+what it must not do is cost time in macro-phase 3, which reads the durations.
+The file is cut down to the path its dotted module name
 implies, because the two stacks run the same genropy from different places (a
 frozen copy under `temp/legacy_venv`, an editable checkout under
 `genropy/gnrpy`) and two absolute paths would read as a divergence produced by
@@ -106,6 +113,14 @@ OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-f]+")
 # The store's register reads are properties, so they cannot be intercepted as
 # calls: reading the attribute IS the call. They are recorded by name.
 STORE_READ_PROPERTIES = ("data", "register_item", "datachanges", "subscribed_paths")
+
+# Three frames of site code on every line, innermost first. One was not enough:
+# 242 of the 384 register calls a login makes come from the service cache check
+# inside genropy, whose innermost frame is always the same two lines and never
+# says which site code asked for the service.
+SITE_CALLER_DEPTH = 3
+
+SITE_CALLER_SEPARATOR = " <- "
 
 
 class WireCounter:
@@ -262,16 +277,17 @@ class RegisterRecorder:
 
     @property
     def site_caller(self):  # wf:phase-1:new
-        """`file:line function` of the site code that made the call in flight."""
+        """The site code that made the call in flight, three frames, innermost first."""
+        chain = []
         frame = inspect.currentframe()
-        while frame is not None:
+        while frame is not None and len(chain) < SITE_CALLER_DEPTH:
             filename = frame.f_code.co_filename
             if filename not in self.instrument_files:
                 path = self.get_comparable_path(filename,
                                                 frame.f_globals.get("__name__"))
-                return f"{path}:{frame.f_lineno} {frame.f_code.co_name}"
+                chain.append(f"{path}:{frame.f_lineno} {frame.f_code.co_name}")
             frame = frame.f_back
-        return None
+        return SITE_CALLER_SEPARATOR.join(chain) or None
 
     def get_comparable_path(self, filename, module_name):  # wf:phase-1:new
         """The path the import system implies; the absolute one outside a package."""

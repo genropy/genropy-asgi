@@ -323,7 +323,7 @@ check("the line carries the caller of the call",
 check("the caller is this script, at a line of its own, in module scope",
       caller.startswith(os.path.abspath(__file__))
       and caller.endswith(" <module>")
-      and caller.split(":")[-1].split(" ")[0].isdigit())
+      and caller.split(":")[1].split(" ")[0].isdigit())
 check("the caller is neither the recorder nor the client",
       "register_recorder.py" not in caller
       and "siteregister_client.py" not in caller)
@@ -339,7 +339,13 @@ site.enter_exchange("ex14b")
 ask_the_register(rec)
 callers = [line["site_caller"] for line in lines(arc)]
 check("the calling function is named, on the store line as on the client one",
-      all(caller.endswith(" ask_the_register") for caller in callers))
+      all(caller.split(" <- ")[0].endswith(" ask_the_register")
+          for caller in callers))
+check("the chain goes on outwards, to what called the calling function",
+      all(caller.split(" <- ")[1].endswith(" <module>") for caller in callers))
+check("the chain stops at the depth the recorder declares",
+      all(len(caller.split(" <- ")) <= register_recorder.SITE_CALLER_DEPTH
+          for caller in callers))
 
 # 15. a file inside a package is named as its dotted module name implies, so the
 #     two stacks compare: the same genropy read from two places gives one path

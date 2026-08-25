@@ -234,8 +234,10 @@ caller = lines(archive)[0].get("site_caller")
 check("the line names the site code that made the call", caller is not None)
 check("the caller is the calling function of this script, at a line of its own",
       caller.startswith(os.path.abspath(__file__))
-      and caller.endswith(" ask_the_register")
-      and caller.split(":")[-1].split(" ")[0].isdigit())
+      and caller.split(" <- ")[0].endswith(" ask_the_register")
+      and caller.split(":")[1].split(" ")[0].isdigit())
+check("the chain goes on outwards, to what called the calling function",
+      caller.split(" <- ")[1].endswith(" <module>"))
 check("neither the mixin nor the client is mistaken for the site",
       "register_recorder" not in caller and "siteregister_client" not in caller)
 check("the client's own module is excluded through the MRO, not by a list",
