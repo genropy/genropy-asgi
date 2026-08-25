@@ -5,14 +5,19 @@ fork, and the join written as a query.
 No site, no server, no site database — a throwaway archive in `temp/`.
 
 It runs on the BENCH VENV, like the register check and unlike the HTTP one, and
-not because it imports genropy — it does not. The fork check below opens a
-SQLite connection in a forked child, and that segfaults on sqlite 3.51.0 in WAL
-mode (measured on the pyenv python 3.12.9 of this machine: SIGSEGV inside
-`sqlite3.connect`, no exception to catch). The bench venv carries sqlite 3.50.4
-and does it cleanly. Same family as the libpq/Kerberos segfault that makes
-`PGGSSENCMODE=disable` mandatory: worth knowing before anyone runs the bench on
-a python whose sqlite is newer, where the gunicorn worker would die on its first
-recorded line.
+not because it imports genropy — it does not. Section 5 forks a child out of a
+process that has minted the run, which is the legacy shape: the gunicorn master
+mints and its workers are forked from it. That shape needs sqlite 3.50.4, which
+the bench venv carries, and it dies on sqlite 3.51.0 — measured on the pyenv
+python 3.12.9 of this machine, 2026-08-25: SIGSEGV in the child, no exception to
+catch and no line written. What poisons the child is the PARENT having opened a
+connection at all: not WAL, not the same file, and closing before the fork does
+not help. It is also INTERMITTENT — two runs in three — so a single green run
+proves nothing. Same family as the libpq/Kerberos segfault that makes
+`PGGSSENCMODE=disable` mandatory.
+
+The bridge runs on that newer sqlite and forks its workers too, which is why the
+template process there is held to writing nothing at all: `recording_engine_factory.py`.
 
 Run: temp/legacy_venv/bin/python benchmarks/compare/run_archive_check.py
 """

@@ -32,7 +32,7 @@ Two modes, one constructor. With a `run_id` the process MINTS the run: it
 creates the file, the schema and the run row carrying the declared conditions.
 Without, it ATTACHES to an existing archive and reads the run id back from it.
 That is what lets `serve_legacy.py` mint the run in the master and every
-recorder — in the forked worker here, in a spawned worker on the bridge —
+recorder — in the forked worker here, in a forked worker on the bridge —
 attach to it by path.
 
 The connection is opened lazily PER PID: a handle inherited across a fork is

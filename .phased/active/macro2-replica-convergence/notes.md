@@ -212,3 +212,56 @@
   Phases 5 and 7 add each rule when its divergence shows, with the owner's
   sign-off. `structural_diff_check.py` proves the mechanism with a stand-in rule
   of its own rather than with a real one written blind.
+
+## Phase 4
+
+- The register recorder's install point MOVED to the engine factory, because the
+  fork moved where the site is built. `GnrWsgiSite.__init__` forces
+  `site.register` into existence (`gnrwsgisite.py:510`), so under the template
+  recipe the register client exists in the TEMPLATE, before any worker
+  constructor runs. `recording_worker.py` kept only the HTTP recorder, which
+  wraps `wsgi_app` — a name the worker constructor assigns, in the child.
+  `recording_engine_factory.py` is new: `RecordingSiteEngineFactory`, the
+  shipped `GenropySiteEngineFactory` subclassed, so the bench forks by the
+  shipped protocol and not by a bench variant.
+- The bench recipe now differs from the shipped one in TWO lines, not one:
+  `worker_class` and `engine_factory`. `engine_kwargs` is identical to the
+  shipped `{source, debug}`, so it is not a difference. `bridge_coverage_check.py`
+  licenses exactly those two and still compares the whole rendered document.
+- **The template must never open a sqlite connection**, and this is the finding
+  of the phase, not a precaution. The plan expected the trouble to be an
+  inherited handle; it is not. Measured 2026-08-25 on the bridge interpreter
+  (pyenv python 3.12.9, sqlite 3.51.0): a forked child dies of SIGSEGV as soon
+  as its PARENT has ever opened a connection — a different file works the same
+  way, WAL is irrelevant, and closing before the fork does not help. What
+  poisons the child is the library having been initialised at all. It is also
+  INTERMITTENT, two runs in three, so one green run proves nothing. The legacy
+  venv carries sqlite 3.50.4 and does the same thing cleanly, which is why the
+  gunicorn stack — master mints, workers forked — has never met this and needs
+  no change.
+- It was seen before it was understood. The first fork recipe let the template
+  record: the run archive held 4 register lines written by the template's pid,
+  the forked worker was killed after `its process never presented itself in
+  10.0s`, no second worker came up, and the front answered 503 with
+  `no room for a newcomer: the pool is restricted`.
+- A lazy attach was written first and reverted: making `RunArchive` read its run
+  row on first use keeps a template that only ATTACHES free of sqlite, but the
+  template does not only attach — it writes, because the site makes register
+  calls while it is being built. Lazy reads would have hidden the problem one
+  step further in. What is in the tree instead is `TemplateArchive`, an archive
+  that swallows, bound to the client through a `partial` exactly as
+  `serve_legacy.py` binds the run's archive; each forked worker replaces it with
+  the real one as its first act.
+- What that drops, declared: the register calls the site makes while it is being
+  built — 4 on the bridge, 2 on legacy. They already differed, because the two
+  stacks build the site in different processes, and they carry no `exchange_id`,
+  so no comparison has ever read them. Weighed and rejected: buffering them in
+  the template and flushing from the first forked child (which child is "first"
+  is arbitrary, and every child would flush the same lines), and a short-lived
+  helper fork to do the writing (a whole process for four lines).
+- Fidelity of the change, measured on the `drive_login` smoke: the fork recipe
+  records **380 register lines carrying an exchange**, exactly what the four
+  previous spawn-recipe runs recorded, over **the same 52 distinct `site_caller`
+  chains** (0 unique to either recipe). 0 lines without a caller, 0 without an
+  exchange, 0 unjoinable, and every register line written by the forked worker's
+  pid — none by the template's.

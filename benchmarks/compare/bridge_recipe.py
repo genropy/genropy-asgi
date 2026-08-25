@@ -1,17 +1,23 @@
-"""The bench recipe: the bridge's own server recipe, with the recording worker.
+"""The bench recipe: the bridge's own server recipe, with the recorders installed.
 
-The install rides the RECIPE. The pool names its worker class as an import
-string that the worker process resolves for itself when it is spawned, so
-naming ``recording_worker:RecordingGenropyWorker`` here installs both recorders
-in every worker — nothing is patched, nothing is monkey-hooked, and neither
-genro-asgi nor genropy-asgi is modified. The CLI takes this file with its own
-``--config`` option, which exists for exactly this: a recipe that carries the
-pool shape while the instance named on the command line still wins.
+The install rides the RECIPE. The pool names its worker class and its engine
+factory as import strings that the template and worker processes resolve for
+themselves, so naming the bench's two classes here installs both recorders —
+nothing is patched, nothing is monkey-hooked, and neither genro-asgi nor
+genropy-asgi is modified. The CLI takes this file with its own ``--config``
+option, which exists for exactly this: a recipe that carries the pool shape
+while the instance named on the command line still wins.
 
-``main`` is the shipped recipe's, transcribed, with ONE line changed — the
-worker class. ``bridge_coverage_check.py`` builds both recipes through the
-runtime's own read door and fails if they come to differ in anything else, so
-the copy cannot drift in silence.
+TWO lines, because the workers are born by fork and the two recorders therefore
+install in two different processes: the register recorder in the TEMPLATE, where
+the site — and with it its register client — is built, and the HTTP recorder in
+each forked child, where ``wsgi_app`` is assigned. ``engine_factory`` names the
+first, ``worker_class`` the second.
+
+``main`` is the shipped recipe's, transcribed, with those two lines changed.
+``bridge_coverage_check.py`` builds both recipes through the runtime's own read
+door and fails if they come to differ in anything else, so the copy cannot drift
+in silence.
 
 The recipe DECLARES and does nothing else: building it must stay free of
 consequences, or the drift check could not build it. The run archive is minted
@@ -30,15 +36,16 @@ from genropy_asgi.spa.config import DEBUG_OFF_WORDS
 from genropy_asgi.spa.config import ServerConfiguration as BridgeConfiguration
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 
-# The one line by which this recipe differs from the one the package ships.
+# The two lines by which this recipe differs from the one the package ships.
 RECORDING_WORKER = "recording_worker:RecordingGenropyWorker"
+RECORDING_ENGINE_FACTORY = "recording_engine_factory:RecordingSiteEngineFactory"
 
 
 class ServerConfiguration(BridgeConfiguration):
-    """The shipped recipe, with the recording worker in the pool."""
+    """The shipped recipe, with the recording worker and factory in the pool."""
 
     def main(self, root: Any) -> None:
-        """The shipped document, transcribed, with the recording worker in the pool."""
+        """The shipped document, transcribed, with the two recording classes."""
         cfg = root.configuration()
         cfg.server(
             host=EnvResolver("GNR_ASGI_HOST", default="127.0.0.1"),
@@ -76,6 +83,8 @@ class ServerConfiguration(BridgeConfiguration):
             "entry_module": "genro_asgi.spa.orchestration.worker_entry",
             "worker_class": RECORDING_WORKER,
             "worker_kwargs": {"source": source, "debug": debug},
+            "engine_factory": RECORDING_ENGINE_FACTORY,
+            "engine_kwargs": {"source": source, "debug": debug},
         }
         idle_minutes = os.environ.get("GNR_ASGI_IDLE_FREEZE_MINUTES")
         if idle_minutes:

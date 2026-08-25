@@ -6,7 +6,7 @@ recorder is a mixin over an explicit list of verbs, which CAN silently fall
 behind the client it shadows. This is the tripwire for that, in the spirit of
 the anti-drift check that already guards the daemon contract — and it also
 guards the second copy this side needs: the bench recipe, transcribed from the
-one the package ships with one line changed.
+one the package ships with two lines changed.
 
 What it asserts:
 
@@ -18,7 +18,9 @@ What it asserts:
    the parent implementation it shadows;
 4. the store surface the recorder reads as properties is the store's own;
 5. the bench recipe and the shipped recipe build the same document — the whole
-   tree, not the pool alone — except for the worker class;
+   tree, not the pool alone — except for the two recording classes, and the
+   engine factory the bench names really is the shipped one with the recording
+   client installed;
 6. the recorder writes one line for the call the site made and none for the
    calls the client makes on itself, hands back a wrapped store, and names on
    every line the site code that made the call — the mixin's own frames and the
@@ -44,10 +46,12 @@ import sys
 from types import SimpleNamespace
 
 from genro_asgi.config.handler import ConfigurationHandler
+from genropy_asgi.spa.site_engine_factory import GenropySiteEngineFactory
 from gnr.web import gnrwsgisite
 from gnr.web.daemon.siteregister_client import SiteRegisterClient
 
-from bridge_recipe import RECORDING_WORKER
+from bridge_recipe import RECORDING_ENGINE_FACTORY, RECORDING_WORKER
+from recording_engine_factory import RecordingSiteEngineFactory, TemplateArchive
 from serve_bridge import RunConditions
 from register_recorder import STORE_READ_PROPERTIES, ServerStore, StoreRecorder
 from register_recorder_mixin import RECORDED_VERBS, RecordedVerb, RecordingRegisterClient
@@ -59,8 +63,12 @@ ARCHIVE = os.path.join(BENCH_ROOT, "temp", "bridge_coverage_check.sqlite")
 SHIPPED_RECIPE = os.path.join(BENCH_ROOT, "src", "genropy_asgi", "spa", "config.py")
 BENCH_RECIPE = os.path.join(BENCH_ROOT, "benchmarks", "compare", "bridge_recipe.py")
 
-# The worker the package's own recipe names — the one line the bench replaces.
+# What the package's own recipe names — the two lines the bench replaces. The
+# workers are born by fork, so the two recorders install in two processes: the
+# register recorder in the template the factory builds the site in, the HTTP
+# recorder in each forked child.
 SHIPPED_WORKER = "genropy_asgi.spa.genropy_worker:GenropyWorker"
+SHIPPED_ENGINE_FACTORY = "genropy_asgi.spa.site_engine_factory:GenropySiteEngineFactory"
 
 CONDITIONS = {"stack": "bridge", "sitename": "test_invoice_pg"}
 
@@ -162,32 +170,99 @@ store_properties = {name for name, value in vars(ServerStore).items()
 check("the store's read properties are the ones the recorder reads as calls",
       store_properties == set(STORE_READ_PROPERTIES))
 
-# 5. the bench recipe differs from the shipped one in the worker class alone
+# 5. the bench recipe differs from the shipped one in the two recording classes
+LICENSED_DIFFERENCE = {"worker_class", "engine_factory"}
 shipped, bench = built_pool(SHIPPED_RECIPE), built_pool(BENCH_RECIPE)
 check("both recipes declare the same single pool", set(shipped) == set(bench) == {"pool"})
 check("the bench recipe names the recording worker",
       bench["pool"].get("worker_class") == RECORDING_WORKER)
+check("the bench recipe names the recording engine factory",
+      bench["pool"].get("engine_factory") == RECORDING_ENGINE_FACTORY)
+check("the shipped recipe still forks its workers out of a template",
+      shipped["pool"].get("engine_factory") == SHIPPED_ENGINE_FACTORY)
+check("the two factories are built with the same values",
+      bench["pool"].get("engine_kwargs") == shipped["pool"].get("engine_kwargs"))
 difference = {key for key in set(shipped["pool"]) | set(bench["pool"])
               if shipped["pool"].get(key) != bench["pool"].get(key)}
-check("nothing else in the pool differs", difference == {"worker_class"})
-if difference != {"worker_class"}:
-    print(f"     the pool has drifted on: {sorted(difference)}")
+check("nothing else in the pool differs", difference == LICENSED_DIFFERENCE)
+if difference != LICENSED_DIFFERENCE:
+    print(f"     the pool has drifted on: {sorted(difference - LICENSED_DIFFERENCE)}")
 
 # ...and the SAME comparison over the whole document, not the pool alone. The
 # pool-only version of this check passed on 2026-08-24 with the bench recipe's
 # listener port changed and its entire middleware section deleted: a bench that
 # serves a different server measures a different server, in silence.
 shipped_xml = built_document(SHIPPED_RECIPE)
-# The worker class is the one licensed difference, so it is put back before the
-# comparison: what survives is drift and nothing else.
-bench_xml = built_document(BENCH_RECIPE).replace(RECORDING_WORKER, SHIPPED_WORKER)
-check("the whole document is the shipped one, once the worker class is put back",
+# The two recording classes are the licensed differences, so they are put back
+# before the comparison: what survives is drift and nothing else.
+bench_xml = (built_document(BENCH_RECIPE)
+             .replace(RECORDING_WORKER, SHIPPED_WORKER)
+             .replace(RECORDING_ENGINE_FACTORY, SHIPPED_ENGINE_FACTORY))
+check("the whole document is the shipped one, once the two classes are put back",
       bench_xml == shipped_xml)
 if bench_xml != shipped_xml:
     for line in difflib.unified_diff(shipped_xml.split("><"), bench_xml.split("><"),
                                      "shipped", "bench", lineterm="", n=0):
         if line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
             print(f"     {line.strip()[:150]}")
+
+# ...and the factory the bench names does what its line in the recipe claims.
+# The recipe comparison above reads STRINGS: it would keep passing if this
+# factory stopped installing the recording client, installed it after the site
+# had already read the name, or let the template write — which on this sqlite
+# kills every worker forked from it. All three are exercised here on a stub.
+
+
+class SiteConstructionStub(GenropySiteEngineFactory):
+    """Stands in the MRO where the real site construction is.
+
+    Inserted UNDER the bench factory, so the bench factory's own ``super()``
+    calls land here: what runs is the two overrides under test, with no site,
+    no database and no fork.
+    """
+
+    def __init__(self, stub_site, **kwargs):
+        super().__init__(**kwargs)
+        self.stub_site = stub_site
+        self.client_at_construction = None
+
+    def build_site(self):
+        self.client_at_construction = gnrwsgisite.SiteRegisterClient
+        return self.stub_site
+
+    def build_group_engine(self):
+        return self.build_site()
+
+
+class ProbeFactory(RecordingSiteEngineFactory, SiteConstructionStub):
+    """The bench factory's overrides, over the stub instead of over a real site."""
+
+
+check("the bench factory is the shipped factory, subclassed",
+      issubclass(RecordingSiteEngineFactory, GenropySiteEngineFactory))
+
+shipped_client = gnrwsgisite.SiteRegisterClient
+probe = ProbeFactory(SimpleNamespace(), source="", debug=False)
+try:
+    probe.build_group_engine()
+    installed = gnrwsgisite.SiteRegisterClient
+finally:
+    gnrwsgisite.SiteRegisterClient = shipped_client
+check("a recording client is installed BEFORE the site is built",
+      probe.client_at_construction is installed)
+check("what is installed is the recording client",
+      installed.func is RecordingRegisterClient)
+check("it is bound to an archive that writes nothing, so the template can fork",
+      isinstance(installed.keywords["archive"], TemplateArchive))
+
+# The client the template builds must really swallow: a line written from the
+# process every worker is forked from would open the connection that kills them.
+drop_archive()
+template_site = SimpleNamespace(currentRequest=None, spa_worker=None)
+template_client = installed(template_site)
+template_client.dump()
+check("a call recorded in the template leaves no archive behind it",
+      not os.path.exists(ARCHIVE))
 
 # 6. one line per call the SITE made, and none for the client's own inner calls
 client, archive = fresh_client()

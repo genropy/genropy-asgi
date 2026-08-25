@@ -260,9 +260,11 @@ Both are **installed by a plain call**, never by logic living inside a gunicorn
 hook: the bridge has no gunicorn, and the same two recorders install there too.
 On the legacy stack the register recorder cannot use a hook at all — the site
 builds its register client in the master process before the configuration file
-is read — so it installs from the launcher `serve_legacy.py`. On the bridge both
-installs happen inside the worker, in `recording_worker.py`; see **The bridge
-side** below.
+is read — so it installs from the launcher `serve_legacy.py`. The bridge has the
+same problem one process further out: its workers are born by FORK out of a
+template that built the site already, so the register recorder installs in the
+template (`recording_engine_factory.py`) and the HTTP recorder in each forked
+child (`recording_worker.py`); see **The bridge side** below.
 
 The 16 threads in one process interleave the calls, so every line of both kinds
 carries a thread id as well as the `exchange_id`. That is why the two recorders
@@ -384,8 +386,8 @@ so before the fork. The register recorder is handed the archive object directly,
 through a `partial` — genropy builds its client as `SiteRegisterClient(site)`,
 with no room for a second argument. The HTTP recorder, born later in the worker,
 attaches to the path in the environment. The environment is the channel because
-it is the only one that survives both a **fork** here and a **spawn** on the
-bridge, where the worker process is started fresh.
+it is the only one that survives both the **fork** on either stack and the
+**spawn** of the bridge's template, which is started fresh.
 
 **The connection is opened per process, never inherited.** A handle carried
 across a fork is the same class of invisible defect as a shared file descriptor.
@@ -577,23 +579,57 @@ of being written a second time.
 ### The three pieces
 
 - **`bridge_recipe.py`** — the server recipe. The install rides the recipe: the
-  pool names its worker class as an import string that the worker process
-  resolves for itself, so a recipe naming the recording worker installs both
-  recorders in every worker. Nothing is patched, no environment switch, no
-  `sitecustomize`, and neither genro-asgi nor genropy-asgi is modified. It is
-  the shipped recipe transcribed with ONE line changed, and the coverage check
-  builds both and fails if anything else comes to differ.
+  pool names its worker class and its engine factory as import strings that the
+  worker and template processes resolve for themselves, so a recipe naming the
+  bench's two classes installs both recorders. Nothing is patched, no
+  environment switch, no `sitecustomize`, and neither genro-asgi nor
+  genropy-asgi is modified. It is the shipped recipe transcribed with TWO lines
+  changed, and the coverage check builds both and fails if anything else comes
+  to differ.
+- **`recording_engine_factory.py`** — `RecordingSiteEngineFactory`, the shipped
+  `GenropySiteEngineFactory` subclassed. The group's workers are born by fork
+  out of a template process that builds the `GnrWsgiSite` once for all of them,
+  and `GnrWsgiSite.__init__` forces `site.register` into existence, so the
+  register client exists in the TEMPLATE before any worker constructor runs.
+  This factory assigns the recording client into `gnr.web.gnrwsgisite` right
+  before it builds the site. It binds that client to a `TemplateArchive`, which
+  swallows lines: see **The template writes nothing** below.
 - **`recording_worker.py`** — `RecordingGenropyWorker`, a `GenropyWorker`
-  subclass. It assigns the recording client into `gnr.web.gnrwsgisite` *before*
-  `super().__init__` builds the site — `GnrWsgiSite.__init__` forces
-  `site.register` into existence, so an assignment made afterwards would patch a
-  name the site has already read — and wraps `wsgi_app` with the HTTP recorder
-  afterwards, outermost, so the exchange header is in the environ before
-  anything reads the request.
+  subclass, both of whose calls run in the forked CHILD. It gives the inherited
+  register recorder the run's own archive in place of the `TemplateArchive`, and
+  wraps `wsgi_app` with the HTTP recorder, outermost, so the exchange header is
+  in the environ before anything reads the request.
 - **`register_recorder_mixin.py`** — the mixin. Where the legacy client could be
   shadowed by a wrapper object catching every attribute, this one declares
   everything explicitly, so the recording client is a real **subclass** and each
   recorded verb is an override delegating to the parent.
+
+### The template writes nothing
+
+The process every worker is forked from must never open a SQLite connection. On
+the sqlite the bridge runs — 3.51.0, pyenv python 3.12.9 — a forked child dies of
+SIGSEGV as soon as its parent has opened a connection of its own: no exception to
+catch, no line written, and INTERMITTENTLY, two runs in three. Not WAL, not the
+same file, and closing before the fork does not help — what poisons the child is
+the library having been initialised at all. Measured 2026-08-25. The legacy venv
+carries sqlite 3.50.4, which does the same thing cleanly, which is why the
+gunicorn stack has never met this.
+
+Seen on the bench before it was understood: the first fork recipe let the
+template write its lines, and its forked worker was killed after never presenting
+itself, leaving `no room for a newcomer: the pool is restricted`.
+
+So the register client the factory installs is bound to a `TemplateArchive` that
+drops what it is given, and each forked worker swaps in the run's archive as its
+first act. What is dropped is the handful of register calls the site makes while
+it is being built — four on the bridge, two on legacy, already different because
+the two stacks build the site in different processes. They carry no
+`exchange_id`, so no comparison has ever read them. Declared, because a silent
+drop is a divergence nobody can see afterwards.
+
+Measured on the login smoke of 2026-08-25, fork recipe against spawn recipe:
+**380 register lines carrying an exchange on both, and the same 52 distinct
+`site_caller` chains** — the fork changed nothing about what the site records.
 
 ### Only the outermost call is recorded
 
@@ -681,12 +717,13 @@ Every argument is the `gnrasgiserve` command line; the launcher adds only
 caller named alone. It prints the archive it is recording into.
 
 What the launcher owns is the RUN, not the install: it puts `benchmarks/compare`
-on the import path — in this process and in the environment every spawned worker
-inherits, which is how the workers resolve `recording_worker` — mints the archive
-with the conditions above, and publishes its path in `GNR_BENCH_RUN`. The
-environment is the only channel that reaches a spawned worker: no object crosses
-a spawn, which is exactly why the two recorders were built to agree on a path
-rather than on an inherited handle.
+on the import path — in this process and in the environment the pool's template
+inherits, which is how `recording_engine_factory` and `recording_worker` are
+resolved — mints the archive with the conditions above, and publishes its path
+in `GNR_BENCH_RUN`. The environment is the only channel that reaches the
+template: it is started fresh by an exec, and no object crosses that, which is
+exactly why the two recorders were built to agree on a path rather than on an
+inherited handle.
 
 The recipe itself does nothing but declare. That is deliberate: building a
 recipe has to stay free of consequences, or the drift check could not build it.
@@ -696,7 +733,10 @@ recipe has to stay free of consequences, or the drift check could not build it.
 the pool logs `its process never presented itself` and starts another, which
 comes up. Observed on 2026-08-24 with the recorders installed, and it is not
 theirs: they add nothing to the site build. Worth knowing so the traceback in
-the log is not read as a failure of the bench.
+the log is not read as a failure of the bench. Under the fork recipe the site is
+already built when a worker is forked, so the child presents at once (observed
+2026-08-25) — the same message with NO second worker coming up is a different
+animal, and the first thing to suspect is the template having touched sqlite.
 
 ## The reference session
 

@@ -232,7 +232,50 @@ recognised rather than discovered.
     artificially provoked divergence report: both must be readable without
     opening the code.
 
-- [ ] **Phase 4**: align the bench bridge recipe with the shipped template-fork recipe
+- [x] **Phase 4**: align the bench bridge recipe with the shipped template-fork recipe
+  > Done: the bench recipe declares `engine_factory`/`engine_kwargs` exactly as the
+    shipped one does, so the bench bridge's workers are born by FORK out of a
+    template that builds the site once. The register recorder moved with the site
+    construction, into a new `recording_engine_factory.py` (the shipped
+    `GenropySiteEngineFactory` subclassed); `recording_worker.py` keeps the HTTP
+    recorder and gives the inherited register recorder the run's archive, both in
+    the forked child. The two recipe-drift assertions of
+    `bridge_coverage_check.py` are green again and now license exactly two
+    differences, worker class and engine factory, still comparing the whole
+    rendered document.
+  > Files: benchmarks/compare/recording_engine_factory.py (new),
+    benchmarks/compare/recording_worker.py,
+    benchmarks/compare/bridge_recipe.py,
+    benchmarks/compare/bridge_coverage_check.py,
+    benchmarks/compare/run_archive_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro2-replica-convergence/notes.md
+  > Verified: bridge_coverage_check.py 41 assertions green INCLUDING the two
+    recipe-drift ones; run_archive_check.py 19 and register_recorder_check.py 44
+    green on the legacy venv; http_recorder_check.py, replica_check.py,
+    structural_diff_check.py green; ruff clean; pytest tests/ 133 passed. The
+    `drive_login` smoke on the bench bridge: the template logs `forked pool_0001`,
+    the worker presents at once, and the run archives **380 register lines
+    carrying an exchange over 52 distinct `site_caller` chains — identical to the
+    four previous spawn-recipe runs**, every one written by the forked worker's
+    pid and none by the template's; 0 lines without a caller, 0 without an
+    exchange, 0 unjoinable.
+  > Review: the template must never open a sqlite connection, and the plan's
+    stated reason (an inherited handle) is not the real one. Measured on the
+    bridge interpreter (pyenv 3.12.9, sqlite 3.51.0): a forked child dies of
+    SIGSEGV once its PARENT has opened any connection, on any file, WAL or not,
+    closed or not — intermittently, two runs in three. The legacy venv's sqlite
+    3.50.4 is clean, which is why the gunicorn stack needs no change. Anyone
+    moving the bench to another interpreter has to re-measure this.
+  > Verify: now — read one register line recorded by a forked worker and the
+    README's updated run recipe: the install point (register recorder in the
+    template through the engine factory, HTTP recorder in the child) is
+    documented, and the line is indistinguishable in shape from Phase 1's sample.
+  > Verify: now — the four register calls the site makes while it is being built
+    are no longer recorded on the bridge, by decision: they carry no exchange, no
+    comparison reads them, and writing them would kill every forked worker. Say
+    whether that drop is acceptable, or whether the bench should pay a helper
+    process to keep them.
   - Run: opus / high
   - Pattern: the shipped recipe `src/genropy_asgi/spa/config.py` as of commit
     7cd15de (engine_factory/engine_kwargs — workers fork from a template);
