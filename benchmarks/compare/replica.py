@@ -140,9 +140,25 @@ class TraceReader:
         records.sort(key=lambda record: record.get("ordinal") or 0)
         return records
 
-    def get_exchange_replaying(self, reference_exchange_id):  # wf:phase-3:new
-        """The exchange this run sent to reproduce that reference one, or None."""
-        for record in self.records:
+    @property
+    def last_record_id(self):  # wf:phase-3:new
+        """The id of the last row written so far: where a replay starting now begins."""
+        row = self.connection.execute("SELECT max(id) FROM record").fetchone()
+        return row[0] or 0
+
+    def get_exchange_replaying(self, reference_exchange_id, after_id=0):  # wf:phase-3:new
+        """The exchange this run sent to reproduce that reference one, or None.
+
+        `after_id` is what keeps two replays into one archive apart: a stack
+        answers every cycle into the archive it minted at startup, so without it
+        the second replay would compare itself against the first one's lines and
+        find them identical — a comparison that always passes and says nothing.
+        """
+        rows = self.connection.execute(
+            "SELECT line FROM record WHERE kind = 'http' AND id > ? ORDER BY ts, id",
+            (after_id,)).fetchall()
+        for row in rows:
+            record = json.loads(row[0])
             if (record.get("req_headers") or {}).get(REPLICA_HEADER) == reference_exchange_id:
                 return record
         return None
@@ -238,6 +254,9 @@ class Replica:
         self.failures = []
         self.races = []
         self.divergence = None
+        # where this replay begins in the target's archive: the stack answers
+        # every cycle into the file it minted at startup.
+        self.target_start = target.last_record_id if target else 0
 
     def run(self):
         """Replay every exchange in order; return the failures met on the way.
@@ -301,7 +320,8 @@ class Replica:
         """The target's own exchange for this one, once the target has written it."""
         deadline = time.time() + EXCHANGE_WAIT_SECONDS
         while time.time() < deadline:
-            replayed = self.target.get_exchange_replaying(record.get("exchange_id"))
+            replayed = self.target.get_exchange_replaying(record.get("exchange_id"),
+                                                         self.target_start)
             if replayed is not None:
                 return replayed
             time.sleep(EXCHANGE_POLL_SECONDS)

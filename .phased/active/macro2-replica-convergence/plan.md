@@ -169,7 +169,7 @@ recognised rather than discovered.
 
 - [>] **Phase 3**: structural comparison, stop at the first divergence
   > In execution since 2026-08-25T08:30:00
-  > WIP: done: structural_diff.py with the shape rule, the declared-rules table and the report; structural_diff_check.py 31 assertions green; replica.py compares after every exchange and stops; replica_check.py 41 green; ruff clean | missing: the self-check of the Done: — a fresh legacy reference recorded with drive_login, replayed against legacy with zero divergences | next: restart the legacy stack on a fresh archive, drive_login, restart again, replay with --target-archive | commit: 3076730
+  > Testing: awaiting the human's `Verify: now` checks | commit: 8a785f6
   - Run: opus / high
   - Pattern: the join used by the timing queries (record.exchange_id links
     register lines to their HTTP exchange); check style `*_check.py`

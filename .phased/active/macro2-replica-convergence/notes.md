@@ -150,3 +150,65 @@
   day it does. Owner delegated the naming of this bench to the executing session
   (2026-08-25: "per questo progetto di comparatore non serve fare il battesimo
   nomi"), so every other proposed name stands as written.
+
+## Phase 3
+
+- The comparison never became a script beside the archives: `structural_diff.py`
+  receives two readers and knows nothing about where they come from. The reader
+  stayed `TraceReader` in `replica.py`, extended with `conditions`,
+  `get_register_lines`, `last_record_id` and `get_exchange_replaying` — the
+  property Phase 2 removed came back exactly where it said it would. A second
+  reader inside the comparison was written first and deleted: two readers over
+  one archive shape is the duplication the bench keeps refusing, and the only
+  thing it bought was avoiding an import cycle that does not exist, since
+  `replica.py` imports the comparison and the comparison imports nothing.
+- The race rule MOVED out of `TraceReader.get_race_reason` into the declared-rules
+  table, as the plan asked when it wrote "promoted to a DECLARED rule in Phase 3's
+  rules table". The four Phase 2 assertions that called it now call
+  `DeclaredRules().get_status_reason`, and one was added: the recognised status
+  names the rule that recognised it. One table, two questions — a recorded status
+  the replay cannot reproduce, and a register divergence that is a known fact —
+  and a rule answers `None` to the one it does not know.
+- The shape rule is what the whole comparison rests on, and it was chosen on
+  measurement, not on taste. On the browser session of 2026-08-23 against its own
+  replay, restricted to the exchanges whose call sequence already agreed: 636
+  lines, 29 differing on the raw answer, 12 on the shape. The 29 are the clock,
+  the user agent and the browser's `Accept-Language`; the 12 are real, four of
+  them a connection register item that carries `last_refresh_ts`, `last_rpc_ts`
+  and `last_user_ts` on one side and not on the other. A dict repr therefore
+  compares by KEY NAMES and a Bag by NODE PATHS: values dropped, structure kept.
+- The archive of 2026-08-23 is disqualified as a self-check reference, measured
+  before any comparison code existed: 21 of its 31 paired exchanges differ at the
+  level of the call sequence alone. Its register lines predate `site_caller`, its
+  run predates the genropy pin, and its pages carry `rootenv.workdate`, so
+  genropy's `_get_workdate` skips a four-call block (`pageStore`, `__enter__`,
+  `getItem('rootenv')`, `__exit__`) that a replay performs. The plan's own Notes
+  already said Phases 1-4 run on `drive_login` smokes; the foreman put the
+  disqualification on the record in 335e548.
+- A replay anchors itself to the target archive with `last_record_id` at start,
+  and this was a real defect, not a precaution: a stack records EVERY cycle into
+  the file it minted at startup, so a second replay looking up
+  `X-Bench-Replica-Of` from the beginning finds the FIRST replay's exchange and
+  compares it against itself. That comparison passes always and says nothing —
+  the worst failure a comparison can have. Found while provoking the divergence
+  report for the phase's own `Verify:` step.
+- The provoked divergence was not fabricated in an archive by hand: the same
+  reference was replayed a second time against a stack whose register the first
+  replay had already populated. It stops on `getItem(CACHE_TS._mainpref_)` against
+  `getItem(CACHE_TS.alexander.king_preference)`, and the two `site_caller` chains
+  name different site code — `preference.py:23 getMainStorePreference` against
+  `user.py:153 getPreference`. It is the shape Phase 6 will read, produced by the
+  very rule the bench states about every run: start from an empty register.
+- An exchange the reference raced is replayed and NOT compared, and the skip is
+  printed. Its recorded reply is a 400 the site owed nobody, so its register lines
+  are the lines of a refused call; comparing them against the lines of the call
+  the site accepted would compare two different things. Declared here because a
+  silent skip is a divergence nobody can see afterwards — the same reason Phase 2
+  gave for `/_ping` and the statics.
+- The S section of the rules table is EMPTY and that is the finished state, not a
+  gap (foreman, 2026-08-25, answering this phase's clarify). S1/S2/S3/S5 are facts
+  between workers: on a legacy-vs-legacy run they produce no register line at all,
+  so their signature becomes observable at the first cycle against the bridge.
+  Phases 5 and 7 add each rule when its divergence shows, with the owner's
+  sign-off. `structural_diff_check.py` proves the mechanism with a stand-in rule
+  of its own rather than with a real one written blind.

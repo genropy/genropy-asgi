@@ -901,9 +901,94 @@ reference session against the legacy stack under the pin:
 | Exchanges carrying the pairing header | 31 |
 | Unjoinable register lines | 0 |
 
+## The structural comparison
+
+`structural_diff.py` says whether the replica reproduced the session or only
+looked like it. It compares the two runs exchange by exchange, in order, and the
+replay stops at the first difference nothing declares — while both stacks are
+still standing, which is the whole reason this is a replica and not an offline
+diff of two finished traces.
+
+**How the two runs are joined.** By the `X-Bench-Replica-Of` header the replica
+stamps on every call. Nothing outside the two archives is kept in step. A replay
+also remembers where it started in the target's archive, because a stack records
+every cycle into the file it minted at startup: without that, a second replay
+would compare itself against the first one's lines and pass every time.
+
+**Equal means equal by structure.** Two exchanges agree when their register lines
+carry the same sequence of calls and the same SHAPE of arguments and answers.
+What a second run legitimately changes is masked or dropped:
+
+| In the line | Compared as |
+|---|---|
+| a 22-character identifier (page id, connection id, register item id), wherever it sits | `<id>` |
+| a timestamp, a date, a `datetime.datetime(...)` repr | `<ts>`, `<date>`, `<datetime>` |
+| an answer that is a Bag | the PATHS of its nodes, values dropped, attribute names kept |
+| an answer that is a dict repr — a register item | the NAMES of its keys, values dropped |
+| everything else, numbers included | its masked text |
+
+So a register item whose `start_ts` moved is not a difference and a register item
+that lost a key is; a Bag whose `workdate` changed is not and a Bag that lost a
+node is. Measured on the browser session of 2026-08-23 against its own replay:
+of the 636 register lines whose call sequence already agreed, 29 differ on the
+raw answer and 12 on the shape — and those 12 are real.
+
+**What the report carries.** The verdict, the kind of difference, the register
+call number, the exchange as the replay printed it, the two lines side by side
+and the `site_caller` of both. Naming the caller is what makes it a diagnosis
+rather than a count:
+
+```
+DIVERGENCE: arguments at register call 45 of [4] GET /
+  reference: store:getItem(CACHE_TS._mainpref_) -> None
+  replica:   store:getItem(CACHE_TS.alexander.king_preference) -> None
+  reference caller: gnr/web/gnrwebapp.py:27 getItem <- packages/adm/model/preference.py:23 getMainStorePreference <- packages/adm/model/preference.py:57 getPreference
+  replica caller:   gnr/web/gnrwebapp.py:27 getItem <- packages/adm/model/user.py:153 getPreference <- gnr/web/gnrwsgisite.py:1669 getUserPreference
+```
+
+That one was produced on purpose, by replaying the same reference twice against
+a stack whose register the first replay had already populated — which is exactly
+what the register-empty rule of every run exists to prevent.
+
+**The declared-rules table.** A difference a rule recognises is reported as
+`known` and the replay carries on; everything else stops it. Nothing is
+recognised implicitly. Today the table holds one rule, `reference-race`, the one
+Phase 2 measured — the recorded status a browser produced by overlapping two
+calls, which a replay sending them one after the other cannot reproduce. **A rule
+is written only from a signature somebody observed.** The known bridge
+divergences of `../../temp/problemi_genro_asgi_dal_ponte_2026-08-22.md` (S1, S2,
+S3, S5) are facts between workers and produce no line at all on a
+legacy-vs-legacy run, so their rules are added when the first cycle against the
+bridge shows them and not before.
+
+**The cycle, and why it is two starts.** Both runs must begin from an empty
+register, so the reference and the replay each get their own clean stack and
+their own archive:
+
+```bash
+# 1. clean restart, then record the reference
+python3 benchmarks/compare/drive_login.py alexander.king 8099
+# 2. clean restart again; the launcher prints the archive it minted
+# 3. replay the reference against it, and compare
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python3 benchmarks/compare/replica.py ~/genro_bench/runs/<reference>.sqlite \
+        --target 127.0.0.1:8099 \
+        --target-archive ~/genro_bench/runs/<the run just minted>.sqlite
+```
+
+Without `--target-archive` the replay only replays, as it did before.
+
+**Recorded evidence, the self-check of 2026-08-25**: reference
+`legacy-20260825T083754` (4 exchanges, 384 register lines) replayed against the
+legacy stack recording into `legacy-20260825T083834` (4 exchanges, 384 register
+lines, 0 unjoinable). All four statuses exact, **382 register lines compared,
+zero divergences**, exit 0. It is the check that validates the comparison and the
+identifier adaptation together: a stack compared with itself must agree.
+
 ### Exercising the recorders without a browser
 
-Six scripts in this folder, all runnable from the repository root.
+Seven scripts in this folder, all runnable from the repository root.
 
 ```bash
 python3 benchmarks/compare/http_recorder_check.py
@@ -915,6 +1000,9 @@ python3 benchmarks/compare/drive_login.py [username]
 GENRO_GNRFOLDER=$PWD/temp/gnr \
     PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
     python benchmarks/compare/replica_check.py
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python benchmarks/compare/structural_diff_check.py
 ```
 
 `http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder
@@ -969,6 +1057,15 @@ The two env vars are not optional: without the provider the check would look at
 the legacy Pyro client instead of the bridge's — which is exactly the mistake it
 exists to catch, so it fails loudly on its first assertion rather than passing
 against the wrong class.
+
+`structural_diff_check.py` needs nothing running and runs on the bridge
+interpreter, because the reader it uses lives in `replica.py`: 33 assertions over
+two throwaway archives written line by line — the pairing and the anchor that
+keeps two replays apart, the shape rule in both directions (a value that moved is
+not a difference, a key or a node that disappeared is), the alignment of two call
+sequences (an extra call, a missing one, a different one), the first difference
+being the one reported, the declared-rules table taking one off the table without
+silencing it, and the report reading without the code.
 
 `drive_login.py` replays a real login against the running site over HTTP, no
 browser involved: it reuses `replay_a1.build_plan` to pull the two login

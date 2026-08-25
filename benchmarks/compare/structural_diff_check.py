@@ -150,6 +150,23 @@ check("the target's exchange is found by the header the replica stamped",
       == REPLICA_EXCHANGE)
 check("an exchange nobody replayed is not found",
       TraceReader(REPLICA).get_exchange_replaying("never-sent") is None)
+
+# 2b. two replays into one archive: a stack records every cycle into the file it
+# minted at startup, so the lookup has to start where the replay started.
+replica_archive = TraceReader(REPLICA)
+started = replica_archive.last_record_id
+second = RunArchive(REPLICA)
+second.append_record("http", {"exchange_id": "p2", "ts": "2026-08-25T09:00:00",
+                              "method": "POST", "path": "/sys/thpage/invc/customer",
+                              "rpc_method": "app.getSelection", "status": 200,
+                              "req_headers": {"X-Bench-Replica-Of": REFERENCE_EXCHANGE}})
+check("a replay starting now finds its own exchange, not the earlier one carrying "
+      "the same header",
+      replica_archive.get_exchange_replaying(REFERENCE_EXCHANGE, started)["exchange_id"]
+      == "p2")
+check("read from the beginning the archive still answers with the first one",
+      replica_archive.get_exchange_replaying(REFERENCE_EXCHANGE)["exchange_id"]
+      == REPLICA_EXCHANGE)
 check("the header of the report names both runs and the genropy each declared",
       "stack legacy, genropy 6da02feda" in diff.header)
 
