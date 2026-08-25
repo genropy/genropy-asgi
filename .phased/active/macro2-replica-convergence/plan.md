@@ -5,6 +5,7 @@ Must not break: the two recorders stay installable as a plain call on both stack
 Must not break: every recorded line keeps `duration_ms`, and HTTP lines keep the `X-Gnr*` headers, from the start (macro-phase 3 reads the same traces or re-instruments from scratch)
 Must not break: no format versioning — the `site_caller` field lands ONCE in this workflow and the reference sessions are re-produced (the reference is a recipe, never an archive); no `schema_version` field, no reader negotiating shapes
 Must not break: a promoted column in the archive is a COPY of what the JSON line holds, never the only place a value lives
+Must not break: every comparative run PROVES the two stacks run identical genropy source before starting, and refuses to start otherwise (owner, 2026-08-24; `genropy_parity_check.py` at cycle start — macro-phase 3 inherits the precondition unchanged)
 
 ## Objective
 
@@ -70,13 +71,22 @@ recognised rather than discovered.
     login calls on a keep-alive connection with the identity rewritten in both
     places)
   - Files: benchmarks/compare/replica.py (new),
-    benchmarks/compare/replica_check.py (new)
+    benchmarks/compare/replica_check.py (new),
+    benchmarks/compare/genropy_parity_check.py (new)
   - Decisions: the replica drives by NETWORK CALLS, never a browser (owner
     accepted the recommendation, 2026-08-24); it reads the legacy trace straight
     from the per-run SQLite archive (the recorded trace IS what the replica
     reads — roadmap, "there are no macros"); identifiers (session cookie,
     connection id, page ids) are adapted per stack, iteratively, starting from
-    the set `login_user` already rewrites.
+    the set `login_user` already rewrites; genropy PARITY is a precondition the
+    replica enforces from birth (owner, 2026-08-24, on measured evidence: the
+    frozen legacy venv and the editable checkout differed by 9 files / 181
+    lines, and an uncommitted genropy edit was about to remove the very
+    register calls the comparison counts) — `genropy_parity_check.py` diffs
+    the two genropy source trees (source only, no `__pycache__`), exits
+    non-zero NAMING the differing files and the remedy (re-freeze
+    temp/legacy_venv from the checkout per the bench README), and the replica
+    calls it FIRST at every cycle start: refusal, never a warning.
   - Details: read one run's HTTP exchanges from the archive in `ts` order,
     skip what a browser session carries that a replica must not replay
     (`/_ping` heartbeats stay OUT — decision at execution, recorded in notes),
@@ -84,7 +94,10 @@ recognised rather than discovered.
     substituting the identifiers minted by the target for those in the trace.
     The run writes its own recorded trace through the existing recorders (the
     target runs with recorders on), archived per run as today.
-  - Done: `python benchmarks/compare/replica_check.py` passes; the replica
+  - Done: `python benchmarks/compare/replica_check.py` passes;
+    `python benchmarks/compare/genropy_parity_check.py` exits 0 on aligned
+    trees, and non-zero naming the file on an artificially introduced
+    difference; the replica refuses to start while the check fails; the replica
     replays the full reference legacy session against the LEGACY stack itself
     with zero HTTP-level failures, and the new run is archived.
   - Verify: now — watch one replica run end to end; the exchanges scroll in the
@@ -228,6 +241,14 @@ recognised rather than discovered.
   artefact, not a divergence (documented in the bench README).
 - Phase 6 may block on the core session (five-step rule: the core is modified
   by its own session). A `[~]` there is expected, not a failure.
+- Genropy parity, the evidence behind the precondition (2026-08-24): at 07:13
+  temp/legacy_venv (frozen 2026-08-23) and the editable checkout already
+  differed in 9 source files / 181 lines, one shifting gnrwsgisite.py by six
+  lines; at 07:17 an uncommitted edit to gnr/lib/services/__init__.py was
+  skipping the register read for non-db-configured services — the source of
+  242 of the 384 register calls a login makes. Either one would have read as
+  a bridge divergence. Before the Phase 2 self-check runs, temp/legacy_venv
+  must be re-frozen from the checkout (recipe step, not code).
 - The template-fork POC landed in the shipped recipe at commit 7cd15de
   (engine_factory/engine_kwargs, workers fork from a template) while Phase 1
   was in flight; Phase 4 aligns the bench recipe, inserted by the foreman on
