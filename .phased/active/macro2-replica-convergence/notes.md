@@ -45,13 +45,20 @@
   (`GROUP BY site_caller` with the call count and the summed milliseconds) with
   no second source of truth. Measured on the login: 121 calls / 94.2 ms on legacy
   and 122 / 18.5 ms on the bridge for the one chain.
-- Open, waiting on the owner: a site resource loaded under a flat module name —
-  genropy's `projects/gnrcore/packages/adm/model/preference.py` — comes out as
-  `preference.py:23`, the directory lost, because the dotted name has no dots to
-  count. It is the same string on both stacks, so it produces no divergence, but
-  it does not locate the file. The absolute path is NOT the fix: the two stacks
-  read that same resource from different roots (frozen copy vs editable), so it
-  would read as a divergence in the report.
+- A site resource loaded under a flat module name — genropy loads its project
+  resources that way — keeps three directories above the file:
+  `packages/adm/model/preference.py` (owner, 2026-08-25). One frame gave
+  `preference.py:23` alone, which does not locate the file. The absolute path
+  was rejected as the fix: the two stacks read that same resource from different
+  roots (frozen copy vs editable), so it would read as a divergence.
+- What the two stacks do NOT share, measured with three frames: five chains
+  differ by a line number in `gnr/web/gnrwsgisite.py` alone — 1350 vs 1356, 1663
+  vs 1669, a six-line offset. It is not the bridge behaving differently: the two
+  stacks run different genropy trees, and the run rows say so (legacy 26.8.19.1
+  frozen under temp/legacy_venv, bridge 26.6.8 editable at commit 6da02feda —
+  the version string is the stale one, the commit is the truth). Phase 3 prints
+  `site_caller` and does not compare it, so this produces no divergence; anyone
+  grouping ACROSS the two stacks has to know that line numbers shift.
 - The `Done:` exception is the foreman's, recorded here as it asked (c74af49):
   `bridge_coverage_check.py` passes with its two recipe-drift assertions
   excepted. They fail for the drift described above, which is now Phase 4's

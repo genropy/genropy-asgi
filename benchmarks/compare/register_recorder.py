@@ -46,8 +46,11 @@ the instrument. The module name is what says where the package begins, and the
 filesystem is not: walking up while `__init__.py` exists overshot on the
 editable side — measured, `gnrpy/` carries one too — and the same file came out
 as `gnr/lib/services/__init__.py` on one stack and `gnrpy/gnr/lib/services/__init__.py`
-on the other. A frame with no module name, or `__main__` — a site resource, a
-script — keeps its absolute path: both stacks run the same project directory, so
+on the other. A resource loaded under a flat module name — genropy loads its project
+resources that way — has no dots to count, and keeps its last three path
+segments instead: `packages/adm/model/preference.py`, the same on both stacks
+and enough to find the file. A frame with no module name, or `__main__` — a script run by hand —
+keeps its absolute path: both stacks run the same project directory, so
 it compares anyway.
 
 The frames to skip are derived, never listed: this module, the module of the
@@ -121,6 +124,13 @@ STORE_READ_PROPERTIES = ("data", "register_item", "datachanges", "subscribed_pat
 SITE_CALLER_DEPTH = 3
 
 SITE_CALLER_SEPARATOR = " <- "
+
+# A genropy project resource is loaded under a flat module name — no dots to
+# count — and its own directories are what say which package it belongs to, so
+# three of them are kept above the file. The absolute path is not the answer:
+# the two stacks read the same resource from different roots, so it would read
+# as a divergence.
+FLAT_MODULE_DIRECTORIES = 3
 
 
 class WireCounter:
@@ -294,7 +304,9 @@ class RegisterRecorder:
         if not module_name or module_name == "__main__":
             return filename
         depth = module_name.count(".") + 1
-        if os.path.basename(filename) == "__init__.py":
+        if depth == 1:
+            depth = FLAT_MODULE_DIRECTORIES + 1
+        elif os.path.basename(filename) == "__init__.py":
             depth += 1
         parts = filename.split(os.sep)[-depth:]
         return os.sep.join(parts)

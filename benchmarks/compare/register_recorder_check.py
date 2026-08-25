@@ -363,6 +363,10 @@ check("a directory above the package root never reaches the path",
                               "gnr.lib.services")
       == rec.get_comparable_path("/b/site-packages/gnr/lib/services/__init__.py",
                                  "gnr.lib.services"))
+check("a resource loaded flat keeps the directories that place it",
+      rec.get_comparable_path("/a/b/projects/gnrcore/packages/adm/model/preference.py",
+                              "preference")
+      == "packages/adm/model/preference.py")
 check("a file with no module name keeps its absolute path",
       rec.get_comparable_path(os.path.abspath(__file__), "__main__")
       == os.path.abspath(__file__))
