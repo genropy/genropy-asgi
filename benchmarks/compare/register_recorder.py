@@ -278,7 +278,7 @@ class RegisterRecorder:
             return ordinal
 
     @functools.cached_property
-    def instrument_files(self):  # wf:phase-1:new
+    def instrument_files(self):
         """The files whose frames are the instrument or the client, never the site."""
         files = {__file__, inspect.getfile(type(self))}
         files.update(inspect.getfile(cls) for cls in type(self.client).__mro__
@@ -286,7 +286,7 @@ class RegisterRecorder:
         return frozenset(files)
 
     @property
-    def site_caller(self):  # wf:phase-1:new
+    def site_caller(self):
         """The site code that made the call in flight, three frames, innermost first."""
         chain = []
         frame = inspect.currentframe()
@@ -299,7 +299,7 @@ class RegisterRecorder:
             frame = frame.f_back
         return SITE_CALLER_SEPARATOR.join(chain) or None
 
-    def get_comparable_path(self, filename, module_name):  # wf:phase-1:new
+    def get_comparable_path(self, filename, module_name):
         """The path the import system implies; the absolute one outside a package."""
         if not module_name or module_name == "__main__":
             return filename

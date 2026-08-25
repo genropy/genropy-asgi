@@ -19,9 +19,31 @@ recognised rather than discovered.
 
 ## Work Plan
 
-- [>] **Phase 1**: `site_caller` field on every register line
-  > In execution since 2026-08-24T22:26:29+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: 0a0cb4f
+- [x] **Phase 1**: `site_caller` field on every register line
+  > Done: every register line of both stacks carries `site_caller`, the three
+    outermost site frames joined by ` <- `, and the field is a promoted column
+    of the archive so one query says which call path a run spends its calls and
+    milliseconds on. The path is cut by the frame's dotted module name, which is
+    what makes the same file read identically on the frozen copy legacy runs and
+    on the editable checkout the bridge runs.
+  > Files: benchmarks/compare/register_recorder.py,
+    benchmarks/compare/register_recorder_check.py,
+    benchmarks/compare/bridge_coverage_check.py,
+    benchmarks/compare/run_archive.py,
+    benchmarks/compare/run_archive_check.py,
+    benchmarks/compare/drive_login.py
+  > Verified: register_recorder_check.py 44 assertions green (legacy venv);
+    run_archive_check.py 19 green; bridge_coverage_check.py green except the two
+    recipe-drift assertions the foreman excepted (Phase 4 repairs them); a
+    drive_login smoke on each stack, 384 register lines per stack, none without
+    the field, and the caller sets differing only by the six-line offset between
+    the two genropy trees — the reason Phase 2 now refuses to run without parity.
+  > Review: the bench recipe has drifted from the shipped one since 7cd15de
+    (engine_factory/engine_kwargs): the bench bridge spawns workers that build
+    their own site while the shipped bridge forks them from a template. Found
+    here, repaired by Phase 4.
+  > Verify: now — done 2026-08-25: the owner read the sample lines and confirmed
+    the three-frame chain is enough to work Phase 6 with.
   - Run: opus / medium
   - Pattern: `benchmarks/compare/register_recorder.py` (the line builder — the
     bridge inherits it, so the field lands once and appears on both stacks);
