@@ -68,6 +68,14 @@ call. The skip is printed.
 **Parity first.** The run refuses to start while the two stacks carry different
 genropy source (`genropy_parity_check.py`).
 
+**And the databases stay apart.** The bridge writes from the first exchange —
+that is what the copied db is for — so a cross-stack comparison refuses to start
+while the target writes into the database the reference was recorded on: the
+reference's own data would move under it, and no later run could reproduce what
+it holds. The question is asked of the PAIR and only ACROSS stacks: a run
+replayed against its own stack shares the database with its reference by
+construction, and that self-check is what validates the comparison itself.
+
 Run, from the repository root:
 
   python benchmarks/compare/replica.py ~/genro_bench/runs/<reference>.sqlite \\
@@ -189,6 +197,63 @@ class TraceReader:
         return None
 
 
+class DatabaseSeparation:
+    """Do the two runs of a cross-stack comparison write into different databases?"""
+
+    def __init__(self, reference, target):
+        self.reference = reference
+        self.target = target
+
+    @property
+    def reference_stack(self):
+        """The stack the reference run declares."""
+        return self.reference.conditions.get("stack")
+
+    @property
+    def target_stack(self):
+        """The stack the target run declares."""
+        return self.target.conditions.get("stack")
+
+    @property
+    def reference_dbname(self):
+        """The database the reference was recorded on."""
+        return (self.reference.conditions.get("database") or {}).get("dbname")
+
+    @property
+    def target_dbname(self):
+        """The database the target is writing into."""
+        return (self.target.conditions.get("database") or {}).get("dbname")
+
+    @property
+    def cross_stack(self):
+        """Are the two runs on different stacks? Only then is the question asked."""
+        return self.reference_stack != self.target_stack
+
+    @property
+    def separated(self):
+        """Nothing to refuse: one stack, or two stacks on two databases."""
+        return not self.cross_stack or self.reference_dbname != self.target_dbname
+
+    @property
+    def report(self):
+        """What a human reads: where each run writes, and how to part them."""
+        copy = f"{self.reference_dbname}_replica"
+        lines = [f"reference run: {self.reference_stack} on {self.reference_dbname}",
+                 f"target run:    {self.target_stack} on {self.target_dbname}"]
+        if self.separated:
+            lines.append("\nthe two runs write into different databases")
+        else:
+            lines.append(
+                f"\nthe target writes into the database the reference was recorded "
+                f"on: a replay would move the reference's own data. Remedy:\n"
+                f"  dropdb --if-exists {copy}\n"
+                f"  createdb -T {self.reference_dbname} {copy}\n"
+                f"then serve the twin instance {copy}, whose instanceconfig.xml "
+                f"names that database.\n"
+                f"\nUntil this holds, no cross-stack comparison may start.")
+        return "\n".join(lines)
+
+
 class IdentityMap:
     """Trace tokens and the tokens the target minted in their place."""
 
@@ -249,6 +314,7 @@ class Replica:
         self.target = target
         self.rules = rules or DeclaredRules()
         self.diff = StructuralDiff(trace, target, self.rules) if target else None
+        self.separation = DatabaseSeparation(trace, target) if target else None
         self.identity = IdentityMap()
         self.client = ReplicaClient(host, port)
         self.failures = []
@@ -268,6 +334,8 @@ class Replica:
         """
         if not self.parity.aligned:
             raise SystemExit(self.parity.report)
+        if self.separation and not self.separation.separated:
+            raise SystemExit(self.separation.report)
         exchanges = self.trace.exchanges
         print(f"replaying {len(exchanges)} exchanges of {self.trace.path} "
               f"against {self.host}:{self.port}")

@@ -310,6 +310,7 @@ recognised rather than discovered.
 
 - [>] **Phase 5**: db copied on the fly, first run against the bridge
   > In execution since 2026-08-25T09:45:00+02:00
+  > Testing: awaiting the human's `Verify: now` checks | commit: acfb42f
   - Run: opus / medium
   - Pattern: the twin-instance recipe of macro-phase 1 (test_invoice_pg_legacy:
     same project, own instanceconfig); `benchmarks/compare/serve_bridge.py`

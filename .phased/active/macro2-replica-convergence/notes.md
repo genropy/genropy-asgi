@@ -275,3 +275,46 @@
     boundary hygiene, NEVER mid-workflow. Phases 5 and 7 do not attempt it: a
     change of interpreter changes what every comparison measures, and the bench
     is mid-comparison.
+
+## Phase 5
+
+- The refusal is asked of the PAIR and only ACROSS stacks, and the plan's first
+  wording was broader than that. Taken literally — the target's dbname must
+  always differ from the reference's — it would have refused the Phase 3
+  self-check, which is legacy replayed against legacy on the same
+  `test_invoice_pg` and is the one run that proves the comparison and the
+  identifier adaptation work. The danger the rule exists for is the bridge
+  writing into the db the reference was recorded on, and that is always a
+  cross-stack run. Foreman amended the plan accordingly (7b1d760), with a
+  forward caveat for Phase 7: a same-stack replay does share the db, harmless on
+  a login-only reference, not harmless once the reference WRITES — two replays
+  then start from two different db states and the difference reads as a
+  divergence the stacks did not cause.
+- `DatabaseSeparation` reads the two archives' `conditions` and nothing else. No
+  new field, no new record shape: `stack` and `database.dbname` have been in the
+  run row since macro-phase 1, which is why the gate cost no format change. The
+  name is mine, per the owner's delegation of naming inside this bench.
+- The copy CANNOT live in `replica.py`, and this is the fact behind the foreman's
+  answer rather than a preference: by the time the replay starts, the bridge
+  already holds connections on the copy db, and `createdb -T test_invoice_pg`
+  needs its template free as well. So the copy is a recipe step run by hand
+  before the launcher, like every other step of this bench, and what
+  `replica.py` gained at cycle start is the refusal.
+- A readiness probe is an exchange. Waiting for the bridge with a `GET /` on the
+  site put one line in the run archive that no reference asked for — harmless,
+  because the replay anchors itself to the archive at start and joins by
+  `X-Bench-Replica-Of`, but it is a line nobody wrote on purpose. The README now
+  says to wait on the launcher's LOG (`Application startup complete`).
+- The first cycle stopped inside the FIRST exchange, not at the login. Reference
+  `legacy-20260825T085605` against `bridge-20260825T113535`: exchange 1 answered
+  200 and register call 5, `client:new_connection`, answers a connection register
+  item whose key set differs — reference `datachanges`, `datachanges_idx`,
+  `electron_static`, `register_name`, `subscribed_paths`; bridge `avatar_extra`,
+  `last_refresh_ts`, `last_rpc_ts`, `last_user_ts`, `store`. Both `site_caller`
+  chains name the same site code (`gnrwebpage.py:325 _register_new_page`), so the
+  two stacks reach that call the same way and answer it differently. Phase 3's
+  own notes had already seen three of those keys as a shape difference on the
+  2026-08-23 archive; this is the first time the comparison stops on it. Whether
+  it is a rule to declare or a fault to fix is the owner's judgment — Phase 6's
+  starting point, and it means Phase 6 does not open on the login segment the
+  plan expected.

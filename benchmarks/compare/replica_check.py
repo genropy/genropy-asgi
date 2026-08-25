@@ -1,6 +1,7 @@
 """Isolation checks for the replica: the trace it reads, the exchanges it leaves
-out, the identifiers it rewrites, the header it stamps, and the parity gate that
-stops it before it starts.
+out, the identifiers it rewrites, the header it stamps, and the two gates that
+stop it before it starts — the pinned genropy, and the two runs writing into two
+different databases.
 
 No site, no server, no site database: a throwaway archive and two throwaway
 source trees under `temp/`. The replay itself is not exercised here — driving a
@@ -19,7 +20,7 @@ import shutil
 import sys
 
 from genropy_parity_check import GNR_FOLDER_ENV, GenropyParity
-from replica import IdentityMap, Replica, ReplicaClient, TraceReader
+from replica import DatabaseSeparation, IdentityMap, Replica, ReplicaClient, TraceReader
 from run_archive import RunArchive
 from structural_diff import DeclaredRules
 
@@ -28,7 +29,8 @@ TEMP = os.path.join(REPO_ROOT, "temp")
 ARCHIVE = os.path.join(TEMP, "replica_check.sqlite")
 TREES = os.path.join(TEMP, "replica_check_trees")
 
-CONDITIONS = {"stack": "legacy", "sitename": "test_invoice_pg_legacy"}
+CONDITIONS = {"stack": "legacy", "sitename": "test_invoice_pg_legacy",
+              "database": {"dbname": "test_invoice_pg"}}
 
 FRAME_HTML = "<html>var g = {page_id:'AAAAAAAAAAAAAAAAAAAAAA',baseUrl:'/'}</html>"
 TARGET_FRAME_HTML = "<html>var g = {page_id:'BBBBBBBBBBBBBBBBBBBBBB',baseUrl:'/'}</html>"
@@ -267,6 +269,68 @@ except SystemExit as exc:
 check("the replica refuses to run while the two stacks differ", raised is not None)
 check("the refusal names the file and the remedy",
       raised is not None and "web/gnrwsgisite.py" in raised and "legacy_venv" in raised)
+
+# 8. the databases: a cross-stack replay never writes into the reference's own db
+def target_reader(name, conditions):
+    """A throwaway archive that declares nothing but the conditions of its run."""
+    path = os.path.join(TEMP, name)
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(path + suffix):
+            os.remove(path + suffix)
+    RunArchive(path, run_id=name, conditions=conditions)
+    return TraceReader(path)
+
+
+bridge_on_reference_db = target_reader(
+    "replica_check_bridge_same.sqlite",
+    {"stack": "bridge", "database": {"dbname": "test_invoice_pg"}})
+bridge_on_copy = target_reader(
+    "replica_check_bridge_copy.sqlite",
+    {"stack": "bridge", "database": {"dbname": "test_invoice_pg_replica"}})
+legacy_on_reference_db = target_reader(
+    "replica_check_legacy_same.sqlite",
+    {"stack": "legacy", "database": {"dbname": "test_invoice_pg"}})
+
+shared = DatabaseSeparation(trace, bridge_on_reference_db)
+check("two stacks on one database are not separated", not shared.separated)
+check("the report names both runs with their database",
+      "legacy on test_invoice_pg" in shared.report
+      and "bridge on test_invoice_pg" in shared.report)
+check("the report carries the copy commands, not only the verdict",
+      "createdb -T test_invoice_pg test_invoice_pg_replica" in shared.report
+      and "dropdb --if-exists test_invoice_pg_replica" in shared.report)
+
+parted = DatabaseSeparation(trace, bridge_on_copy)
+check("two stacks on two databases are separated", parted.separated)
+check("the report of a separated pair says so",
+      "write into different databases" in parted.report)
+
+self_check = DatabaseSeparation(trace, legacy_on_reference_db)
+check("a replay against its OWN stack shares the database and is not refused — "
+      "that pair is the self-check the comparison rests on",
+      not self_check.cross_stack and self_check.separated)
+
+write_tree(PIN, same)
+write_tree(FROZEN, same)
+refused = Replica(trace, "127.0.0.1", 8099, parity=parity,
+                  target=bridge_on_reference_db)
+try:
+    refused.run()
+    raised = None
+except SystemExit as exc:
+    raised = str(exc)
+check("the replica refuses to run while the target writes into the reference's db",
+      raised is not None and "no cross-stack comparison may start" in raised)
+
+allowed = Replica(trace, "127.0.0.1", 8099, parity=parity, target=bridge_on_copy)
+check("the gate it builds for itself is the one asserted above",
+      allowed.separation.separated and not refused.separation.separated)
+
+for name in ("replica_check_bridge_same.sqlite", "replica_check_bridge_copy.sqlite",
+             "replica_check_legacy_same.sqlite"):
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(os.path.join(TEMP, name + suffix)):
+            os.remove(os.path.join(TEMP, name + suffix))
 
 shutil.rmtree(TREES)
 drop_archive()

@@ -22,6 +22,7 @@ archive* below.
 | The bench configuration | `temp/gnr/` | names the pinned trees; never committed — it carries the daemon key and the admin password |
 | The venv | `temp/legacy_venv/` | never committed; genropy-asgi must not enter it |
 | The instance | `<genropy>/projects/test_invoice/instances/test_invoice_pg_legacy/` | twin of `test_invoice_pg`, same db, different site name |
+| The replica instance | `<genropy>/projects/test_invoice/instances/test_invoice_pg_replica/` | the bridge in a replica cycle: same project, own db `test_invoice_pg_replica`, dropped and recreated at every cycle start because the bridge writes |
 | The recorders | `benchmarks/compare/` | versioned; genropy itself is never modified |
 | The run archives | `~/genro_bench/runs/` (outside the tree) | whole bodies, the login, the cookies — and this repository is public |
 | The bridge | the pyenv interpreter, `genropy_asgi` + `genro_asgi` editable; genropy from the pin, through `PYTHONPATH` | the bridge is the software under comparison and is edited at every turn of the loop; genropy under it is not |
@@ -687,7 +688,7 @@ side; the ones only this stack has are the two extra packages and the commits.
 | Processes / threads | pool ceiling 6 (`worker_max_number`), thread pools at the core's defaults |
 | Recorders | both, installed by the recipe naming the recording worker |
 | Debug | **off** (`--nodebug`) — same reason as on the legacy side |
-| Database | `test_invoice_pg`, postgres localhost:5432 — the same db the legacy twin serves |
+| Database | `test_invoice_pg`, postgres localhost:5432 — the same db the legacy twin serves; in a REPLICA cycle the copy `test_invoice_pg_replica` instead, see *The replica cycle against the bridge* |
 | Bind | `127.0.0.1:8098` (the legacy stack keeps 8099) |
 
 **Why the commits are recorded and the versions are not enough.** genropy,
@@ -1118,3 +1119,99 @@ Wrapping the app costs the `wsgi.file_wrapper` fast path: gunicorn only takes it
 when the application returns a file wrapper, and the recorder returns a
 generator. Irrelevant for fidelity work, worth knowing before anyone reads
 timings off a recorded run.
+
+## The replica cycle against the bridge
+
+The comparison above, run for real: a reference recorded on the legacy stack,
+replayed against the bridge. It is the same replay and the same comparison — what
+this section adds is the **database**, because the bridge writes.
+
+**The bridge runs on a copy of the db, made at cycle start.** The roadmap allows
+writes on the bridge side from the first exchange, and the reference must stay
+reproducible: a replay that wrote into `test_invoice_pg` would move the data the
+reference was recorded against, and no later cycle could reproduce what it holds.
+So the copy is dropped and recreated at every cycle start, and the bridge serves
+a twin instance that names it.
+
+The copy is a **recipe step run by hand, before the launcher** — like every other
+step of this bench. It cannot live inside `replica.py`: by the time the replay
+starts, the bridge already holds connections on the copy, and `createdb -T` needs
+its template free as well.
+
+```bash
+dropdb --if-exists test_invoice_pg_replica
+createdb -T test_invoice_pg test_invoice_pg_replica
+```
+
+**The twin instance**, `test_invoice_pg_replica`, is the `_legacy` twin recipe
+again — configuration only, no `site/data/`, no `_static/` — with ONE change: the
+`db` node names the copy.
+
+```bash
+INST=~/Sviluppo/Genropy/genropy/projects/test_invoice/instances
+mkdir -p "$INST/test_invoice_pg_replica/site"
+sed 's/dbname="test_invoice_pg"/dbname="test_invoice_pg_replica"/' \
+    "$INST/test_invoice_pg/instanceconfig.xml" \
+    > "$INST/test_invoice_pg_replica/instanceconfig.xml"
+cp "$INST/test_invoice_pg/root.py"             "$INST/test_invoice_pg_replica/root.py"
+cp "$INST/test_invoice_pg/site/siteconfig.xml" "$INST/test_invoice_pg_replica/site/siteconfig.xml"
+```
+
+**And `replica.py` refuses a cycle that would write into the reference's db.**
+Beside the genropy parity gate, at cycle start: when the two archives declare
+DIFFERENT stacks and the SAME `database.dbname`, the replay never reaches the
+wire. It names both runs and prints the two commands above.
+
+The question is asked of the pair and only across stacks. A run replayed against
+its own stack — the self-check that validates the comparison — shares the db with
+its reference by construction, and refusing it would refuse the one run that
+proves the comparison works. Two DIFFERENT stacks on one db are not two stacks
+being compared; they are two stacks writing over each other.
+
+For a same-stack replay the db is shared, and on a login-only reference that is
+harmless. It stops being harmless as soon as the reference WRITES: replaying such
+a session twice starts from two different db states, and the difference reads as a
+divergence the stacks did not cause. Copy the db for repeat same-stack replays
+too.
+
+**The cycle, in order.** Hygiene first, as always: nothing listening on 8098.
+
+```bash
+# 1. the copy, and the twin instance if it is not there yet
+dropdb --if-exists test_invoice_pg_replica
+createdb -T test_invoice_pg test_invoice_pg_replica
+# 2. the bridge on the twin instance; it prints the archive it minted
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    PGGSSENCMODE=disable python benchmarks/compare/serve_bridge.py \
+    test_invoice_pg_replica -p 8098 --nodebug
+# 3. replay a legacy reference against it, and compare
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python benchmarks/compare/replica.py ~/genro_bench/runs/<reference>.sqlite \
+        --target 127.0.0.1:8098 \
+        --target-archive ~/genro_bench/runs/<the run just minted>.sqlite
+```
+
+Wait for the bridge on its LOG — `Application startup complete` — never on a
+request to the site. A readiness probe is an exchange, and the launcher records
+it: it lands in the archive as a line no reference asks for. Harmless to the
+comparison, which anchors itself to the archive at replay start and joins by the
+`X-Bench-Replica-Of` header, but it is a line nobody wrote on purpose.
+
+Teardown is the launcher's own: stop it, and the pool goes with it. The copy db
+is left standing — the next cycle drops it.
+
+**Recorded evidence, the first cycle against the bridge, 2026-08-25.** Reference
+`legacy-20260825T085605` (4 exchanges, 384 register lines) replayed against the
+bridge on `test_invoice_pg_replica`, recording into `bridge-20260825T113535`. The
+template forked `pool_0001`, the worker presented at once, 298 register lines
+carrying an exchange, none without a `site_caller`. The first exchange answered
+200 and the replay STOPPED inside it, at register call 5: `client:new_connection`
+answers a connection register item whose key set differs — the reference carries
+`datachanges`, `datachanges_idx`, `electron_static`, `register_name` and
+`subscribed_paths`, the bridge carries `avatar_extra`, `last_refresh_ts`,
+`last_rpc_ts`, `last_user_ts` and `store`. Both `site_caller` chains name the same
+site code, `gnrwebpage.py:325 _register_new_page`, so the two stacks reach that
+call the same way and answer it differently. Whether it is a rule to declare or a
+fault to fix is the owner's judgment, and it is where Phase 6 starts.
