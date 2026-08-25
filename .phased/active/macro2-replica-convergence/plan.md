@@ -308,7 +308,8 @@ recognised rather than discovered.
     factory) is documented, and the line is indistinguishable in shape from
     Phase 1's sample.
 
-- [ ] **Phase 5**: db copied on the fly, first run against the bridge
+- [>] **Phase 5**: db copied on the fly, first run against the bridge
+  > In execution since 2026-08-25T09:45:00+02:00
   - Run: opus / medium
   - Pattern: the twin-instance recipe of macro-phase 1 (test_invoice_pg_legacy:
     same project, own instanceconfig); `benchmarks/compare/serve_bridge.py`
@@ -319,7 +320,15 @@ recognised rather than discovered.
     (drop-and-recreate at each cycle start; writes are allowed on the bridge
     side from the start — roadmap); the bridge serves the twin instance
     `test_invoice_pg_replica` in replica cycles; instance naming follows the
-    proven `_legacy` twin pattern.
+    proven `_legacy` twin pattern; the COPY is a README recipe step run by hand
+    BEFORE serve_bridge, like every other bench launcher — replica.py does not
+    orchestrate the cycle — and replica.py's cycle-start gains a REFUSAL beside
+    the parity check: the target archive's declared `database.dbname` must
+    differ from the reference run's, so a replay can never write into the
+    reference db (foreman, 2026-08-25, answering this phase's clarify);
+    Phase 5 replays the drive_login legacy reference (the Phase 3 self-check
+    reference: 4 exchanges, the login segment in full) — the owner's browser
+    session is Phase 7's reference, performed at ITS cycle start, not now.
   - Details: a replica cycle against the bridge begins by dropping and
     recreating the copy db from the reference db, then starts the bridge on the
     twin instance with recorders on, then replays. Document the cycle in the
@@ -378,7 +387,10 @@ recognised rather than discovered.
 - Phases run strictly in order. Phase 1 changes the register line shape, so
   the reference sessions are re-produced AFTER it lands (the owner performs
   the reference session once, with recorders updated, at the start of the
-  Phase 5 cycle; scripted `drive_login` smokes cover Phases 1-4).
+  Phase 7 cycle; scripted `drive_login` references cover Phases 1-6 — amended
+  by the foreman on 2026-08-25 answering Phase 5's clarify: the login segment
+  Phases 5 and 6 work on is fully exhibited by the drive_login reference, so
+  the owner's browser session is needed once, at Phase 7).
 - The `/_ping` heartbeat and other browser-idle traffic: what the replica
   skips is decided at Phase 2 execution and recorded in notes.md — the rule
   must be declared, never implicit.
