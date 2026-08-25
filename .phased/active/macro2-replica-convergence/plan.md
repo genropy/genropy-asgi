@@ -509,7 +509,7 @@ recognised rather than discovered.
 
 - [>] **Phase 7**: converge the drive_login reference end to end
   > In execution since 2026-08-25T14:56:39+02:00
-  > WIP: done: reference re-recorded on a1c0a8dd0 (legacy-20260825T151337, 152 register lines), divergence 1 closed in the instrument (surface) | missing: the divergences from register call 19 on, the clean cycle, the archive | next: the owner judges divergence 2, the storage_gnr freshness check the bridge does not make | commit: 35f7e84
+  > WIP: done: reference re-recorded on a1c0a8dd0 (152 register lines); divergence 1 closed in the instrument (surface), 2 closed by the cold-start rule, 3 closed by the store copy (read AND write) | missing: the divergences from exchange 3 call 22 on, the clean cycle, the archive | next: the owner rules on `change_connection_user` returning the item where the daemon returns None — a contract test asserts the item | commit: 3d0ebc9
   - Run: opus / high
   - Pattern: the Phase 5 cycle, repeated; the excluded hypotheses on the +28%
     are on record (bridge code does not call the register itself; the register
