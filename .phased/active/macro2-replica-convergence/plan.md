@@ -388,13 +388,15 @@ recognised rather than discovered.
     the login (the +28% register calls); confirm the report names it precisely
     enough to start Phase 6 from.
 
-- [ ] **Phase 6**: uniform the connection register item
+- [>] **Phase 6**: uniform the site-facing register row
+  > In execution since 2026-08-25T09:58:27Z
   - Run: opus / medium
-  - Pattern: `src/genropy_asgi/siteregister/siteregister_client.py`, where the
-    item's shape is defined today (`EPOCH_STAMPS:90`, `avatar_extra:1380`,
-    `subscribed_paths:159`); the legacy answer recorded in the Phase 5 report
-    is the target shape; contract tests under `tests/`, implementation tests
-    under `tests/x/` (parent CLAUDE.md rule 10)
+  - Pattern: `_legacy_row` in
+    `src/genropy_asgi/siteregister/siteregister_client.py`, the ONE place the
+    site-facing row is built for all three register kinds (`EPOCH_STAMPS:90`,
+    `avatar_extra:1380`, `subscribed_paths:159`); the legacy answers recorded
+    in the Phase 5 archives are the target shape; contract tests under
+    `tests/`, implementation tests under `tests/x/` (parent CLAUDE.md rule 10)
   - Files: src/genropy_asgi/siteregister/siteregister_client.py, tests/
   - Decisions: the divergence is a DEFECT of the bridge to fix, not an S rule
     to declare (owner, 2026-08-25, after reading the Phase 5 report): the two
@@ -405,24 +407,45 @@ recognised rather than discovered.
     is defined in OUR OWN source, so the fix lands in genropy-asgi and needs no
     five-step routing to the core session. The legacy key set is the target:
     the bridge's item must answer what the site expects, not what the bridge
-    finds convenient.
+    finds convenient. SCOPE WIDENED by the foreman on 2026-08-25, on the phase
+    chat's measurement: the defect is not the connection item's — the PAGE item
+    diverges the same way at register call 7 of the same exchange, and both come
+    from `_legacy_row` handing out a shallow copy of the CORE row, so every
+    core-only field leaks to the site and every daemon-era field
+    (`datachanges`, `datachanges_idx`, `subscribed_paths`, `register_name`,
+    which the daemon's `BaseRegister.addRegisterItem` put on all three kinds) is
+    missing from all three. A connection-only patch would be a `register_name`
+    branch inside a shared method: the wrong shape for a defect that is not
+    connection-specific, and a `Done:` satisfied by stopping on the identical
+    defect two calls later. The three core stamps (`last_refresh_ts`,
+    `last_user_ts`, `last_rpc_ts`) LEAVE the site-facing view — a fix, not a
+    declared rule: the legacy daemon puts them on a row only when `refresh()`
+    runs with client-reported clocks, so a row does not carry them from birth,
+    and dropping them makes the bridge MORE faithful to pre_refactoring, not
+    less. The core's own expiry sweep reads the raw row and is untouched;
+    `connected_users_bag` reads them as `.get(...) or start_ts` and keeps
+    working; `datacollector.stale_connections` reads one bare and would
+    KeyError, but it has no caller in genropy AND it would KeyError on a
+    never-refreshed legacy row too — parity, not a regression.
   - Details: the first cycle against the bridge stops in the FIRST exchange, at
     register call 5, on the key set of the connection register item answered by
     `client:new_connection` — reference `datachanges`, `datachanges_idx`,
     `electron_static`, `register_name`, `subscribed_paths`; bridge
     `avatar_extra`, `last_refresh_ts`, `last_rpc_ts`, `last_user_ts`, `store`.
-    Uniform the item so both stacks answer the same key set, decide per key
-    whether the bridge-only ones are dropped or moved out of the answer, and
-    re-run the cycle. The `+28%` login divergence (147 vs 115 register calls on
-    the three login exchanges) sits BEHIND this one and does not disappear —
-    it is Phase 7's, not this phase's.
+    Fix `_legacy_row` so the site-facing row of ALL THREE kinds answers the
+    legacy key set: the daemon-era fields present, the core-only fields not
+    leaking. Decide per key, and record each decision in notes.md. The `+28%`
+    login divergence (147 vs 115 register calls on the three login exchanges)
+    sits BEHIND this one and does not disappear — it is Phase 7's, not this
+    phase's.
   - Done: `pytest tests/` green and `ruff check .` clean; a cycle against the
-    bridge replaying the drive_login reference passes exchange 1 register
-    call 5 — the connection item answers the same key set on both stacks — and
-    stops (or completes) beyond it; the run is archived.
-  - Verify: now — read the new stop report: the connection item is gone from
-    it, and whatever the replay stops on next is named precisely enough to
-    work from.
+    bridge replaying the drive_login reference no longer stops on a register
+    item KEY SET anywhere — not at call 5, not at call 7, not on any kind —
+    and either completes or stops on a divergence of another cause; the run is
+    archived.
+  - Verify: now — read the new stop report: no register item key set appears in
+    it, and whatever the replay stops on next (if anything) is named precisely
+    enough to work from.
 
 - [ ] **Phase 7**: converge the drive_login reference end to end
   - Run: opus / high
@@ -500,6 +523,14 @@ recognised rather than discovered.
   is the owner's own browser session. Phase 6 is the FIRST phase of this
   workflow to touch product code under `src/`: `pytest tests/` is a gate there,
   and a failing contract test is a STOP, never something to adapt.
+- The three core stamps and the browser session: the drive_login reference has
+  no heartbeat (`/_ping` is a declared skip), so no legacy row in it was ever
+  refreshed. Phase 6's drop is therefore verified against never-refreshed rows
+  only. Phase 8's browser session DOES carry heartbeats, so it is the run that
+  says whether the stamps must reappear on the site-facing row after a
+  `refresh()` with client clocks — the legacy behaviour is "present exactly
+  when refreshed", not "never present". If they must, that is Phase 8 work, not
+  a defect of Phase 6's fix.
 - Two marker debts for `/quality-check` at the close: Phase 5 wrote no
   `wf:phase-5:new` markers on its new callables (recorded in its notes), and two
   Phase 4 markers still stand in `benchmarks/compare/recording_engine_factory.py`
