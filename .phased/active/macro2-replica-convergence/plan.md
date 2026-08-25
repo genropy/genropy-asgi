@@ -390,7 +390,7 @@ recognised rather than discovered.
 
 - [>] **Phase 6**: uniform the site-facing register item
   > In execution since 2026-08-25T09:58:27Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: 81ccba5
+  > Testing: awaiting the human's `Verify: now` checks | commit: 5f12ebf
   - Run: opus / medium
   - Pattern: `_legacy_row` in
     `src/genropy_asgi/siteregister/siteregister_client.py`, the ONE place the
