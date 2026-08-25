@@ -65,6 +65,13 @@ DATETIME_REPR = re.compile(r"datetime\.datetime\([^)]*\)")
 # A quoted name followed by a colon: how a key reads inside a dict repr.
 DICT_KEY = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)':")
 
+# The same, followed by None. A key carrying no value and a key that is not there
+# are semantically identical (owner, 2026-08-25), so the shape drops both: a
+# register item the daemon seeded to None and one the core simply does not carry
+# say the same thing about the state, and reporting them as a difference sends the
+# replica after a difference nobody can act on.
+DICT_NULL_KEY = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)':\s*None\b")
+
 # What the site answers a call arriving on a connection a login already replaced.
 # Copied verbatim from `gnr/web/gnrwebpage.py:307`, typo and all: it is a literal
 # the site writes, not a sentence, and correcting it here would match nothing.
@@ -123,7 +130,8 @@ class LineShape:
             if paths is not None:
                 return {"bag": paths}
         if value.startswith("{") and value.endswith("}"):
-            return {"dict": sorted(set(DICT_KEY.findall(value)))}
+            keys = set(DICT_KEY.findall(value)) - set(DICT_NULL_KEY.findall(value))
+            return {"dict": sorted(keys)}
         return self.get_masked(value)
 
     def get_masked(self, text):

@@ -388,9 +388,42 @@ recognised rather than discovered.
     the login (the +28% register calls); confirm the report names it precisely
     enough to start Phase 6 from.
 
-- [>] **Phase 6**: uniform the site-facing register item
-  > In execution since 2026-08-25T09:58:27Z
-  > Testing: awaiting the human's `Verify: now` checks | commit: 5f12ebf
+- [x] **Phase 6**: uniform the site-facing register item
+  > Done: the site-facing answer for a register item is a PROJECTION of the
+    daemon's own field set, one method for all three kinds
+    (`_adapt_to_legacy`): the daemon-era fields present, the core's own
+    bookkeeping not leaking. The replay of the drive_login reference against the
+    bridge no longer stops on a register item key set anywhere and reaches
+    register call 15, where it stops on the recorder's `surface` field — a
+    divergence of another cause.
+  > Files: src/genropy_asgi/siteregister/siteregister_client.py,
+    tests/test_register_client_units.py,
+    benchmarks/compare/structural_diff.py,
+    .phased/active/macro2-replica-convergence/notes.md,
+    .phased/active/macro2-replica-convergence/plan.md
+  > Verified: pytest tests/ 136 passed; ruff check . clean; mypy advisory only
+    (two new findings, the same type-narrowing kind as one already there);
+    structural_diff_check.py green. The cycle was re-measured after every
+    change, archive bridge-20260825T144852 against reference
+    legacy-20260825T085605: register calls 5, 6 and 7 pass, the key sets of
+    new_connection and new_page are identical on the two stacks, and the stop is
+    at call 15 on the surface field.
+  > Review: the first divergence the replay now meets is the recorder's
+    `surface` field on register call 15 — `client:get_dbenv` on the bridge,
+    `passthrough:get_dbenv` on the legacy, with identical arguments, answer and
+    site caller chain. The field is `client` when the register client class
+    declares the method and `passthrough` when `__getattr__` reaches it, so it
+    reports a difference the bridge was designed to have (no `__getattr__`
+    dispatch, every command an explicit method). A candidate declared rule for
+    Phase 7, not a defect.
+  > Review: the comparison rule changed inside this phase, outside its
+    `Files:` — `structural_diff.py` now drops null-valued keys from the shape,
+    the owner having ruled that a key carrying None and no key at all are
+    semantically identical (2026-08-25). It is the Phase 3 tool, so every
+    earlier measurement of this workflow was taken under the old rule.
+  > Verify: now — done 2026-08-25: the owner read the stop report; on whether it
+    carries enough for Phase 7 he declined to predict — "se non basteranno lo
+    correggeremo".
   - Run: opus / medium
   - Pattern: `_legacy_row` in
     `src/genropy_asgi/siteregister/siteregister_client.py`, the ONE place the

@@ -419,10 +419,10 @@ The rename the owner baptised on 2026-08-25 landed here: `_legacy_row` became
 `_adapt_to_legacy(register_item)`, and with it the vocabulary of every docstring
 and comment the method touches — `row` out, `register item` in, and the three
 fields called CLOCKS, the name the core itself uses (`CLOCK_NAMES`,
-spa_worker.py:293). The local variable is `adapted`. Two names born in this phase
-have NOT been baptised and go to the naming review: the module constants
-`LEGACY_ROW_FIELDS` and `LEGACY_LATE_FIELDS`, which still carry the rejected
-word.
+spa_worker.py:293). The local variable is `adapted`. The owner baptised the one constant that survived,
+`LEGACY_REGISTER_ITEM_FIELDS`, and chose the dict-of-three-kinds form over three
+separate constants (`LEGACY_USER_...`, `LEGACY_CONNECTION_...`,
+`LEGACY_PAGE_...`), which he weighed aloud.
 
 The Done gate was re-measured AFTER the rename, on a fresh cycle: the archived
 run `bridge-20260825T141541` was produced by the pre-rename code, and evidence
@@ -430,3 +430,38 @@ that does not come from the code that stays is not evidence. New copy db, new
 bridge, archive `bridge-20260825T142217`: same stop, same call 15, and the two
 key sets identical to the legacy reference — `new_connection` 17 keys,
 `new_page` 14.
+
+The second constant is gone, and with it the two classes of field. The owner's
+rule (2026-08-25): keep the fields in one structure, and a field the register
+item does not carry is not put in the answer. Applied literally to every field
+it would have dropped `start_ts` and `user_name` from a user register item —
+measured absent from the core item, and read there WITHOUT a guard by
+`connected_users_bag` — so what changed instead is the COMPARISON: two answers
+that differ only by a key carrying None are semantically identical (his words),
+so `structural_diff.py` now drops null-valued keys from the shape it compares
+(`DICT_NULL_KEY`). `avatar_extra` then went into the single field list and is
+answered always, None until the login writes it, which is what the daemon's own
+answer said in substance.
+
+That rule change is a deviation from this phase's `Files:` — it touches
+`benchmarks/compare/structural_diff.py`, the Phase 3 tool — authorised by the
+owner in the phase chat and reported to the foreman.
+
+And it earned its keep immediately: with null keys out of the shape, the replay
+stopped at register call 6 on a difference the old rule had hidden — the page
+register item carried `relative_url` on the legacy and None on the bridge.
+`relative_url` is not an attribute of the WebPage at all: the daemon client read
+it off the request (`daemon/siteregister_client.py`:220) and the bridge was
+reading it as an attribute, so it answered None on every page ever registered.
+Same class of defect as the missing `electron_static`, found by the sharper
+instrument, fixed in `_page_kwargs`.
+
+Final measurement, archive `bridge-20260825T144852` against reference
+`legacy-20260825T085605`: no register item key set divergence anywhere; the
+replay stops at register call 15 on the recorder's `surface` field —
+`client:get_dbenv` on the bridge, `passthrough:get_dbenv` on the legacy, with
+identical arguments, answer and site caller chain. That field is `client` when
+the register client class declares the method and `passthrough` when
+`__getattr__` reaches it (`register_recorder.py`:221): the legacy client
+declares no `get_dbenv`, the bridge declares every command explicitly by design.
+A candidate declared rule for Phase 7, not a defect.

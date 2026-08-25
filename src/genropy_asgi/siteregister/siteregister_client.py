@@ -91,21 +91,16 @@ RUNNING_BATCH_WINDOW = 5.0
 # ``_adapt_to_legacy`` itself. What the core keeps besides these is its own
 # bookkeeping (the store, the three clocks the expiry sweep reads, the
 # collectors, the page tree) and never reaches the site.
-LEGACY_ROW_FIELDS = {
+LEGACY_REGISTER_ITEM_FIELDS = {
     "connection": ("register_item_id", "start_ts", "connection_name", "user", "user_id",
                    "user_name", "user_tags", "user_ip", "user_agent", "electron_static",
-                   "browser_name", "pages"),
+                   "browser_name", "pages", "avatar_extra"),
     "user": ("register_item_id", "start_ts", "user", "user_id", "user_name", "user_tags",
              "avatar_extra", "connections"),
     "page": ("register_item_id", "pagename", "connection_id", "start_ts",
              "subscribed_tables", "user", "user_ip", "user_agent", "relative_url"),
 }
 
-# The fields a register item grows only once the site writes them: the daemon's
-# ``create`` does not seed them, so an item that never logged in does not carry
-# them at all. ``avatar_extra`` arrives with ``change_connection_user`` (the login
-# writes it, connection.py:165) and a connection before the login has no such key.
-LEGACY_LATE_FIELDS = {"connection": ("avatar_extra",)}
 
 
 class ServerStore:
@@ -1339,7 +1334,7 @@ class GenropyRegisterClient:
         """The legacy answer for one core register item — the one site-facing surface.
 
         A PROJECTION, not a copy: what goes out carries exactly the fields the
-        daemon's own register put on its register item (``LEGACY_ROW_FIELDS``),
+        daemon's own register put on its register item (``LEGACY_REGISTER_ITEM_FIELDS``),
         so nothing the core keeps for itself leaks to the site and nothing the
         daemon guaranteed is missing. Both directions were divergences the
         replica measured on the first bridge cycle (2026-08-25): the connection
@@ -1392,11 +1387,8 @@ class GenropyRegisterClient:
             "datachanges_idx": 0,
             "subscribed_paths": self._item_subscribed_paths(item_id, register_name=register_name),
         }
-        for field in LEGACY_ROW_FIELDS[register_name]:
+        for field in LEGACY_REGISTER_ITEM_FIELDS[register_name]:
             adapted[field] = register_item.get(field)
-        for field in LEGACY_LATE_FIELDS.get(register_name, ()):
-            if field in register_item:
-                adapted[field] = register_item[field]
         if register_name == "page":
             adapted["user"] = self._page_owner(item_id)
             adapted["subscribed_tables"] = set(register_item.get("table_subscriptions") or ())
@@ -1434,14 +1426,21 @@ class GenropyRegisterClient:
         return out
 
     def _page_kwargs(self, page: Any, kwargs: dict) -> dict:
-        """Extract the scalar fields the page registry needs from a WebPage."""
+        """Extract the scalar fields the page registry needs from a WebPage.
+
+        ``relative_url`` is NOT an attribute of the page: the daemon client read
+        it off the request (``daemon/siteregister_client.py``:220), so this one
+        does too. Read as an attribute it answered None on every page, and the
+        replica measured it as a difference on the page register item.
+        """
         if page is None:
             return kwargs
         out = dict(kwargs)
-        for field in ("pagename", "connection_id", "user", "user_ip", "user_agent",
-                      "relative_url"):
+        for field in ("pagename", "connection_id", "user", "user_ip", "user_agent"):
             if field not in out:
                 out[field] = getattr(page, field, None)
+        if "relative_url" not in out:
+            out["relative_url"] = page.request.path_info
         return out
 
     def _filter_items(self, items: list, filters: Any) -> list:

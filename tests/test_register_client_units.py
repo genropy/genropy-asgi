@@ -381,11 +381,15 @@ def test_a_connection_row_answers_the_daemon_key_set(client, worker):
     assert set(client.connection(cid)) == {
         "register_item_id", "start_ts", "connection_name", "user", "user_id",
         "user_name", "user_tags", "user_ip", "user_agent", "electron_static",
-        "browser_name", "pages", "register_name", "datachanges", "datachanges_idx",
-        "subscribed_paths",
+        "browser_name", "pages", "avatar_extra", "register_name", "datachanges",
+        "datachanges_idx", "subscribed_paths",
     }
-    # the login is what puts ``avatar_extra`` on the row, here as on the daemon:
-    # ``Connection.change_user`` always passes it (connection.py:169)
+    # the daemon's create() seeds no ``avatar_extra`` and the login writes it
+    # (``Connection.change_user``, connection.py:169). Here the key is always
+    # answered and carries None until then: a key with no value and no key at all
+    # say the same thing about the state (owner, 2026-08-25), which is why the
+    # structural comparison drops null-valued keys from the shape it compares.
+    assert client.connection(cid)["avatar_extra"] is None
     with call_sink(worker):
         client.change_connection_user(cid, user="dora", avatar_extra={"email": "d@x"})
     assert client.connection(cid)["avatar_extra"] == {"email": "d@x"}
