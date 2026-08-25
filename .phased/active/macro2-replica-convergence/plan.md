@@ -86,7 +86,8 @@ recognised rather than discovered.
     code you expect (not the recorder, not the client), and the field reads
     well enough to diagnose Phase 6 with.
 
-- [ ] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
+- [>] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
+  > In execution since 2026-08-25T07:40:00+02:00
   - Run: opus / high
   - Pattern: `benchmarks/replay_a1.py:build_plan` (extracting an ordered call
     plan from a capture) and `benchmarks/scaling_probe.py:login_user` (replaying
@@ -108,7 +109,14 @@ recognised rather than discovered.
     the two genropy source trees (source only, no `__pycache__`), exits
     non-zero NAMING the differing files and the remedy (re-freeze
     temp/legacy_venv from the checkout per the bench README), and the replica
-    calls it FIRST at every cycle start: refusal, never a warning.
+    calls it FIRST at every cycle start: refusal, never a warning. What the
+    replica reads is ANY archived run — the reference session is a role, not
+    a format (foreman, 2026-08-25, answering this phase's clarify): Phase 2
+    replays the archived browser session of 2026-08-23
+    (~/genro_bench/runs/legacy-20260823T232924.sqlite, 266 HTTP exchanges),
+    which exercises the whole identifier-adaptation surface at no owner cost;
+    its register lines predate `site_caller`, which is irrelevant here — the
+    replay reads HTTP lines only and records a fresh trace.
   - Details: read one run's HTTP exchanges from the archive in `ts` order,
     skip what a browser session carries that a replica must not replay
     (`/_ping` heartbeats stay OUT — decision at execution, recorded in notes),
@@ -120,7 +128,8 @@ recognised rather than discovered.
     `python benchmarks/compare/genropy_parity_check.py` exits 0 on aligned
     trees, and non-zero naming the file on an artificially introduced
     difference; the replica refuses to start while the check fails; the replica
-    replays the full reference legacy session against the LEGACY stack itself
+    replays the full archived browser session of 2026-08-23
+    (legacy-20260823T232924.sqlite, 266 exchanges) against the LEGACY stack itself
     with zero HTTP-level failures, and the new run is archived.
   - Verify: now — watch one replica run end to end; the exchanges scroll in the
     order of your original session and the run lands in `~/genro_bench/runs/`.
