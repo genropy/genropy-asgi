@@ -118,15 +118,18 @@ def test_new_connection_is_born_guest_with_live_data_bag(client, worker):
     assert item["register_item_id"] == cid
     assert item["user"] == GUEST_PREFIX + cid  # born guest: the core mints the name
     assert isinstance(item["data"], Bag)
-    assert item["data"] is item["store"]  # one live Bag, two names
+    # one live Bag, two names — ``store`` is the core's and stays on the core row
+    assert item["data"] is worker.connection_items.get(cid)["store"]
+    assert "store" not in item
 
 
-def test_new_connection_twice_returns_the_live_row(client, worker):
+def test_new_connection_twice_answers_the_same_row(client, worker):
     cid, _ = fresh_ids()
     with call_sink(worker):
         first = client.new_connection(cid)
         again = client.new_connection(cid)
-    assert again is first
+    assert again["register_item_id"] == first["register_item_id"]
+    assert again["data"] is first["data"]  # the same live row, hence the same Bag
 
 
 def test_new_page_seed_data_becomes_the_live_store(client, worker):
@@ -137,7 +140,7 @@ def test_new_page_seed_data_becomes_the_live_store(client, worker):
     _, page_id = open_page(client, worker, data=seed)
     item = client.page(page_id, include_data="lazy")
     assert item["data"] is seed  # the seed IS the live store
-    assert item["store"] is seed
+    assert worker.page_items.get(page_id)["store"] is seed
     assert client.get_dbenv(page_id)["workdate"] == "2026-08-12"
 
 
@@ -370,8 +373,51 @@ def connected_users_row(user, arguments):
     }
 
 
+def test_a_connection_row_answers_the_daemon_key_set(client, worker):
+    # The set ``ConnectionRegister.create`` + ``addRegisterItem`` produced
+    # (gnr/web/daemon/siteregister.py:339, :135), measured on a legacy trace of
+    # the same session: no core field leaks, no daemon field is missing.
+    cid, _ = open_page(client, worker)
+    assert set(client.connection(cid)) == {
+        "register_item_id", "start_ts", "connection_name", "user", "user_id",
+        "user_name", "user_tags", "user_ip", "user_agent", "electron_static",
+        "browser_name", "pages", "register_name", "datachanges", "datachanges_idx",
+        "subscribed_paths",
+    }
+    # the login is what puts ``avatar_extra`` on the row, here as on the daemon:
+    # ``Connection.change_user`` always passes it (connection.py:169)
+    with call_sink(worker):
+        client.change_connection_user(cid, user="dora", avatar_extra={"email": "d@x"})
+    assert client.connection(cid)["avatar_extra"] == {"email": "d@x"}
+
+
+def test_a_page_row_answers_the_daemon_key_set(client, worker):
+    # ``PageRegister.create``:459 + ``addRegisterItem``, and ``data`` only when
+    # the caller asks for it — the daemon attached it in ``get_item`` too.
+    _, page_id = open_page(client, worker)
+    expected = {
+        "register_item_id", "pagename", "connection_id", "start_ts",
+        "subscribed_tables", "user", "user_ip", "user_agent", "relative_url",
+        "register_name", "datachanges", "datachanges_idx", "subscribed_paths",
+    }
+    assert set(client.page(page_id)) == expected
+    assert set(client.page(page_id, include_data="lazy")) == expected | {"data"}
+
+
+def test_a_user_row_answers_the_daemon_key_set(client, worker):
+    # ``UserRegister.create``:319 + ``addRegisterItem``
+    cid, _ = open_page(client, worker)
+    user = login(client, worker, cid, "elio")
+    assert set(client.user(user)) == {
+        "register_item_id", "start_ts", "user", "user_id", "user_name", "user_tags",
+        "avatar_extra", "connections", "register_name", "datachanges",
+        "datachanges_idx", "subscribed_paths",
+    }
+
+
 def test_connected_users_reads_a_refreshed_row(client, worker):
-    # the row whose server stamp the core moved: a float where a datetime is due
+    # a refresh moves the core's clocks, which stay on the core row: the reader
+    # still finds its ages, dated from the birth stamp the view carries
     cid, page_id = open_page(client, worker)
     user = login(client, worker, cid, "alice", user_name="Alice A")
     client.refresh(page_id, ts=datetime.datetime.now())
@@ -381,13 +427,15 @@ def test_connected_users_reads_a_refreshed_row(client, worker):
     assert row["last_event_age"] == 0
 
 
-def test_connected_users_reads_a_freshly_created_row(client, worker):
-    # the core stamps every row at birth, so even before any ping the legacy
-    # reader finds a dressed datetime and the row reads as just-born
+def test_connected_users_reads_a_row_with_no_client_clock(client, worker):
+    # the daemon put a client clock on a row only when refresh() reported one, so
+    # the legacy view carries none and the reader dates the row from start_ts —
+    # the branch the legacy wrote for exactly this case (connection.py:196)
     cid, _ = open_page(client, worker)
     user = login(client, worker, cid, "bruno", user_name="Bruno B")
     arguments = client.users()[user]
-    assert isinstance(arguments["last_user_ts"], datetime.datetime)
+    assert "last_user_ts" not in arguments
+    assert isinstance(arguments["start_ts"], datetime.datetime)
     assert connected_users_row(user, arguments)["last_event_age"] == 0
 
 
@@ -412,15 +460,20 @@ def test_a_user_row_carries_its_own_name_as_the_user_field(client, worker):
     guest_cid, _ = open_page(client, worker)
     guest = GUEST_PREFIX + guest_cid
     assert client.users()[guest]["user"] == guest  # uniform contract
-    # ownership on a PAGE row stays derived, never stored (cemented)
-    assert "user" not in client.page(page_id)
+    # ownership on a PAGE row stays derived, never stored (cemented): the key the
+    # daemon carried is answered, and nothing is written on the row to answer it
+    assert client.page(page_id)["user"] == user
+    assert "user" not in worker.page_items.get(page_id)
 
 
-def test_stale_connections_reads_the_connection_rows(client, worker):
-    # ``datacollector.stale_connections``:54 — the same subtraction, unguarded
+def test_stale_connections_finds_no_clock_on_a_connection_row(client, worker):
+    # ``datacollector.stale_connections``:54 reads ``c['last_refresh_ts']`` bare,
+    # so on a row no refresh has touched it raises — on the daemon too, whose
+    # create() seeded no clock either. Parity, and the reader has no caller in
+    # genropy: the sweep that does expire rows is the core's, on the core row.
     cid, _ = open_page(client, worker)
-    now = datetime.datetime.now()
-    assert (now - client.connections()[cid]["last_refresh_ts"]).seconds == 0
+    assert "last_refresh_ts" not in client.connections()[cid]
+    assert isinstance(worker.connection_items.get(cid)["last_refresh_ts"], float)
 
 
 def test_a_page_row_carries_its_own_birth_stamp(client, worker):
@@ -433,9 +486,9 @@ def test_a_page_row_carries_its_own_birth_stamp(client, worker):
 
 
 def test_the_core_rows_keep_the_stamps_the_sweep_reads(client, worker):
-    # the dressing is a view: the live row the expiry sweep reads stays float
+    # the projection is a view: the clocks stay where the expiry sweep reads them
     _, page_id = open_page(client, worker)
-    assert isinstance(client.page(page_id)["last_refresh_ts"], datetime.datetime)
+    assert "last_refresh_ts" not in client.page(page_id)
     assert isinstance(worker.page_items.get(page_id)["last_refresh_ts"], float)
 
 

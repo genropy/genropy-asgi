@@ -84,10 +84,28 @@ RETRY_DELAY_MAX = 2.0
 # The 5-second window the daemon used for the runningBatch flag in the ping envelope.
 RUNNING_BATCH_WINDOW = 5.0
 
-# The row stamps the core keeps as epoch floats (``time.time()``) and the legacy
-# compares against ``datetime.now()``. Converted on the way out, never in place:
-# the core's expiry sweep reads these same fields as floats.
-EPOCH_STAMPS = ("last_refresh_ts", "last_user_ts", "last_rpc_ts")
+# The site-facing row of each register kind: exactly the fields the daemon's own
+# registers put on it — ``ConnectionRegister.create``, ``UserRegister.create``,
+# ``PageRegister.create`` in ``gnr/web/daemon/siteregister.py`` — plus the three
+# queue fields ``BaseRegister.addRegisterItem`` puts on all three, added by
+# ``_legacy_row`` itself. What the core keeps besides these is its own
+# bookkeeping (the store, the three clocks the expiry sweep reads, the
+# collectors, the page tree) and never reaches the site.
+LEGACY_ROW_FIELDS = {
+    "connection": ("register_item_id", "start_ts", "connection_name", "user", "user_id",
+                   "user_name", "user_tags", "user_ip", "user_agent", "electron_static",
+                   "browser_name", "pages"),
+    "user": ("register_item_id", "start_ts", "user", "user_id", "user_name", "user_tags",
+             "avatar_extra", "connections"),
+    "page": ("register_item_id", "pagename", "connection_id", "start_ts",
+             "subscribed_tables", "user", "user_ip", "user_agent", "relative_url"),
+}
+
+# The fields a row grows only once the site writes them: the daemon's ``create``
+# does not seed them, so a row that never logged in does not carry them at all.
+# ``avatar_extra`` arrives with ``change_connection_user`` (the login writes it,
+# connection.py:165) and the connection row before the login has no such key.
+LEGACY_LATE_FIELDS = {"connection": ("avatar_extra",)}
 
 
 class ServerStore:
@@ -451,26 +469,26 @@ class GenropyRegisterClient:
         The read primitive the whole read side builds on. ``register_name='global'``
         returns the stable global Bag; ``include_data == 'lazy'`` attaches the item's
         in-process Bag — the row's own live store. What goes out is the LEGACY VIEW
-        of the row (``_legacy_row``): the live Bag, datetime stamps, daemon-era keys.
+        of the row (``_legacy_row``): the daemon's own field set, the live Bag, the
+        daemon-era keys — never the core's own bookkeeping.
         """
         if register_name == "global":
             return {"register_item_id": "*", "register_name": "global", "data": self.global_bag}
         item = self.local_item(register_item_id, register_name)
-        if item is not None and (include_data == "lazy" or include_data):
-            self._ensure_item_data(item)
-        return self._legacy_row(item, register_name=register_name)
+        row = self._legacy_row(item, register_name=register_name)
+        if row is not None and (include_data == "lazy" or include_data):
+            row["data"] = self._ensure_item_data(item)["data"]
+        return row
 
     def page(self, page_id: Any, include_data: Any = None) -> Any:
-        """The local page item, enriched with its ``subscribed_tables``.
+        """The local page item.
 
         Called on every RPC to validate the page and by the commit path (a hidden
         transaction reads ``page(page_id)['subscribed_tables']``). The subscriptions
-        live on the page row itself (``table_subscriptions``).
+        live on the page row itself (``table_subscriptions``) and the legacy view
+        translates the name.
         """
-        item = self.get_item(page_id, include_data=include_data, register_name="page")
-        if item is not None:
-            item["subscribed_tables"] = set(item.get("table_subscriptions") or ())
-        return item
+        return self.get_item(page_id, include_data=include_data, register_name="page")
 
     def connection(self, connection_id: Any, include_data: Any = None) -> Any:
         """The local connection item. Called on every request to validate the cookie."""
@@ -521,7 +539,7 @@ class GenropyRegisterClient:
         else:
             items = self._live_rows(page_items, page_items.keys())
         return {
-            item["register_item_id"]: self._legacy_row(item)
+            item["register_item_id"]: self._legacy_row(item, register_name="page")
             for item in self._filter_items(items, filters)
         }
 
@@ -541,14 +559,18 @@ class GenropyRegisterClient:
             items = self._live_rows(connection_items, list((entry or {}).get("connections", ())))
         else:
             items = self._live_rows(connection_items, connection_items.keys())
-        return {item["register_item_id"]: self._legacy_row(item) for item in items}
+        return {
+            item["register_item_id"]: self._legacy_row(item, register_name="connection")
+            for item in items
+        }
 
     def users(self, **kwargs: Any) -> dict:
         """Active users keyed by user id (``adaptListToDict``): lists connected users.
 
         Polled every 2 seconds by the chat component's connected-users grid, through
-        ``Connection.connected_users_bag`` — the reader that does datetime arithmetic
-        on the stamps and captions with ``user_name``, so the rows go out dressed.
+        ``Connection.connected_users_bag`` — the reader that captions with
+        ``user_name`` and dates the row from ``start_ts`` when no client clock is on
+        it, which on this stack is always the case (``_legacy_row``).
         """
         worker = self.spa_worker
         if worker is None:
@@ -1302,57 +1324,82 @@ class GenropyRegisterClient:
         return connection["user"]
 
     def _item_with_data(self, item_id: Any, register_name: str) -> dict | None:
-        """The live row after a lifecycle op, with its data Bag attached."""
-        return self._ensure_item_data(self.local_item(item_id, register_name))
+        """The answer of a lifecycle command: the legacy view, with its data Bag.
 
-    def _legacy_row(self, item: dict | None, register_name: str | None = None) -> dict | None:
-        """The legacy view of a core register row — the read side's own surface.
+        The Bag is the SAME live object the row holds — the site writes into it
+        and the collectors watch it — so what the view copies is the reference.
+        """
+        item = self.local_item(item_id, register_name)
+        row = self._legacy_row(item, register_name=register_name)
+        if row is not None:
+            row["data"] = self._ensure_item_data(item)["data"]
+        return row
 
-        The rows the core keeps and the rows the daemon handed out differ in two
-        ways the legacy reads WITHOUT a guard, so the bridge reconciles both here,
-        on a SHALLOW COPY: the live Bag and the live edge sets stay the same
-        objects, while the core's own fields on the row itself are left exactly as
-        the core wrote them — the expiry sweep reads the stamps as floats.
+    def _legacy_row(self, item: dict | None, register_name: str) -> dict | None:
+        """The legacy view of a core register row — the one site-facing surface.
 
-        - **The stamps.** The core stamps with ``time.time()``; the legacy
-          subtracts them from ``datetime.now()`` (``Connection.connected_users_bag``
-          connection.py:197, ``datacollector.stale_connections``:54), so they go
-          out as naive local datetimes.
+        A PROJECTION, not a copy: the row goes out with exactly the fields the
+        daemon's own register put on it (``LEGACY_ROW_FIELDS``), so nothing the
+        core keeps for itself leaks to the site and nothing the daemon guaranteed
+        is missing. Both directions were divergences the replica measured on the
+        first bridge cycle (2026-08-25): the connection row carried five core
+        fields the daemon never had and lacked five the daemon always had, and
+        the page row diverged the same way two calls later.
+
+        The live objects stay the same objects — the data Bag, the ``pages`` and
+        ``connections`` edge sets — and the core's own row is never touched: the
+        expiry sweep keeps reading its stamps as floats where they are.
+
+        What the projection adds on top of the field list:
+
+        - **The three queue fields** the daemon put on every row
+          (``addRegisterItem``, siteregister.py:135). ``subscribed_paths`` is the
+          page row's own set, cheap to read. ``datachanges`` and
+          ``datachanges_idx`` go out as the empty shape: on this stack the queue
+          is not on the row but in the page's collectors, and the surface that
+          reads it is ``ServerStore.datachanges``, which drains them there. The
+          bridge also numbers each change and not each item, so there is no item
+          counter to answer with.
+        - **``register_name``**, which the daemon seeded on the row itself.
+        - **``user`` on a PAGE row.** The daemon stored it; here ownership is
+          derived through the connection (``_page_owner``, cemented) — so the key
+          the legacy reads is answered, and still nothing is stored.
+        - **``user`` on a USER row.** The daemon seeded ``user=user``
+          (siteregister.py:319-323) and the chat keys its rooms on that attribute
+          (``prepare_usersbag``, chat_component.js:180 — ``setItem(n.attr.user,
+          ...)``, which crashes the client Bag on undefined). The core keys the
+          entry by name instead of storing it, so the view restores the field.
+        - **``subscribed_tables``**, the daemon's name for what the core row
+          carries as ``table_subscriptions``.
         - **``start_ts``**, read unconditionally as the "no client clock reported
           yet" fallback (connection.py:196) and as a page's birth instant
           (gnrasync.py:379). The connection and page rows are born with it (the
-          lifecycle commands stamp it); a USER entry is created by the core itself,
-          implicitly, under a new connection, so it cannot be stamped from here and
-          falls back to the row's server stamp — the creation instant, until the
-          first refresh moves it forward. That is precisely the value the one
-          legacy reader of a user row's ``start_ts`` wants there.
-        - **``user_name``**, read unconditionally as the caption
-          (connection.py:209). A row that never logged in has none: the legacy
-          reads ``arguments['user_name'] or user`` and captions with the key.
-        - **``user`` on a USER row.** The daemon seeded ``user=user`` on the row
-          itself (daemon/siteregister.py:319-323) and the chat keys its rooms on
-          that attribute (``prepare_usersbag``, chat_component.js:180 —
-          ``setItem(n.attr.user, ...)``, which crashes the client Bag on
-          undefined). The core keys the entry by name instead of storing it, so
-          the view restores the field. Page rows stay WITHOUT a ``user`` field
-          on purpose: ownership is derived (``_page_owner``), never stored.
-
-        Only the READ commands dress. The lifecycle commands keep answering the
-        live row — the object the legacy holds for the page's whole life as
-        ``page_item`` — which is why they stamp ``start_ts`` at birth.
+          lifecycle commands stamp it); a USER entry is created by the core
+          itself, implicitly, under a new connection, so it cannot be stamped
+          from here and falls back to the row's server stamp — the creation
+          instant, converted out of the core's epoch float.
         """
         if item is None:
             return None
-        row = dict(item)
-        for field in EPOCH_STAMPS:
-            stamp = row.get(field)
-            if isinstance(stamp, (int, float)):
-                row[field] = datetime.datetime.fromtimestamp(stamp)
-        if row.get("start_ts") is None:
-            row["start_ts"] = row.get("last_refresh_ts")
-        row.setdefault("user_name", None)
-        if register_name == "user":
-            row.setdefault("user", row["register_item_id"])
+        item_id = item["register_item_id"]
+        row: dict[str, Any] = {
+            "register_name": register_name,
+            "datachanges": [],
+            "datachanges_idx": 0,
+            "subscribed_paths": self._item_subscribed_paths(item_id, register_name=register_name),
+        }
+        for field in LEGACY_ROW_FIELDS[register_name]:
+            row[field] = item.get(field)
+        for field in LEGACY_LATE_FIELDS.get(register_name, ()):
+            if field in item:
+                row[field] = item[field]
+        if register_name == "page":
+            row["user"] = self._page_owner(item_id)
+            row["subscribed_tables"] = set(item.get("table_subscriptions") or ())
+        elif register_name == "user":
+            row["user"] = item_id
+        if row["start_ts"] is None:
+            row["start_ts"] = datetime.datetime.fromtimestamp(item["last_refresh_ts"])
         return row
 
     def _ensure_item_data(self, item: dict | None) -> dict | None:
@@ -1377,7 +1424,7 @@ class GenropyRegisterClient:
             return kwargs
         out = dict(kwargs)
         for field in ("connection_name", "user", "user_id", "user_tags", "user_ip",
-                      "user_agent", "browser_name", "avatar_extra", "user_name"):
+                      "user_agent", "browser_name", "electron_static", "user_name"):
             if field not in out:
                 out[field] = getattr(connection, field, None)
         return out
@@ -1446,8 +1493,9 @@ class GenropyRegisterClient:
         immortality by lying about its own activity. The client-reported clocks land
         as ``last_user_ts``/``last_rpc_ts`` on the three rows, under ``dispatch_lock``,
         converted datetime -> epoch float at this boundary: the rows keep the core's
-        own stamp type (the freeze valve compares these floats), and the dressing
-        converts back on the way out (``EPOCH_STAMPS``).
+        own stamp type (the freeze valve compares these floats), and they stay
+        there: the legacy view does not carry them out, because a daemon row
+        carried them only once a refresh had reported client clocks.
         Returns the USER item (``handle_ping`` reads the user from it), or None when
         the chain is broken (a dead page: the ping answers False).
         """

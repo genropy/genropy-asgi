@@ -388,7 +388,7 @@ recognised rather than discovered.
     the login (the +28% register calls); confirm the report names it precisely
     enough to start Phase 6 from.
 
-- [>] **Phase 6**: uniform the site-facing register row
+- [>] **Phase 6**: uniform the site-facing register item
   > In execution since 2026-08-25T09:58:27Z
   - Run: opus / medium
   - Pattern: `_legacy_row` in
@@ -442,6 +442,17 @@ recognised rather than discovered.
     the LEGACY behaviour: a never-refreshed item does not carry the three
     clocks. The neighbouring refreshed-item test already passes and stays as it
     is. Record the reasoning in notes.md under `## Phase 6`.
+    RENAME, part of this phase: `_legacy_row` becomes
+    `_adapt_to_legacy(register_item)` — 7 occurrences in
+    `siteregister_client.py` (lines 91, 472, 479, 542, 562, 575, 1326), none
+    elsewhere in the repo. Baptised by the owner, 2026-08-25, three reasons on
+    the record: `row` is the word he rejected on 2026-08-21 (the ratified
+    vocabulary is `register item`); the method does not fetch, it CONVERTS, so
+    `get_` would misdescribe it; and `adapt` is not coined — it is the daemon
+    client contract's own word for this conversion (`adaptListToDict`, cited in
+    this file's own docstrings at 490, 529, 547). `translate` was weighed and
+    refused: preloaded by localisation (`getRemoteTranslation`,
+    gnrwebpage.py:1188).
   - Details: the first cycle against the bridge stops in the FIRST exchange, at
     register call 5, on the key set of the connection register item answered by
     `client:new_connection` — reference `datachanges`, `datachanges_idx`,
