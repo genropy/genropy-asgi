@@ -125,13 +125,13 @@ class TraceReader:
                 if self.get_skip_reason(record) is None]
 
     @property
-    def conditions(self):  # wf:phase-3:new
+    def conditions(self):
         """The declared conditions of the run this archive holds."""
         row = self.connection.execute(
             "SELECT conditions FROM run ORDER BY started LIMIT 1").fetchone()
         return json.loads(row[0]) if row else {}
 
-    def get_register_lines(self, exchange_id):  # wf:phase-3:new
+    def get_register_lines(self, exchange_id):
         """Every register line of one exchange, in the order the site made them."""
         rows = self.connection.execute(
             "SELECT line FROM record WHERE kind = 'register' AND exchange_id = ? "
@@ -141,12 +141,12 @@ class TraceReader:
         return records
 
     @property
-    def last_record_id(self):  # wf:phase-3:new
+    def last_record_id(self):
         """The id of the last row written so far: where a replay starting now begins."""
         row = self.connection.execute("SELECT max(id) FROM record").fetchone()
         return row[0] or 0
 
-    def get_exchange_replaying(self, reference_exchange_id, after_id=0):  # wf:phase-3:new
+    def get_exchange_replaying(self, reference_exchange_id, after_id=0):
         """The exchange this run sent to reproduce that reference one, or None.
 
         `after_id` is what keeps two replays into one archive apart: a stack
@@ -295,7 +295,7 @@ class Replica:
                 break
         return self.failures
 
-    def compare_exchange(self, record, position, race):  # wf:phase-3:new
+    def compare_exchange(self, record, position, race):
         """Compare the exchange just replayed with its reference; the divergence, or None.
 
         An exchange the reference raced is not compared: its recorded reply is a
@@ -316,7 +316,7 @@ class Replica:
         self.divergence = self.diff.get_divergence(record, replayed, position)
         return self.divergence
 
-    def get_replayed_exchange(self, record):  # wf:phase-3:new
+    def get_replayed_exchange(self, record):
         """The target's own exchange for this one, once the target has written it."""
         deadline = time.time() + EXCHANGE_WAIT_SECONDS
         while time.time() < deadline:

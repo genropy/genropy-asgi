@@ -78,12 +78,12 @@ class LineShape:
         self.record = record
 
     @property
-    def call(self):  # wf:phase-3:new
+    def call(self):
         """The surface and the verb: what the site asked the register to do."""
         return (self.record.get("surface"), self.record.get("verb"))
 
     @property
-    def arguments(self):  # wf:phase-3:new
+    def arguments(self):
         """The shape of the positional and keyword arguments of the call."""
         return (json.dumps([self.get_shaped(value)
                             for value in (self.record.get("args") or [])],
@@ -93,18 +93,18 @@ class LineShape:
                            sort_keys=True, default=repr))
 
     @property
-    def answer(self):  # wf:phase-3:new
+    def answer(self):
         """The shape of what the register answered."""
         return json.dumps(self.get_shaped(self.record.get("result")),
                           sort_keys=True, default=repr)
 
     @property
-    def caller(self):  # wf:phase-3:new
+    def caller(self):
         """The site code that made the call, or a plain absence."""
         return self.record.get("site_caller") or "(no site_caller in this run)"
 
     @property
-    def text(self):  # wf:phase-3:new
+    def text(self):
         """The line as the report prints it: the call, its arguments, its answer."""
         arguments = ", ".join(str(self.get_shaped(value))
                               for value in (self.record.get("args") or []))
@@ -114,7 +114,7 @@ class LineShape:
         surface, verb = self.call
         return f"{surface}:{verb}({signature}) -> {self.get_shaped(self.record.get('result'))}"
 
-    def get_shaped(self, value):  # wf:phase-3:new
+    def get_shaped(self, value):
         """The value with everything a second run would legitimately change removed."""
         if not isinstance(value, str):
             return value
@@ -126,7 +126,7 @@ class LineShape:
             return {"dict": sorted(set(DICT_KEY.findall(value)))}
         return self.get_masked(value)
 
-    def get_masked(self, text):  # wf:phase-3:new
+    def get_masked(self, text):
         """The text with minted identifiers, timestamps and dates masked."""
         text = DATETIME_REPR.sub("<datetime>", text)
         text = ISO_TIMESTAMP.sub("<ts>", text)
@@ -134,7 +134,7 @@ class LineShape:
         text = HEX_IDENTIFIER.sub("<hex>", text)
         return MINTED_IDENTIFIER.sub("<id>", text)
 
-    def get_bag_paths(self, xml):  # wf:phase-3:new
+    def get_bag_paths(self, xml):
         """The node paths of a Bag, values dropped, attribute names kept."""
         try:
             root = ET.fromstring(xml)
@@ -144,7 +144,7 @@ class LineShape:
         self.collect_bag_paths(root, "", paths)
         return sorted(paths)
 
-    def collect_bag_paths(self, node, prefix, paths):  # wf:phase-3:new
+    def collect_bag_paths(self, node, prefix, paths):
         for child in node:
             path = f"{prefix}.{child.tag}" if prefix else child.tag
             paths.append(f"{path}[{','.join(sorted(child.attrib))}]")
@@ -164,14 +164,14 @@ class Divergence:
         self.known = None
 
     @property
-    def where(self):  # wf:phase-3:new
+    def where(self):
         """The exchange this happened in, as a reader recognises it."""
         return (f"[{self.position}] {self.exchange.get('method')} "
                 f"{self.exchange.get('path')} "
                 f"{self.exchange.get('rpc_method') or ''}".rstrip())
 
     @property
-    def report(self):  # wf:phase-3:new
+    def report(self):
         """The whole difference, readable without opening the code."""
         lines = [f"{'known' if self.known else 'DIVERGENCE'}: {self.kind} "
                  f"at register call {self.ordinal} of {self.where}"]
@@ -195,11 +195,11 @@ class DeclaredRule:
 
     name = "declared rule"
 
-    def get_status_reason(self, trace, record):  # wf:phase-3:new
+    def get_status_reason(self, trace, record):
         """Why the recorded status of this exchange cannot be replayed, or None."""
         return None
 
-    def get_divergence_reason(self, divergence):  # wf:phase-3:new
+    def get_divergence_reason(self, divergence):
         """Why this register divergence is a known fact, or None."""
         return None
 
@@ -219,7 +219,7 @@ class ReferenceRace(DeclaredRule):
 
     name = "reference-race"
 
-    def get_status_reason(self, trace, record):  # wf:phase-3:new
+    def get_status_reason(self, trace, record):
         if CONNECTION_ROTATED not in (record.get("resp_body") or ""):
             return None
         overlapped = trace.get_overlapped_exchange(record)
@@ -243,10 +243,10 @@ class DeclaredRules:
         self.rules = list(rules) if rules is not None else [ReferenceRace()]
 
     @property
-    def names(self):  # wf:phase-3:new
+    def names(self):
         return [rule.name for rule in self.rules]
 
-    def get_status_reason(self, trace, record):  # wf:phase-3:new
+    def get_status_reason(self, trace, record):
         """The rule and the reason recognising this recorded status, or None."""
         for rule in self.rules:
             reason = rule.get_status_reason(trace, record)
@@ -254,7 +254,7 @@ class DeclaredRules:
                 return f"{rule.name}: {reason}"
         return None
 
-    def get_divergence_reason(self, divergence):  # wf:phase-3:new
+    def get_divergence_reason(self, divergence):
         """The rule and the reason recognising this divergence, or None."""
         for rule in self.rules:
             reason = rule.get_divergence_reason(divergence)
@@ -273,7 +273,7 @@ class StructuralDiff:
         self.known = []
 
     @property
-    def header(self):  # wf:phase-3:new
+    def header(self):
         """Which two runs are being compared, and on which genropy."""
         return "\n".join(f"{role}: {reader.path}\n"
                          f"  stack {conditions.get('stack')}, "
@@ -282,7 +282,7 @@ class StructuralDiff:
                          (("reference", self.reference, self.reference.conditions),
                           ("replica", self.replica, self.replica.conditions)))
 
-    def get_divergence(self, reference_exchange, replica_exchange, position):  # wf:phase-3:new
+    def get_divergence(self, reference_exchange, replica_exchange, position):
         """The first difference between the two exchanges, or None.
 
         A difference a declared rule recognises is recorded as known and does not
@@ -296,7 +296,7 @@ class StructuralDiff:
             self.known.append(divergence)
         return None
 
-    def get_differences(self, reference_exchange, replica_exchange, position):  # wf:phase-3:new
+    def get_differences(self, reference_exchange, replica_exchange, position):
         """Every difference between the two exchanges, in the order they happened."""
         left = [LineShape(record) for record
                 in self.reference.get_register_lines(reference_exchange["exchange_id"])]
@@ -318,8 +318,8 @@ class StructuralDiff:
         differences.sort(key=lambda difference: difference.ordinal)
         return differences
 
-    def get_value_differences(self, left, right, left_start, left_end, right_start,
-                              exchange, position):
+    def get_value_differences(self, left, right, left_start, left_end,
+                              right_start, exchange, position):
         """Where two calls that agree carry arguments or answers that do not."""
         differences = []
         for step in range(left_end - left_start):
@@ -334,8 +334,8 @@ class StructuralDiff:
                                           left_start + step + 1))
         return differences
 
-    def get_call_difference(self, tag, left, right, left_start, left_end,
-                            right_start, right_end, exchange, position):
+    def get_call_difference(self, tag, left, right, left_start,
+                            left_end, right_start, right_end, exchange, position):
         """Where the two runs made different calls, or a different number of them."""
         kind = {"insert": "extra call in the replica",
                 "delete": "call missing in the replica"}.get(tag, "different call")

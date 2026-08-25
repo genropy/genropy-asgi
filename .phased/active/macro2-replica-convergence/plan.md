@@ -167,9 +167,39 @@ recognised rather than discovered.
   - Verify: now — watch one replica run end to end; the exchanges scroll in the
     order of your original session and the run lands in `~/genro_bench/runs/`.
 
-- [>] **Phase 3**: structural comparison, stop at the first divergence
-  > In execution since 2026-08-25T08:30:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: ab67cde
+- [x] **Phase 3**: structural comparison, stop at the first divergence
+  > Done: `structural_diff.py` compares a reference run with the replica run
+    reproducing it, exchange by exchange, joined by the `X-Bench-Replica-Of`
+    header: same sequence of register calls, same SHAPE of arguments and answers,
+    with the identifiers, timestamps and dates a second run legitimately changes
+    masked, a Bag answer compared by its node paths and a register item by its key
+    names. The replay asks after every exchange and STOPS at the first divergence
+    nothing declares, printing the exchange, the register call number, the two
+    lines side by side and the `site_caller` of both. The declared-rules table
+    ships as a mechanism with the one rule Phase 2 measured, `reference-race`,
+    moved here out of `TraceReader`; its S section is empty by decision, because
+    S1/S2/S3/S5 produce no register line on a legacy-vs-legacy run and their
+    signatures become observable at the first bridge cycle.
+  > Files: benchmarks/compare/structural_diff.py,
+    benchmarks/compare/structural_diff_check.py,
+    benchmarks/compare/replica.py,
+    benchmarks/compare/replica_check.py,
+    benchmarks/compare/README.md,
+    .phased/active/macro2-replica-convergence/notes.md
+  > Verified: structural_diff_check.py 33 assertions green; replica_check.py,
+    http_recorder_check.py, run_archive_check.py, register_recorder_check.py all
+    green; ruff clean; pytest tests/ 133 passed. The self-check, re-run at the
+    close: reference legacy-20260825T085605 (4 exchanges, 384 register lines)
+    replayed against the legacy stack recording into legacy-20260825T085646 (4
+    exchanges, 384 register lines, 0 unjoinable) — every status exact, zero
+    divergences, exit 0. The provoked divergence was produced by replaying one
+    reference twice against a stack whose register the first replay had populated:
+    it stops on `getItem(CACHE_TS._mainpref_)` against
+    `getItem(CACHE_TS.alexander.king_preference)`, the two `site_caller` chains
+    naming different site code, and exits 1.
+  > Verify: now — done 2026-08-25: the owner read the zero-divergence report of
+    the self-check and the provoked divergence report, both without opening the
+    code.
   - Run: opus / high
   - Pattern: the join used by the timing queries (record.exchange_id links
     register lines to their HTTP exchange); check style `*_check.py`
