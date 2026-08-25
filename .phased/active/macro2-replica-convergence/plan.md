@@ -584,7 +584,8 @@ recognised rather than discovered.
     divergence has a named cause, and every recognised one a declared rule you
     signed.
 
-- [ ] **Phase 8**: the live twin proxy, converging the owner's own session
+- [>] **Phase 8**: the live twin proxy, converging the owner's own session
+  > In execution since 2026-08-25T18:05:00+02:00
   - Run: opus / high
   - Pattern: `benchmarks/compare/replica.py` for identifier adaptation and the
     stop, `structural_diff.py` for the comparison and the declared rules,
@@ -597,9 +598,15 @@ recognised rather than discovered.
   - Decisions (owner, 2026-08-25, replacing the record-then-replay shape this
     phase carried until today): the driver is a PROXY the owner browses through,
     not a replay of a recorded session. One CLI takes the legacy instance name,
-    a run name the owner declares, `-w N` for gunicorn and
-    `--max-users-per-worker` for the bridge; it copies the db, starts both
-    stacks, and serves. Every HTTP request is dispatched to BOTH stacks, IN
+    a run name the owner declares and `-w N` for gunicorn; it copies the db, starts
+    both stacks, and serves. NO `--max-users-per-worker` here (foreman,
+    2026-08-25, answering this phase's clarify): one user never fills a pool, so
+    this phase cannot exercise the cap, and an option that records a number
+    nothing acts on is a false promise in the interface. The lever — the two
+    lines that pass `worker_max_users` through `src/genropy_asgi/spa/config.py`
+    and its transcription in `benchmarks/compare/bridge_recipe.py` — lands in the
+    PATROL's phase, where sixteen users can actually verify it, and where the
+    core fix it also waits on will have landed. Every HTTP request is dispatched to BOTH stacks, IN
     SEQUENCE not in parallel (parallel makes them contend for CPU and database
     and dirties both timings; sequential warms the second, and timings stay
     indicative either way — the speed verdict is macro-phase 3's, with
@@ -739,8 +746,12 @@ recognised rather than discovered.
   (`worker_handler.py:307`); `NoRoomError` subclasses `AssignmentRefused`, so the
   group catches it, tries the next worker, and rings the wake that leads to
   growth when all refuse. Its own docstring says the bench sets it to 1. TWO
-  THINGS REMAIN, both ours and both small: (a) `spa/config.py:105-116` builds
-  `group_kwargs` WITHOUT `worker_max_users` — Phase 8 adds it, fed by the CLI;
+  THINGS REMAIN, both ours and both small, and BOTH belong to the patrol's
+  phase, not to Phase 8 (foreman, 2026-08-25): (a) `spa/config.py:105-116` builds
+  `group_kwargs` WITHOUT `worker_max_users` — the two lines pass it through, and
+  `benchmarks/compare/bridge_recipe.py` must carry the same ones or
+  `bridge_coverage_check.py` goes red on the drift; the
+  `GNR_ASGI_IDLE_FREEZE_MINUTES` reading right above is the precedent to follow;
   (b) growth stays REACTIVE with this lever, because `_placeable_newcomers`
   counts room in occupancy percent only and never in users, so a new worker is
   born after the refusal rather than before it. Phase 8 measures whether that
