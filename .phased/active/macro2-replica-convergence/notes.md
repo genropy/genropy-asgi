@@ -52,3 +52,7 @@
   it does not locate the file. The absolute path is NOT the fix: the two stacks
   read that same resource from different roots (frozen copy vs editable), so it
   would read as a divergence in the report.
+- The `Done:` exception is the foreman's, recorded here as it asked (c74af49):
+  `bridge_coverage_check.py` passes with its two recipe-drift assertions
+  excepted. They fail for the drift described above, which is now Phase 4's
+  work, not this phase's.
