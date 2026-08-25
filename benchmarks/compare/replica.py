@@ -48,15 +48,31 @@ not a divergence of the stack. The replay names it and carries on; it never
 passes it in silence. Measured on the 2026-08-23 session: the two `login_doLogin`
 calls overlap by 22.8 ms, the first rotates the connection, the second answers
 400 — and a replica replaying them one after the other gets the 200 the site
-owes a legitimate call. The rule is Phase 3's to hold as a declared one.
+owes a legitimate call. The rule itself lives in the declared-rules table of
+`structural_diff.py`, together with everything else the bench recognises instead
+of stopping on it.
+
+**And the comparison.** Given the archive the TARGET is recording into, the
+replay compares as it goes: after every exchange, the register lines of the
+reference and the register lines the target just wrote must carry the same
+sequence of calls and the same shape of arguments and answers
+(`structural_diff.py`). At the first divergence nothing declares, the replay
+stops and prints the report — the two stacks are still standing at that moment,
+which is the whole reason this is a replica and not an offline diff of two
+finished traces. Without that archive the replay only replays, as it did before.
+
+An exchange the reference raced is replayed and NOT compared: its recorded reply
+is a 400 the site owed nobody, so its register lines are the lines of a refused
+call. The skip is printed.
 
 **Parity first.** The run refuses to start while the two stacks carry different
 genropy source (`genropy_parity_check.py`).
 
 Run, from the repository root:
 
-  python benchmarks/compare/replica.py ~/genro_bench/runs/<run_id>.sqlite \\
-      --target 127.0.0.1:8099
+  python benchmarks/compare/replica.py ~/genro_bench/runs/<reference>.sqlite \\
+      --target 127.0.0.1:8099 \\
+      --target-archive ~/genro_bench/runs/<the run the target just minted>.sqlite
 """
 
 import argparse
@@ -66,6 +82,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import urllib.parse
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -73,15 +90,18 @@ sys.path.insert(0, BENCH)
 
 from genropy_parity_check import GenropyParity    # noqa: E402
 from scaling_probe import StickyClient            # noqa: E402
+from structural_diff import DeclaredRules, StructuralDiff   # noqa: E402
 
 REPLICA_HEADER = "X-Bench-Replica-Of"
 PAGE_ID_RE = re.compile(r"page_id:'([A-Za-z0-9_-]{22})'")
 FORM_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=UTF-8"
 
-# What the site answers a call arriving on a connection a login already replaced.
-# Copied verbatim from `gnr/web/gnrwebpage.py:307`, typo and all: it is a literal
-# the site writes, not a sentence, and correcting it here would match nothing.
-CONNECTION_ROTATED = "The connection is not longer valid"
+# How long the replay waits for the target to finish writing the exchange it just
+# answered. The HTTP recorder writes its line in the generator's `finally`, which
+# runs after the last chunk has left, so the client can hold the whole reply a
+# moment before the line exists.
+EXCHANGE_WAIT_SECONDS = 5.0
+EXCHANGE_POLL_SECONDS = 0.02
 
 
 class TraceReader:
@@ -104,6 +124,29 @@ class TraceReader:
         return [record for record in self.records
                 if self.get_skip_reason(record) is None]
 
+    @property
+    def conditions(self):  # wf:phase-3:new
+        """The declared conditions of the run this archive holds."""
+        row = self.connection.execute(
+            "SELECT conditions FROM run ORDER BY started LIMIT 1").fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def get_register_lines(self, exchange_id):  # wf:phase-3:new
+        """Every register line of one exchange, in the order the site made them."""
+        rows = self.connection.execute(
+            "SELECT line FROM record WHERE kind = 'register' AND exchange_id = ? "
+            "ORDER BY ts, id", (exchange_id,)).fetchall()
+        records = [json.loads(row[0]) for row in rows]
+        records.sort(key=lambda record: record.get("ordinal") or 0)
+        return records
+
+    def get_exchange_replaying(self, reference_exchange_id):  # wf:phase-3:new
+        """The exchange this run sent to reproduce that reference one, or None."""
+        for record in self.records:
+            if (record.get("req_headers") or {}).get(REPLICA_HEADER) == reference_exchange_id:
+                return record
+        return None
+
     def get_skip_reason(self, record):
         """Why this exchange is not replayed, or None when it is."""
         if record.get("filtered") == "static":
@@ -111,23 +154,6 @@ class TraceReader:
         if "_ping" in (record.get("path") or "").split("/"):
             return "ping"
         return None
-
-    def get_race_reason(self, record):
-        """Why this exchange's recorded status is a race of the session, or None.
-
-        Two conditions, and both are read from the trace itself: the recorded
-        reply says the connection had already been rotated, and the exchange was
-        running while an earlier one was still in flight on the same cookie. A
-        reply of the first kind alone proves nothing — a stale tab produces one
-        too, and that one IS reproducible.
-        """
-        if CONNECTION_ROTATED not in (record.get("resp_body") or ""):
-            return None
-        overlapped = self.get_overlapped_exchange(record)
-        if overlapped is None:
-            return None
-        return (f"the connection was rotated by {overlapped.get('rpc_method') or overlapped.get('path')}, "
-                f"still in flight on the same cookie")
 
     def get_overlapped_exchange(self, record):
         """The earlier exchange still running when this one started, or None."""
@@ -199,27 +225,40 @@ class ReplicaClient(StickyClient):
 class Replica:
     """One archived run, performed again against a live stack."""
 
-    def __init__(self, trace, host, port, parity=None):
+    def __init__(self, trace, host, port, parity=None, target=None, rules=None):
         self.trace = trace
         self.host = host
         self.port = port
         self.parity = parity or GenropyParity()
+        self.target = target
+        self.rules = rules or DeclaredRules()
+        self.diff = StructuralDiff(trace, target, self.rules) if target else None
         self.identity = IdentityMap()
         self.client = ReplicaClient(host, port)
         self.failures = []
         self.races = []
+        self.divergence = None
 
     def run(self):
-        """Replay every exchange in order; return the failures met on the way."""
+        """Replay every exchange in order; return the failures met on the way.
+
+        With a target archive the replay also COMPARES, exchange by exchange, and
+        stops at the first divergence nothing declares: the two stacks are still
+        standing when the report is printed, which an offline diff of two finished
+        traces cannot offer.
+        """
         if not self.parity.aligned:
             raise SystemExit(self.parity.report)
         exchanges = self.trace.exchanges
         print(f"replaying {len(exchanges)} exchanges of {self.trace.path} "
               f"against {self.host}:{self.port}")
+        if self.diff:
+            print(self.diff.header)
         for position, record in enumerate(exchanges, 1):
             status = self.replay_exchange(record)
             expected = record.get("status")
-            race = None if status == expected else self.trace.get_race_reason(record)
+            race = (None if status == expected
+                    else self.rules.get_status_reason(self.trace, record))
             if status == expected:
                 mark = ""
             elif race:
@@ -233,7 +272,40 @@ class Replica:
             print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
                   f"{record.get('path')} {record.get('rpc_method') or ''} "
                   f"-> {status}{mark}")
+            if self.compare_exchange(record, position, race) is not None:
+                break
         return self.failures
+
+    def compare_exchange(self, record, position, race):  # wf:phase-3:new
+        """Compare the exchange just replayed with its reference; the divergence, or None.
+
+        An exchange the reference raced is not compared: its recorded reply is a
+        400 the site owed nobody, so its register lines are the lines of a refused
+        call and comparing them would compare two different things. The skip is
+        printed, never silent.
+        """
+        if self.diff is None:
+            return None
+        if race:
+            print(f"     not compared — {race}")
+            return None
+        replayed = self.get_replayed_exchange(record)
+        if replayed is None:
+            print(f"     not compared — the target archive carries no exchange "
+                  f"stamped with {record.get('exchange_id')}")
+            return None
+        self.divergence = self.diff.get_divergence(record, replayed, position)
+        return self.divergence
+
+    def get_replayed_exchange(self, record):  # wf:phase-3:new
+        """The target's own exchange for this one, once the target has written it."""
+        deadline = time.time() + EXCHANGE_WAIT_SECONDS
+        while time.time() < deadline:
+            replayed = self.target.get_exchange_replaying(record.get("exchange_id"))
+            if replayed is not None:
+                return replayed
+            time.sleep(EXCHANGE_POLL_SECONDS)
+        return None
 
     def replay_exchange(self, record):
         """Send one recorded exchange to the target; return the status it answered."""
@@ -279,15 +351,27 @@ if __name__ == "__main__":
     parser.add_argument("archive", help="the .sqlite of the run to replay")
     parser.add_argument("--target", default="127.0.0.1:8099",
                         help="host:port of the stack to replay against")
+    parser.add_argument("--target-archive",
+                        help="the .sqlite the target stack is recording into; "
+                             "with it the replay compares and stops at the first "
+                             "divergence, without it it only replays")
     arguments = parser.parse_args()
     host, _, port = arguments.target.partition(":")
+    target = (TraceReader(os.path.expanduser(arguments.target_archive))
+              if arguments.target_archive else None)
     replica = Replica(TraceReader(os.path.expanduser(arguments.archive)),
-                      host, int(port or "8099"))
+                      host, int(port or "8099"), target=target)
     failures = replica.run()
     print()
     for position, path, rpc_method, expected, status, race in replica.races:
         print(f"recognised race [{position}] {path} {rpc_method or ''}: "
               f"the trace carries {expected}, the replay got {status} — {race}")
+    if replica.diff:
+        for known in replica.diff.known:
+            print(known.report)
+    if replica.divergence:
+        print(replica.divergence.report)
+        sys.exit(1)
     if failures:
         print(f"{len(failures)} exchange(s) answered a status the trace does not carry:")
         for position, path, rpc_method, expected, status in failures:
@@ -296,3 +380,7 @@ if __name__ == "__main__":
         sys.exit(1)
     print(f"every exchange answered the status the trace carries, "
           f"{len(replica.races)} of them as a recognised race of the reference")
+    if replica.diff:
+        print(f"no divergence left unexplained, "
+              f"{len(replica.diff.known)} recognised by a declared rule "
+              f"({', '.join(replica.diff.rules.names)})")

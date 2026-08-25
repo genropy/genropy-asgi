@@ -21,6 +21,7 @@ import sys
 from genropy_parity_check import GNR_FOLDER_ENV, GenropyParity
 from replica import IdentityMap, Replica, ReplicaClient, TraceReader
 from run_archive import RunArchive
+from structural_diff import DeclaredRules
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMP = os.path.join(REPO_ROOT, "temp")
@@ -112,18 +113,23 @@ check("everything else is replayed", trace.get_skip_reason(trace.records[0]) is 
 check("the exchanges to replay are the trace minus the skipped ones",
       [record["exchange_id"] for record in trace.exchanges] == ["e1", "e3", "e6", "e7", "e8"])
 
-# 2b. the race of the reference: a status only concurrency could have produced
+# 2b. the race of the reference: a status only concurrency could have produced.
+# The rule itself lives in the declared-rules table; the trace only supplies the
+# overlap it reads from its own lines.
 by_id = {record["exchange_id"]: record for record in trace.records}
+rules = DeclaredRules()
 check("an exchange overlapping an earlier one on the same pre-rotation cookie, "
       "answered with the site's connection-rotated error, is a race of the reference",
-      "doLogin" in (trace.get_race_reason(by_id["e7"]) or ""))
+      "doLogin" in (rules.get_status_reason(trace, by_id["e7"]) or ""))
+check("the recognised status names the declared rule that recognised it",
+      (rules.get_status_reason(trace, by_id["e7"]) or "").startswith("reference-race:"))
 check("the race names the exchange that rotated the connection under it",
       trace.get_overlapped_exchange(by_id["e7"])["exchange_id"] == "e6")
 check("the same reply with no overlap is NOT a race — a stale tab makes one too, "
       "and that one replays",
-      trace.get_race_reason(by_id["e8"]) is None)
+      rules.get_status_reason(trace, by_id["e8"]) is None)
 check("an exchange that answered normally is no race at all",
-      trace.get_race_reason(by_id["e6"]) is None)
+      rules.get_status_reason(trace, by_id["e6"]) is None)
 
 # 3. identifiers: learned from the HTML, rewritten wherever they appear
 identity = IdentityMap()
