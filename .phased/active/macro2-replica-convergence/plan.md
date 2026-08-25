@@ -88,7 +88,7 @@ recognised rather than discovered.
 
 - [>] **Phase 2**: the replica — trace reader, network driver, identifier adaptation
   > In execution since 2026-08-25T07:40:00+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: pending
+  > Testing: awaiting the human's `Verify: now` checks | commit: d92bc6c
   - Run: opus / high
   - Pattern: `benchmarks/replay_a1.py:build_plan` (extracting an ordered call
     plan from a capture) and `benchmarks/scaling_probe.py:login_user` (replaying
