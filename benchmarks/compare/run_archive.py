@@ -28,6 +28,13 @@ a record shape that has to stay identical on both stacks.
 copy of an absence. The calls the master makes while building the site happen
 before any exchange exists, and that is information, not a loss.
 
+The `run` table carries the owner's DECLARED NAME beside the generated run id.
+The id says when the run happened; the name says what the owner was doing, and it
+is what makes the two archives of one comparative run — the legacy's and the
+bridge's — findable as a pair months later. It is a promoted copy like the
+others: the name also stays inside `conditions`, where every declared condition
+of the run lives.
+
 Two modes, one constructor. With a `run_id` the process MINTS the run: it
 creates the file, the schema and the run row carrying the declared conditions.
 Without, it ATTACHES to an existing archive and reads the run id back from it.
@@ -55,9 +62,16 @@ RUN_ENV = "GNR_BENCH_RUN"
 ARCHIVE_DIR_ENV = "GNR_BENCH_ARCHIVE_DIR"
 DEFAULT_ARCHIVE_DIR = os.path.join(os.path.expanduser("~"), "genro_bench", "runs")
 
+# The name the owner gives a comparative run. It is the one declared condition
+# no launcher can read from where it is true, because it lives in the owner's
+# head — the driver that starts both stacks publishes it here, and the two
+# archives of the pair then carry the same one.
+RUN_NAME_ENV = "GNR_BENCH_RUN_NAME"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS run (
     run_id     TEXT PRIMARY KEY,
+    name       TEXT,
     started    TEXT,
     conditions TEXT
 );
@@ -96,12 +110,21 @@ class RunArchive:
             self.run_id, self.conditions = self.read_run()
         else:
             self.run_id = run_id
-            self.conditions = conditions
+            self.conditions = dict(conditions or {}, run_name=self.declared_name)
             self.create_run()
 
     @property
     def stack(self):
         return self.conditions.get("stack")
+
+    @property
+    def declared_name(self):
+        """The name the owner gave this run, or None when nobody named it.
+
+        A run started by hand carries no name and says so; the absence is
+        recorded as it is, like every other condition nobody declared.
+        """
+        return os.environ.get(RUN_NAME_ENV) or None
 
     @property
     def connection(self):
@@ -124,8 +147,10 @@ class RunArchive:
         with self.lock:
             self.connection.executescript(SCHEMA)
             self.connection.execute(
-                "INSERT INTO run (run_id, started, conditions) VALUES (?, ?, ?)",
-                (self.run_id, datetime.now().isoformat(),
+                "INSERT INTO run (run_id, name, started, conditions) "
+                "VALUES (?, ?, ?, ?)",
+                (self.run_id, self.conditions.get("run_name"),
+                 datetime.now().isoformat(),
                  json.dumps(self.conditions, ensure_ascii=False)))
 
     def read_run(self):

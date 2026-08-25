@@ -612,3 +612,56 @@ recorder already stores that reply whole. So the row now reads
 stacks read their trees from different roots and a full path would read as a
 difference where there is none. An RPC exchange has no such line and keeps its
 method name.
+
+## Phase 8
+
+**The clarify, and what it moved.** The phase carried a `--max-users-per-worker`
+option in its Decisions and a Note assigning `worker_max_users` to Phase 8, while
+its `Files:` named neither `src/genropy_asgi/spa/config.py` nor
+`benchmarks/compare/bridge_recipe.py`. The foreman answered by removing the
+option instead of widening the files (commit 32b8647): one user never fills a
+pool, so nothing here could exercise the cap, and an option recording a number
+nothing acts on is a false promise in the interface. The lever — the two lines
+through `spa/config.py` plus the same ones in `bridge_recipe.py`, on the
+`GNR_ASGI_IDLE_FREEZE_MINUTES` precedent — belongs to the patrol's phase, where
+sixteen users verify it for real. Phase 8 therefore touches no product code.
+
+**The legacy stack is TWO processes, and the CLI had to learn it.** The first run
+died with `Pyro4.errors.CommunicationError: cannot connect to ('localhost',
+40404)`: with no fresh `site/sitedaemon.xml`, `SiteRegisterClient` falls back to
+the multi-site daemon address, which nothing serves. So the twin proxy starts the
+legacy's own register daemon first — `gnrdaemon <instance>`, port 40004 — and
+waits for it before gunicorn. Its readiness is not a log line: the daemon says
+nothing when it is up, and writes the descriptor carrying `register_uri` and its
+own pid. The proxy waits until the descriptor names ITS child, which is also what
+tells a fresh daemon from the file an earlier one left behind. The two register
+pickles are deleted before it starts, so every run begins from an empty register
+— otherwise the cookie plus a surviving connection walk the browser straight in
+and the session contains no login at all.
+
+**`GNR_DAEMON_PROVIDER=genropy-asgi` is a condition of any bridge run, and the
+proxy refuses without it.** Unset, `gnr.web.daemon.siteregister_client` stays
+genropy's own client, and the bench's recording client cannot be built on top of
+it: `RECORDED_VERBS` binds commands the classic client only reaches through
+`__getattr__`, so `getattr(SiteRegisterClient, 'allowedUsers')` raises at import
+and the bridge template dies importing its engine factory. Measured here by
+running `bridge_coverage_check.py` without the variable — the same failure, and
+the same one a bridge worker would hit. The legacy child does not receive it.
+
+**Three defects of the proxy, found by running it and fixed.** (1) The two
+`TraceReader` connections were opened in the main thread and read from the
+serving threads, which SQLite refuses; the shadow leg now runs on a thread of its
+own that owns both readers, and the request thread waits for it — which also makes
+the two legs sequential by construction rather than by a lock. (2) The shadow's
+keep-alive connection is closed by uvicorn after a few idle seconds, so the second
+request of a session failed with `RemoteDisconnected`; a dead connection is
+reopened and the request sent once more, a second failure travelling up as a
+divergence. (3) The launcher waited the full timeout on a child that had already
+died; readiness is now a poll that reads the child's exit as an answer.
+
+**What the tool measured on its own smoke run** (2026-08-25, before the owner's
+session): a login driven through the proxy by `drive_login.py` on port 8097 — four
+exchanges, every status identical on both stacks, the first not compared by the
+cold-start rule, then 33/33, 35/35 and 43/43 register calls. The same figures the
+Phase 7 replica cycle measured, reached this time by a live proxy instead of a
+replay.

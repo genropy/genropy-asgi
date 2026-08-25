@@ -1071,7 +1071,7 @@ identifier adaptation together: a stack compared with itself must agree.
 
 ### Exercising the recorders without a browser
 
-Seven scripts in this folder, all runnable from the repository root.
+Eight scripts in this folder, all runnable from the repository root.
 
 ```bash
 python3 benchmarks/compare/http_recorder_check.py
@@ -1086,6 +1086,9 @@ GENRO_GNRFOLDER=$PWD/temp/gnr \
 GENRO_GNRFOLDER=$PWD/temp/gnr \
     PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
     python benchmarks/compare/structural_diff_check.py
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    python benchmarks/compare/twin_proxy_check.py
 ```
 
 `http_recorder_check.py` needs nothing running: a minimal WSGI app, a recorder
@@ -1265,3 +1268,112 @@ answers a connection register item whose key set differs — the reference carri
 site code, `gnrwebpage.py:325 _register_new_page`, so the two stacks reach that
 call the same way and answer it differently. Whether it is a rule to declare or a
 fault to fix is the owner's judgment, and it is where Phase 6 starts.
+
+## The twin proxy: the owner's own session, on both stacks at once
+
+The replica above replays a recorded session. This does not: the owner browses
+through a proxy, and every request he makes is performed twice — first on the
+legacy stack, then on the bridge. The LEGACY answer is the one the browser
+receives, so a fault on the bridge never blocks his work. The bridge is the
+shadow, and what it answers is only ever compared.
+
+One process owns the whole cycle, which reverses the rule the earlier phases
+worked under: with a live proxy the orchestration cannot be a sequence of shell
+commands, so the copy, the two stacks and the comparison start and stop together.
+
+```bash
+GENRO_GNRFOLDER=$PWD/temp/gnr \
+    PYTHONPATH=$HOME/Sviluppo/Genropy/genropy/worktrees/bench-baseline/gnrpy \
+    GNR_DAEMON_PROVIDER=genropy-asgi PGGSSENCMODE=disable \
+    python benchmarks/compare/twin_proxy.py test_invoice_pg_legacy \
+    --run "the invoice session"
+```
+
+Then browse `http://127.0.0.1:8097`. Nothing else is run by hand.
+
+**What it does, in the order it does it**, and none of the order is a preference:
+
+1. **the db copy** — `dropdb`/`createdb -T` first, because `createdb` needs its
+   template free of connections and the template is the database the legacy
+   stack is about to open;
+2. **the legacy register pickles are deleted** — every comparative run starts
+   from an empty register, and a surviving connection would keep the browser
+   logged in and leave the login out of the session altogether;
+3. **the legacy's own sitedaemon**, waited for on its descriptor — the legacy
+   stack is TWO processes, and `SiteRegisterClient` reads the Pyro address out of
+   `site/sitedaemon.xml` when the site is built, so gunicorn started first would
+   hold an address nobody answers;
+4. **gunicorn**, waited for on `Listening at:`;
+5. **the bridge**, waited for on `Application startup complete`;
+6. **the proxy** on 8097.
+
+Each stack is waited for on its LOG, never on a request: a readiness probe is an
+exchange, and the recorder writes it into the archive as a line no session asked
+for. A stack that dies on the way up stops the run at once, with its own output
+above the message.
+
+**The two instances.** The command line names the instance the LEGACY serves; the
+bridge serves that name plus `_asgi` — `sandbox` becomes `sandbox_asgi` (owner,
+2026-08-25). The `_asgi` twin is configuration only: the same `root.py` and
+`siteconfig.xml`, an `instanceconfig.xml` whose `db` node names the copy, no
+`sitedaemon.xml`, no `site/data`, no `_static`. The proxy does not create it — it
+refuses and prints the four commands that do.
+
+**`GNR_DAEMON_PROVIDER=genropy-asgi` is mandatory** and the run refuses without
+it. Unset, `gnr.web.daemon.siteregister_client` stays genropy's own client, the
+bench's recording client cannot be built on top of it — it binds commands the
+classic client reaches through `__getattr__` — and the bridge template dies
+importing its engine factory. The legacy child does NOT receive the variable:
+on that stack genropy must keep its own daemon client.
+
+**What is dispatched, and what is compared, are two different questions.**
+Everything the browser sends is dispatched to both stacks, statics included: the
+bridge must see exactly the traffic the legacy sees, or its state could diverge
+for a reason the bench introduced. Only the comparison is selective — a static
+carries the same pair of register calls every time and says nothing, so it is
+dispatched and not compared. Consequence on record: the serving of static assets
+is never compared between the two stacks.
+
+**The join** is the replica's own, reached in two steps because the exchange id
+is minted inside the stack that serves the request, not by whoever sends it. The
+legacy leg carries `X-Bench-Twin-Request`, the proxy's own ordinal; the proxy
+reads back the legacy exchange id belonging to it; the bridge leg then carries
+`X-Bench-Replica-Of` with that id, which is what `TraceReader` and
+`StructuralDiff` already read. Neither module was modified.
+
+**Identifiers and headers.** The bridge mints its own page ids, so the same
+`IdentityMap` the replica uses rewrites the tokens in the query string and in the
+body. Cookies are never forwarded to the bridge: the browser's jar belongs to the
+legacy stack and the proxy keeps a jar of its own for the shadow. Every OTHER
+header is forwarded as it came — the user agent among them, because the site
+writes it into the connection register item and a missing one would read as a
+divergence of the stack.
+
+**The shadow leg runs on a thread of its own** and the request thread waits for
+it. Two reasons, each sufficient: SQLite refuses a connection used from a thread
+other than the one that opened it, and serving is threaded; and the two legs of a
+request stay sequential by construction instead of by a lock somebody has to
+remember. Run in parallel they would contend for CPU and for the database and
+dirty both timings — sequential warms the second, which is its own bias. Either
+way the timings here are indicative: the speed verdict is macro-phase 3's, with
+collection off.
+
+**The stop leaves everything standing.** At the first divergence nothing
+declares, the proxy prints the report, writes it to
+`<archive dir>/<run name>-divergence.txt`, and stops dispatching to the bridge. It
+does NOT exit and neither stack is torn down: the whole point of comparing live is
+that the two stacks are still answering while the divergence is investigated. The
+legacy keeps serving, so the browser stays usable.
+
+**The declared run name.** `--run` is written into both archives — inside
+`conditions` and promoted to the `name` column of the `run` row, a copy like every
+other promoted column. It is the one declared condition no launcher can read from
+where it is true, and it is what makes the two archives of one run findable as a
+pair months later.
+
+**Recorded evidence, 2026-08-25.** A login driven through the proxy on
+`test_invoice_pg_legacy` against `test_invoice_pg_legacy_asgi`: four exchanges,
+every status identical on the two stacks, the first not compared by the cold-start
+rule, then register calls 33/33, 35/35 and 43/43 — the same figures the replica
+cycle measured — and no divergence. Archives `legacy-20260825T202437` and
+`bridge-20260825T202437`.

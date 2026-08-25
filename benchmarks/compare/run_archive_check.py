@@ -26,7 +26,7 @@ import json
 import os
 import sys
 
-from run_archive import RunArchive
+from run_archive import RUN_NAME_ENV, RunArchive
 
 ARCHIVE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -77,19 +77,34 @@ def check(label, condition):
 archive = fresh()
 check("the archive file exists where it was asked for", os.path.exists(ARCHIVE))
 run_rows = archive.connection.execute(
-    "SELECT run_id, started, conditions FROM run").fetchall()
+    "SELECT run_id, name, conditions FROM run").fetchall()
 check("one run row, carrying the run id", len(run_rows) == 1
       and run_rows[0][0] == "check-run")
 check("the declared conditions are stored as data",
-      json.loads(run_rows[0][2]) == CONDITIONS)
+      json.loads(run_rows[0][2]) == dict(CONDITIONS, run_name=None))
+check("a run nobody named says so, instead of inventing a name",
+      run_rows[0][1] is None)
 check("WAL is on, so concurrent writers serialise instead of failing",
       archive.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal")
 
 # 2. attaching: another process reads the run back from the file alone
 attached = RunArchive(ARCHIVE)
 check("attaching reads the run id back", attached.run_id == "check-run")
-check("attaching reads the conditions back", attached.conditions == CONDITIONS)
+check("attaching reads the conditions back",
+      attached.conditions == dict(CONDITIONS, run_name=None))
 check("the stack is the run's declared one", attached.stack == "legacy")
+
+# 2b. the name the owner declares for a comparative run
+os.environ[RUN_NAME_ENV] = "the invoice session"
+named = fresh()
+check("the declared name is stored as data, among the conditions",
+      named.conditions["run_name"] == "the invoice session")
+check("and promoted to a column of the run row, a copy of it",
+      named.connection.execute("SELECT name FROM run").fetchone()[0]
+      == "the invoice session")
+check("attaching reads the name back with the rest of the conditions",
+      RunArchive(ARCHIVE).conditions["run_name"] == "the invoice session")
+del os.environ[RUN_NAME_ENV]
 
 # 3. the promoted columns are copies of what the JSON already holds
 archive = fresh()
