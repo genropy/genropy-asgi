@@ -388,40 +388,85 @@ recognised rather than discovered.
     the login (the +28% register calls); confirm the report names it precisely
     enough to start Phase 6 from.
 
-- [ ] **Phase 6**: close the login divergence (+28% register calls)
+- [ ] **Phase 6**: uniform the connection register item
   - Run: opus / high
-  - Pattern: the divergence report of Phase 5; the excluded hypotheses are on
-    record (bridge code does not call the register itself; the register does
-    not answer differently) — do NOT re-test them, `temp/problemi_ponte_2026-08-22.md`
-  - Files: unknown until diagnosed — the fix lands where the fault is
-    (genropy-asgi, genro-asgi via its own session per the five-step rule, or
-    the replica itself)
-  - Decisions: what is already excluded stays excluded; the remaining lead is
-    that the site is invoked one extra round on login; a fix in genro-asgi core
-    is NOT implemented here — it is written as problem→solution→prompt for the
-    core session, and this phase waits on it (mark `[~]` blocked if so).
-  - Details: with `site_caller` on both traces, name the caller of every extra
-    register call in the login exchanges (147 vs 115 on the same three HTTP
-    exchanges); locate the extra site invocation; fix on the side that owns the
-    fault; re-run the login segment until it converges.
-  - Done: the replica run passes the three login exchanges with zero
-    unexplained divergences; the register-call counts of the two stacks agree
-    on the login segment.
-  - Verify: now — read the convergence report of the login segment and the
-    one-paragraph cause written in notes.md: the cause must be named, not
-    described by its symptom.
+  - Pattern: `src/genropy_asgi/siteregister/siteregister_client.py`, where the
+    item's shape is defined today (`EPOCH_STAMPS:90`, `avatar_extra:1380`,
+    `subscribed_paths:159`); the legacy answer recorded in the Phase 5 report
+    is the target shape; contract tests under `tests/`, implementation tests
+    under `tests/x/` (parent CLAUDE.md rule 10)
+  - Files: src/genropy_asgi/siteregister/siteregister_client.py, tests/
+  - Decisions: the divergence is a DEFECT of the bridge to fix, not an S rule
+    to declare (owner, 2026-08-25, after reading the Phase 5 report): the two
+    stacks reach the call the same way — both `site_caller` chains name
+    `gnrwebpage.py:325 _register_new_page` — and answer it differently, and
+    the project's standing rule is that site-facing semantics imitate
+    pre_refactoring in full (project CLAUDE.md, cemented decisions). The shape
+    is defined in OUR OWN source, so the fix lands in genropy-asgi and needs no
+    five-step routing to the core session. The legacy key set is the target:
+    the bridge's item must answer what the site expects, not what the bridge
+    finds convenient.
+  - Details: the first cycle against the bridge stops in the FIRST exchange, at
+    register call 5, on the key set of the connection register item answered by
+    `client:new_connection` — reference `datachanges`, `datachanges_idx`,
+    `electron_static`, `register_name`, `subscribed_paths`; bridge
+    `avatar_extra`, `last_refresh_ts`, `last_rpc_ts`, `last_user_ts`, `store`.
+    Uniform the item so both stacks answer the same key set, decide per key
+    whether the bridge-only ones are dropped or moved out of the answer, and
+    re-run the cycle. The `+28%` login divergence (147 vs 115 register calls on
+    the three login exchanges) sits BEHIND this one and does not disappear —
+    it is Phase 7's, not this phase's.
+  - Done: `pytest tests/` green and `ruff check .` clean; a cycle against the
+    bridge replaying the drive_login reference passes exchange 1 register
+    call 5 — the connection item answers the same key set on both stacks — and
+    stops (or completes) beyond it; the run is archived.
+  - Verify: now — read the new stop report: the connection item is gone from
+    it, and whatever the replay stops on next is named precisely enough to
+    work from.
 
-- [ ] **Phase 7**: full-session convergence
+- [ ] **Phase 7**: converge the drive_login reference end to end
+  - Run: opus / high
+  - Pattern: the Phase 5 cycle, repeated; the excluded hypotheses on the +28%
+    are on record (bridge code does not call the register itself; the register
+    does not answer differently) — do NOT re-test them,
+    `temp/problemi_ponte_2026-08-22.md`
+  - Files: unknown until each divergence shows — the fix lands where the fault
+    is (genropy-asgi here, genro-asgi via its own session per the five-step
+    rule, or the replica itself)
+  - Decisions: iterate divergence by divergence, the owner judging where the
+    fault lies at each stop; a fix in the genro-asgi core is NOT implemented
+    here — it is written as problem→solution→prompt for the core session and
+    this phase waits on it (`[~]` blocked is expected, not a failure); a
+    divergence that is neither fixed nor fixable becomes a NAMED declared rule
+    in the Phase 3 table with the owner's sign-off — nothing is silently
+    tolerated. The `+28%` login divergence is expected among these stops and
+    carries its own requirement: the cause is NAMED, never described by its
+    symptom.
+  - Details: repeat the cycle — copy db, replay the drive_login reference
+    against the bridge, stop, judge, fix, restart — until the four exchanges
+    replay with no unexplained divergence. Write one paragraph per closed
+    divergence in notes.md: what it was, where it was fixed, why.
+  - Done: a full cycle of the drive_login reference against the bridge
+    completes with zero unexplained divergences; the register-call counts of
+    the two stacks agree on the login segment; the run is archived.
+  - Verify: now — read the clean report and the notes paragraphs: every closed
+    divergence has a named cause, and every recognised one a declared rule you
+    signed.
+
+- [ ] **Phase 8**: full-session convergence
   - Run: opus / medium
-  - Pattern: the Phase 5 cycle, repeated
-  - Files: unknown until the divergences show — same routing rule as Phase 6
+  - Pattern: the Phase 7 loop, on the owner's own browser session
+  - Files: unknown until the divergences show — same routing rule as Phase 7
   - Decisions: known divergences (S1/S2/S3/S5) are recognised by the Phase 3
     rules and reported, never "fixed" here — they are core work with their own
     track; every unexplained divergence is either fixed or becomes a named,
-    declared rule with the owner's sign-off (nothing is silently tolerated).
-  - Details: iterate the full cycle — copy db, replay the owner's reference
-    session, stop, judge (owner decides where the fault is), fix, restart —
-    until the whole session replicates with no unexplained divergence.
+    declared rule with the owner's sign-off (nothing is silently tolerated);
+    the db is copied for repeat replays of THIS reference even same-stack, as
+    it carries `saveRecordCluster` (Phase 5's caveat).
+  - Details: the owner performs a fresh reference session in the browser on the
+    legacy stack, with the recorders as Phase 1 shaped them; then iterate the
+    full cycle — copy db, replay, stop, judge, fix, restart — until the whole
+    session replicates with no unexplained divergence.
   - Done: one full cycle of the owner's reference session against the bridge
     completes with zero unexplained divergences; the closing run is archived;
     the recognised-divergence list in the report matches the declared rules
@@ -435,17 +480,32 @@ recognised rather than discovered.
 - Phases run strictly in order. Phase 1 changes the register line shape, so
   the reference sessions are re-produced AFTER it lands (the owner performs
   the reference session once, with recorders updated, at the start of the
-  Phase 7 cycle; scripted `drive_login` references cover Phases 1-6 — amended
+  Phase 8 cycle; scripted `drive_login` references cover Phases 1-7 — amended
   by the foreman on 2026-08-25 answering Phase 5's clarify: the login segment
-  Phases 5 and 6 work on is fully exhibited by the drive_login reference, so
-  the owner's browser session is needed once, at Phase 7).
+  Phases 5-7 work on is fully exhibited by the drive_login reference, so
+  the owner's browser session is needed once, at the last phase).
 - The `/_ping` heartbeat and other browser-idle traffic: what the replica
   skips is decided at Phase 2 execution and recorded in notes.md — the rule
   must be declared, never implicit.
 - The two stacks share 127.0.0.1: cookie residue across ports is a known
   artefact, not a divergence (documented in the bench README).
-- Phase 6 may block on the core session (five-step rule: the core is modified
+- Phase 7 may block on the core session (five-step rule: the core is modified
   by its own session). A `[~]` there is expected, not a failure.
+- Re-phased by the foreman on 2026-08-25, when Phase 5 measured that the first
+  cycle against the bridge stops long BEFORE the login: at exchange 1, register
+  call 5, on the connection register item's key set. The old Phase 6 assumed the
+  `+28%` was the first thing to meet. Now: Phase 6 uniforms that item (a named,
+  bounded defect the owner already ruled on), Phase 7 iterates the remaining
+  divergences of the drive_login reference — the `+28%` among them — and Phase 8
+  is the owner's own browser session. Phase 6 is the FIRST phase of this
+  workflow to touch product code under `src/`: `pytest tests/` is a gate there,
+  and a failing contract test is a STOP, never something to adapt.
+- Two marker debts for `/quality-check` at the close: Phase 5 wrote no
+  `wf:phase-5:new` markers on its new callables (recorded in its notes), and two
+  Phase 4 markers still stand in `benchmarks/compare/recording_engine_factory.py`
+  (`append_record`, `build_site`). Naming inside `benchmarks/compare` is
+  delegated to the executing session by the owner (2026-08-25), so the sweep is
+  a marker sweep, not a naming review.
 - Genropy parity, the evidence behind the precondition (2026-08-24): at 07:13
   temp/legacy_venv (frozen 2026-08-23) and the editable checkout already
   differed in 9 source files / 181 lines, one shifting gnrwsgisite.py by six
