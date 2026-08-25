@@ -33,15 +33,21 @@ recognised rather than discovered.
     benchmarks/compare/run_archive_check.py,
     benchmarks/compare/drive_login.py
   - Decisions: field name `site_caller` (owner delegated naming for internal
-    instrumentation, 2026-08-24); content `file:line` plus function name of the
-    first frame OUTSIDE the register client (and outside the recorder itself);
-    stack inspection cost per call is accepted — fidelity phases do not read
-    timings.
+    instrumentation, 2026-08-24); content `file:line function` of the THREE
+    outermost-going frames OUTSIDE the register client and the recorder,
+    innermost first, joined by ` <- ` (owner, 2026-08-24, after the first
+    measurement showed one frame naming only genropy's service cache check on
+    242 of the 384 calls a login makes); the field is ALSO a promoted column of
+    the archive, a copy, so that `GROUP BY site_caller` answers which call path
+    a run spends its calls and milliseconds on (owner, 2026-08-24 — a table of
+    chains with an id was weighed and refused: it would make the chain live in
+    one place only); stack inspection cost per call is accepted — the instrument
+    may cost time while measuring fidelity, never while measuring performance,
+    and that mode is macro-phase 3's to build as a declared run condition.
   - Details: extend the recorded register line with `site_caller`. Only the
     outermost site call is recorded (existing rule), so the walk stops at the
     first frame that belongs neither to the recorder nor to the register client
-    module. Keep the field inside the JSON line — no new promoted column.
-    Update the check script to assert the field's presence and shape on a real
+    module. Update the check script to assert the field's presence and shape on a real
     line from both stacks (legacy via `drive_login`, bridge via the same driver
     on 8098). The legacy wrapper path is asserted in register_recorder_check.py
     (legacy venv), the bridge mixin path in bridge_coverage_check.py (bridge
