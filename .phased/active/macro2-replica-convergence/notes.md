@@ -328,3 +328,89 @@
   second time. A second replay into the same stack starts from a populated
   register, which is the one thing every run of this bench forbids: the check
   would have measured the contamination and not the phase.
+
+## Phase 6
+
+The per-key decisions the Details asked for, kind by kind. The target is the
+answer the legacy daemon gave, read off the Phase 5 archives and confirmed
+against the daemon's own source (`gnr/web/daemon/siteregister.py`).
+
+Added to every kind, because `BaseRegister.addRegisterItem`:135 put them on
+every row the daemon handed out:
+
+- `register_name` — the daemon seeded it on the row itself. The view knows
+  which kind it is projecting, so it answers it.
+- `subscribed_paths` — the page row's own set, read through the existing
+  `_item_subscribed_paths`; empty off the page register, as that helper already
+  answered. Cheap and lock-free.
+- `datachanges` — the empty list, NOT the real queue. On this stack the queue is
+  not on the row: it lives in the page's collectors, and the surface that reads
+  it is `ServerStore.datachanges`, which drains them there and is the only thing
+  the legacy reads changes through (`daemon/siteregister_client.py`:403 reads
+  the row because on the daemon the row IS the queue). Putting the real content
+  on the projected row would take `dispatch_lock` once per page inside
+  `pages()`, which that read path deliberately avoids as a hot path.
+- `datachanges_idx` — `0`. The bridge numbers each change and not each item
+  (`change_idx: 0` on every change it builds), so there is no item counter to
+  answer with.
+
+Added per kind:
+
+- `electron_static` on a connection — the daemon's `create` took it and the
+  bridge did not carry it at all. Added to `_conn_kwargs`, so a real electron
+  client's value is stored and not invented at read time.
+- `user` on a page — the daemon stored it; here it is DERIVED through
+  `_page_owner`. The cemented decision (ownership derived, never stored) is
+  untouched: the key the legacy reads is answered, and nothing is written on the
+  row to answer it.
+- `subscribed_tables` on a page — the daemon's name for what the core row
+  carries as `table_subscriptions`. The translation moved INTO the projection,
+  so `page()` lost the bolt-on it did after the fact and `new_page` answers the
+  key too, which it did not before.
+
+Removed from the site-facing row:
+
+- `store` — the core's name for the live Bag. `data` is the daemon-era name and
+  is the same object; two names on one answer was a bridge invention.
+- `last_refresh_ts`, `last_user_ts`, `last_rpc_ts` — the foreman's decision of
+  2026-08-25. They stay on the core row, where the expiry sweep reads them as
+  floats. The datetime dressing that carried them out is gone with them, and so
+  is the `EPOCH_STAMPS` constant.
+- `avatar_extra` on a connection at birth — the daemon's `create` does not take
+  it; `Connection.change_user` (connection.py:169) writes it at LOGIN. So it
+  left `_conn_kwargs` and the projection answers it only when the row carries
+  it (`LEGACY_LATE_FIELDS`). This is the one field whose presence is
+  conditional, and it has to be: the pre-login read and the post-login read of
+  the same row have different key sets on the legacy too.
+- everything else the core keeps for itself — the collectors, the page tree
+  (`root_page_id`, `parent_page_id`), `store_subscriptions`, `dbevents`,
+  `avatar_key`, `user_view`. They were never in a daemon answer.
+
+Three things the projection surfaced that the plan did not name:
+
+- `data` is no longer aliased onto the answer at birth and left there. The
+  daemon attaches it in `get_item` when the caller asks (`include_data`) and its
+  client attaches it to a lifecycle answer; the bridge was setting the alias on
+  the LIVE row at birth, so every later read of that row carried `data` where
+  the legacy read carried none. Now `_legacy_row` never carries it and the two
+  callers that owe it — `get_item` under `include_data`, and the lifecycle
+  answer — add it. The alias on the live row stays, because `get_dbenv` reads it.
+- `pages()` and `connections()` were calling `_legacy_row` with no
+  `register_name`. Harmless while the view was a copy; with a projection it is
+  the field list, so both now pass their kind and `_legacy_row` takes it as a
+  required argument.
+- four contract assertions in `tests/test_register_client_units.py` asserted the
+  OLD answer and were rewritten with the owner's approval, each preserving what
+  it was really testing: `store` visible in the answer moved to the core row
+  (`test_new_connection_is_born_guest_with_live_data_bag`,
+  `test_new_page_seed_data_becomes_the_live_store`); the identity of two
+  `new_connection` answers became the identity of the row and of its Bag
+  (`test_new_connection_twice_answers_the_same_row`, renamed); the page's `user`
+  became "answered by the view, absent from the row"; and the three stamp
+  assertions became their absence from the view plus their presence as floats on
+  the core row, the foreman having licensed exactly that.
+
+No `tests/x/` folder was created. The three new tests assert the exact key set
+each kind answers, which is behavioural continuity and not a photograph of an
+implementation, so they went into `tests/` beside the other legacy-row contract
+tests. Nothing this phase built needed an implementation test.
