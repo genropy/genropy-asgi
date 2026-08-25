@@ -246,6 +246,23 @@ class ServerStore:
             return default
         return self._copied(data.getItem(path, default))
 
+    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # noqa: N802 - legacy Bag surface
+        """Write one path — the store keeps a copy, never the caller's own object.
+
+        The mirror of the read above, and the same reason: the daemon received
+        this value over the wire, so what it kept was a pickle of it and the
+        caller's later mutations never reached the register. Measured on
+        2026-08-25 on ``GnrApp.getAvatar`` (``gnrapp.py:1468``), which POPS
+        ``user_id``, ``user_name`` and ``tags`` out of the dict that
+        ``tableCachedData`` has just written into the page store: in-process the
+        stored object was the popped one, and the next login read an avatar
+        stripped of the three, falling back to the username for all of them.
+        """
+        data = self.data
+        if data is None:
+            return None
+        return data.setItem(path, self._copied(value), **kwargs)
+
     def _copied(self, value: Any) -> Any:  # wf:phase-7:new
         """The value as the wire handed it over: nothing the site can write through.
 
