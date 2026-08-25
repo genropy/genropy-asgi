@@ -350,6 +350,7 @@ class Replica:
         self.compared = []
         self.uncompared = []
         self.replayed = {}
+        self.timings = []
         self.elapsed_ms = 0.0
         # where this replay begins in the target's archive: the stack answers
         # every cycle into the file it minted at startup.
@@ -388,7 +389,12 @@ class Replica:
                 mark = f"   FAIL expected {expected}"
                 self.failures.append((position, record.get("path"),
                                       record.get("rpc_method"), expected, status))
+            if self.target is not None:
+                self.replayed[record["exchange_id"]] = self.get_replayed_exchange(record)
             divergence = self.compare_exchange(record, position, race)
+            label = (f"{record.get('method')} {record.get('path')} "
+                     f"{record.get('rpc_method') or ''}").strip()
+            self.timings.append((position, label, *self.get_durations(record)))
             print(f"[{position:2d}/{len(exchanges)}] {record.get('method')} "
                   f"{record.get('path')} {record.get('rpc_method') or ''} "
                   f"-> {status}  {self.get_timing(record)}{mark}")
@@ -435,12 +441,11 @@ class Replica:
             return self.not_compared(position, label,
                                      "before the first RPC: what each stack still "
                                      "builds lazily, it builds in a different process")
-        replayed = self.get_replayed_exchange(record)
+        replayed = self.replayed.get(record["exchange_id"])
         if replayed is None:
             return self.not_compared(position, label,
                                      f"the target archive carries no exchange stamped "
                                      f"with {record.get('exchange_id')}")
-        self.replayed[record["exchange_id"]] = replayed
         self.compared.append((
             position, label,
             len(self.trace.get_register_lines(record["exchange_id"])),
@@ -466,14 +471,66 @@ class Replica:
         the reference was served while a browser or a driver was driving it.
         Timings are macro-phase 3's work, under its own declared conditions.
         """
-        reference_ms = record.get("duration_ms")
-        replayed = self.replayed.get(record.get("exchange_id"))
-        replica_ms = (replayed or {}).get("duration_ms")
+        reference_ms, replica_ms = self.get_durations(record)
         if reference_ms is None:
             return ""
         if replica_ms is None:
-            return f"{reference_ms:.0f} ms on the reference"
-        return f"{reference_ms:.0f} ms on the reference, {replica_ms:.0f} on the replica"
+            return f"{self.reference_stack} {reference_ms:.0f} ms"
+        return (f"{self.reference_stack} {reference_ms:.0f} ms  "
+                f"{self.replica_stack} {replica_ms:.0f} ms  "
+                f"({self.get_delta(reference_ms, replica_ms)})")
+
+    def get_durations(self, record):  # wf:phase-7:new
+        """What the two stacks recorded for this exchange, reference first."""
+        replayed = self.replayed.get(record.get("exchange_id"))
+        return record.get("duration_ms"), (replayed or {}).get("duration_ms")
+
+    def get_delta(self, reference_ms, replica_ms):  # wf:phase-7:new
+        """The replica's time against the reference's, as a signed percentage."""
+        if not reference_ms:
+            return "no baseline"
+        delta = (replica_ms - reference_ms) / reference_ms * 100
+        return f"{delta:+.0f}%"
+
+    @property
+    def reference_stack(self):  # wf:phase-7:new
+        return self.trace.conditions.get("stack") or "reference"
+
+    @property
+    def replica_stack(self):  # wf:phase-7:new
+        return (self.target.conditions.get("stack") if self.target else None) or "replica"
+
+    @property
+    def response_times(self):  # wf:phase-7:new
+        """The response-time comparison over every exchange both stacks timed.
+
+        Response time is measured identically on the two stacks: the HTTP recorder
+        wraps the application, starts when the request arrives and stops when the
+        last chunk of the reply has been handed back — the network and the server's
+        own socket write are outside it. The replay sends the recorded method, path
+        and body, with only the identifiers the target mints rewritten, so it is the
+        same call on the same metre.
+
+        Not a benchmark: both stacks run under two recorders, and the reference was
+        served while a driver or a browser was driving it. Macro-phase 3 measures
+        performance, under its own declared conditions.
+        """
+        pairs = [(position, label, a, b) for position, label, a, b in self.timings
+                 if a is not None and b is not None]
+        if not pairs:
+            return ""
+        reference_total = sum(pair[2] for pair in pairs)
+        replica_total = sum(pair[3] for pair in pairs)
+        lines = [f"response time, {self.reference_stack} against {self.replica_stack} "
+                 f"(same metre: request in, reply out; not a benchmark)"]
+        for position, label, reference_ms, replica_ms in pairs:
+            lines.append(f"  [{position}] {label}: {reference_ms:.0f} ms -> "
+                         f"{replica_ms:.0f} ms  "
+                         f"({self.get_delta(reference_ms, replica_ms)})")
+        lines.append(f"  total over {len(pairs)} exchange(s): "
+                     f"{reference_total:.0f} ms -> {replica_total:.0f} ms  "
+                     f"({self.get_delta(reference_total, replica_total)})")
+        return "\n".join(lines)
 
     def get_replayed_exchange(self, record):
         """The target's own exchange for this one, once the target has written it."""
@@ -560,6 +617,10 @@ if __name__ == "__main__":
                   f"expected {expected}, got {status}")
         sys.exit(1)
     print(replica.summary)
+    if replica.response_times:
+        print()
+        print(replica.response_times)
+    print()
     print(f"every exchange answered the status the trace carries, "
           f"{len(replica.races)} of them as a recognised race of the reference")
     if replica.diff:

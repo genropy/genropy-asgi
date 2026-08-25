@@ -580,3 +580,13 @@ call, with only the identifiers the target mints rewritten. Still not a
 benchmark, and the report says so: both stacks run under two recorders, and
 timings belong to macro-phase 3 under its own declared conditions. The wall clock
 survives in one place only, the closing line, as how long the cycle took.
+
+Then the owner said what he was actually after and was still not seeing: the
+comparison of the response times, legacy against genropy-asgi. Two numbers on a
+line are not a comparison. The report now closes on one — every exchange the
+replay performed, the two durations, the signed percentage, and the total — with
+the stacks named from the conditions each archive declares rather than called
+"reference" and "replica". The cold-start exchange is in it: its register lines
+are not compared, but a response time is a response time. Measured on the closing
+cycle: 622 ms on the legacy against 447 on the bridge over the four exchanges,
+-28%.
