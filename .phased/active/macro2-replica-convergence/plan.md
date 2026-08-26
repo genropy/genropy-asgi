@@ -726,6 +726,19 @@ recognised rather than discovered.
 
 ## Notes
 
+- **READ BEFORE QUOTING ANY FIGURE OF PHASES 5 TO 7.** Phase 8 measured that the
+  two stacks were not comparable and the bench could not see it: the launchers
+  read the database from the instance's own file and the debug flag from a
+  command line, while the SITE reads both from the merged configuration. So the
+  legacy ran in debug while its run row declared debug off, and every comparison
+  of this workflow up to Phase 7 — the 33/33 and 35/35 of the closing cycle
+  included — was between a site in debug and one not. Both readings now go
+  through `PathResolver.get_instanceconfig`/`get_siteconfig`. Two consequences
+  the foreman records as plan-holder: no Phase 5-7 figure may be quoted again
+  without saying it was taken under mismatched debug; and a run row that
+  DECLARES a condition the launcher never imposed is a class of defect, not one
+  instance — `/quality-check` looks for others of the same shape.
+
 - Phases run strictly in order. Phase 1 changes the register line shape, so
   the reference sessions are re-produced AFTER it lands (the owner performs
   the reference session once, with recorders updated, at the start of the
