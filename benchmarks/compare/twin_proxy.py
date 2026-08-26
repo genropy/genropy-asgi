@@ -259,14 +259,14 @@ class TwinInstances:
         self.resolver = PathResolver()
 
     @property
-    def bridge_name(self):    # wf:phase-8:new
+    def bridge_name(self):
         """The instance the bridge serves: the legacy one plus the suffix."""
         return f"{self.legacy_name}{BRIDGE_SUFFIX}"
 
-    def get_instance_path(self, name):    # wf:phase-8:new
+    def get_instance_path(self, name):
         return self.resolver.instance_name_to_path(name)
 
-    def get_database(self, name):    # wf:phase-8:new
+    def get_database(self, name):
         """The db an instance will actually open, read as the site reads it.
 
         Genropy's own merge, not the instance's file alone: the `db` node can
@@ -277,15 +277,15 @@ class TwinInstances:
         return dict(self.resolver.get_instanceconfig(name).getAttr("db"))
 
     @property
-    def legacy_database(self):    # wf:phase-8:new
+    def legacy_database(self):
         return self.get_database(self.legacy_name)
 
     @property
-    def bridge_database(self):    # wf:phase-8:new
+    def bridge_database(self):
         return self.get_database(self.bridge_name)
 
     @property
-    def ready(self):    # wf:phase-8:new
+    def ready(self):
         """Is the bridge's twin instance there, and does it name another db?
 
         The resolver raises when the instance does not exist, which is an answer
@@ -301,7 +301,7 @@ class TwinInstances:
         return self.bridge_database.get("dbname") != self.legacy_database.get("dbname")
 
     @property
-    def report(self):    # wf:phase-8:new
+    def report(self):
         """What is missing and how to make it: a refusal names its own remedy."""
         source = self.get_instance_path(self.legacy_name)
         target = os.path.join(os.path.dirname(source), self.bridge_name)
@@ -325,7 +325,7 @@ class DatabaseCopy:
         self.target = target
 
     @property
-    def connection_options(self):    # wf:phase-8:new
+    def connection_options(self):
         """Host and port as the instance declares them, and nothing invented."""
         options = []
         for flag, key in (("-h", "host"), ("-p", "port"), ("-U", "user")):
@@ -335,14 +335,14 @@ class DatabaseCopy:
         return options
 
     @property
-    def commands(self):    # wf:phase-8:new
+    def commands(self):
         """The two commands, in the order they have to run."""
         return [["dropdb", *self.connection_options, "--if-exists",
                  self.target["dbname"]],
                 ["createdb", *self.connection_options, "-T",
                  self.source["dbname"], self.target["dbname"]]]
 
-    def make_copy(self):    # wf:phase-8:new
+    def make_copy(self):
         """Drop the copy and make it again; a failure stops the run, loudly."""
         for command in self.commands:
             print(f"  {' '.join(command)}")
@@ -364,7 +364,7 @@ class StackProcess:
         self.minted = threading.Event()
         self.serving = threading.Event()
 
-    def launch_process(self):    # wf:phase-8:new
+    def launch_process(self):
         """Start the child and read its output for as long as it lives."""
         self.process = subprocess.Popen(
             self.command, env=self.environment, cwd=BENCH_ROOT,
@@ -372,7 +372,7 @@ class StackProcess:
             text=True, bufsize=1)
         threading.Thread(target=self.read_output, daemon=True).start()
 
-    def read_output(self):    # wf:phase-8:new
+    def read_output(self):
         """Relay every line, and watch for the archive and for readiness."""
         for line in self.process.stdout:
             print(f"[{self.label}] {line.rstrip()}", flush=True)
@@ -384,7 +384,7 @@ class StackProcess:
                 self.serving.set()
 
     @property
-    def is_serving(self):    # wf:phase-8:new
+    def is_serving(self):
         """Is this stack up? Read from the LOG, never from a request to the site.
 
         A readiness probe is an exchange, and the recorder writes it into the
@@ -392,7 +392,7 @@ class StackProcess:
         """
         return self.serving.is_set() and (self.minted.is_set() or not self.mints_archive)
 
-    def wait_serving(self, timeout=STARTUP_WAIT_SECONDS):    # wf:phase-8:new
+    def wait_until_serving(self, timeout=STARTUP_WAIT_SECONDS):
         """Wait until it serves — or until it dies, which is an answer too."""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -404,7 +404,7 @@ class StackProcess:
             time.sleep(STARTUP_POLL_SECONDS)
         raise SystemExit(f"{self.label} did not come up within {timeout:.0f}s")
 
-    def stop(self):    # wf:phase-8:new
+    def stop(self):
         """Ask the child to go, then insist; the pool goes with the launcher."""
         if self.process is None or self.process.poll() is not None:
             return
@@ -429,10 +429,10 @@ class SiteDaemonProcess(StackProcess):
         self.site_path = site_path
 
     @property
-    def descriptor_path(self):    # wf:phase-8:new
+    def descriptor_path(self):
         return os.path.join(self.site_path, DAEMON_DESCRIPTOR)
 
-    def clear_register(self):    # wf:phase-8:new
+    def clear_register(self):
         """Delete the saved register, so the run starts from an empty one."""
         for name in REGISTER_PICKLES:
             path = os.path.join(self.site_path, name)
@@ -441,7 +441,7 @@ class SiteDaemonProcess(StackProcess):
                 os.remove(path)
 
     @property
-    def is_serving(self):    # wf:phase-8:new
+    def is_serving(self):
         """Does the descriptor name THIS process? Then the register is answering."""
         if not os.path.exists(self.descriptor_path):
             return False
@@ -477,7 +477,7 @@ class BrowserShadow:
         self.diff = None
         threading.Thread(target=self.serve_legs, daemon=True).start()
 
-    def serve_legs(self):    # wf:phase-8:new
+    def serve_legs(self):
         """Build this browser's own view of the two runs, then follow it."""
         self.reference = TraceReader(self.proxy.legacy.archive_path)
         self.shadow = TraceReader(self.proxy.bridge.archive_path)
@@ -485,7 +485,7 @@ class BrowserShadow:
         while True:
             leg = self.legs.get()
             try:
-                self.proxy.follow(self, leg)
+                self.proxy.follow_leg(self, leg)
             except Exception as failure:
                 self.proxy.record_divergence(
                     leg, ERROR, f"the shadow leg of {leg.method} {leg.target} "
@@ -493,7 +493,7 @@ class BrowserShadow:
             finally:
                 leg.done.set()
 
-    def follow_leg(self, leg):    # wf:phase-8:new
+    def queue_leg(self, leg):
         """Hand this browser's thread one leg, and wait for it to be done."""
         self.legs.put(leg)
         leg.done.wait()
@@ -519,7 +519,7 @@ class ShadowLeg:
 class ShadowClient(ReplicaClient):
     """The bridge-side client: the browser's own headers, this side's cookies."""
 
-    def send_shadow(self, method, target, headers, body):    # wf:phase-8:new
+    def send_shadow(self, method, target, headers, body):
         """One shadow request: the headers as they came, the jar as it is here.
 
         The connection is kept alive across requests and the server may close it
@@ -537,7 +537,7 @@ class ShadowClient(ReplicaClient):
             self.conn.close()
             return self.send_once(method, target, outgoing, body)
 
-    def send_once(self, method, target, headers, body):    # wf:phase-8:new
+    def send_once(self, method, target, headers, body):
         """One attempt on the current connection; http.client reopens a closed one."""
         self.conn.request(method, target, body=body, headers=headers)
         response = self.conn.getresponse()
@@ -575,7 +575,7 @@ class TwinProxy:
         self.rpc_served = False
         self.server = None
 
-    def open_comparison(self):    # wf:phase-8:new
+    def open_comparison(self):
         """Both stacks are up: say which two runs are being compared, then serve."""
         print(StructuralDiff(TraceReader(self.legacy.archive_path),
                              TraceReader(self.bridge.archive_path),
@@ -588,7 +588,7 @@ class TwinProxy:
         print("ERROR = the reply the browser would have seen; "
               "WARNING = the register calls behind it")
 
-    def get_shadow(self, identity):    # wf:phase-8:new
+    def get_shadow(self, identity):
         """The shadow of that browser, made — with its thread — on first sight."""
         with self.shadows_lock:
             shadow = self.shadows.get(identity)
@@ -598,7 +598,7 @@ class TwinProxy:
                 print(f"  a browser appears — shadow #{len(self.shadows)}")
             return shadow
 
-    def get_identity(self, headers):    # wf:phase-8:new
+    def get_identity(self, headers):
         """The browser's mark, minted here the first time and never changing.
 
         Returns the mark and whether it was minted now, because a mark nobody has
@@ -610,7 +610,7 @@ class TwinProxy:
                 return value, False
         return uuid.uuid4().hex[:16], True
 
-    def get_browser_headers(self, headers):    # wf:phase-8:new
+    def get_browser_headers(self, headers):
         """The browser's headers with the bench's own cookie taken back out.
 
         Neither site ever sees it: the proxy's mark is the proxy's business, and a
@@ -625,20 +625,20 @@ class TwinProxy:
         return cleaned
 
     @property
-    def report_dir(self):    # wf:phase-8:new
+    def report_dir(self):
         return os.environ.get(ARCHIVE_DIR_ENV) or DEFAULT_ARCHIVE_DIR
 
     @property
-    def run_slug(self):    # wf:phase-8:new
+    def run_slug(self):
         """The declared name as a filename: what the reports are called."""
         return re.sub(r"[^A-Za-z0-9_-]+", "-", self.run_name).strip("-")
 
-    def get_report_path(self, number, severity):    # wf:phase-8:new
+    def get_report_path(self, number, severity):
         """One file per divergence, numbered and weighed: a finding of its own."""
         return os.path.join(self.report_dir,
                             f"{self.run_slug}-{number:02d}-{severity.lower()}.txt")
 
-    def get_next_twin(self):    # wf:phase-8:new
+    def get_next_twin(self):
         """The mark this proxy puts on the legacy leg of the next request.
 
         It is the id of ONE call, and the unit the whole comparison is written in:
@@ -649,7 +649,7 @@ class TwinProxy:
             self.ordinal += 1
             return f"twin-{self.ordinal:05d}"
 
-    def send_legacy(self, method, target, headers, body, twin):    # wf:phase-8:new
+    def send_legacy(self, method, target, headers, body, twin):
         """The leg the browser waits on: one connection, one request, one reply."""
         outgoing = {key: value for key, value in headers.items()
                     if key.lower() not in HOP_BY_HOP}
@@ -663,7 +663,7 @@ class TwinProxy:
         finally:
             connection.close()
 
-    def dispatch(self, method, target, headers, body):    # wf:phase-8:new
+    def dispatch_request(self, method, target, headers, body):
         """One request on both stacks, in sequence; the LEGACY reply is returned."""
         identity, minted = self.get_identity(headers)
         headers = self.get_browser_headers(headers)
@@ -679,12 +679,12 @@ class TwinProxy:
         # it: the two legs of one request in sequence, browsers in parallel.
         # Whatever happens over there is a divergence to report, never a failure
         # the browser is told about.
-        self.get_shadow(identity).follow_leg(
+        self.get_shadow(identity).queue_leg(
             ShadowLeg(method, target, headers, body, twin,
                       status, reply_headers, reply_body, identity))
         return status, reply_headers, reply_body
 
-    def follow(self, shadow, leg):    # wf:phase-8:new
+    def follow_leg(self, shadow, leg):
         """The shadow leg and its comparison, on this browser's own thread.
 
         A STATIC is settled first, and before any archive is read. It is dispatched
@@ -698,7 +698,7 @@ class TwinProxy:
         if self.is_static(leg.target, leg.reply_headers):
             shadow.client.replaying = None
             shadow_status, _body = self.send_shadow(shadow, leg)
-            self.say(leg, f"{leg.method} {leg.target.split('?')[0]}",
+            self.report_call(leg, f"{leg.method} {leg.target.split('?')[0]}",
                      f"{leg.status}/{shadow_status}  static, not compared")
             return
         reference = self.get_marked_exchange(shadow.reference, TWIN_HEADER, leg.twin)
@@ -720,7 +720,7 @@ class TwinProxy:
         self.compare_reply(leg, label, shadow_status, shadow_body)
         self.compare_register(shadow, leg, reference, label, shadow_status)
 
-    def compare_reply(self, leg, label, shadow_status, shadow_body):    # wf:phase-8:new
+    def compare_reply(self, leg, label, shadow_status, shadow_body):
         """What the BROWSER would have seen on each stack — the ERROR half.
 
         The status and the whole body, the second masked of the identifiers each
@@ -742,13 +742,13 @@ class TwinProxy:
         if difference is not None:
             self.record_divergence(leg, ERROR, f"{label}: {difference}")
 
-    def send_shadow(self, shadow, leg):    # wf:phase-8:new
+    def send_shadow(self, shadow, leg):
         """The request the browser just made, sent to the bridge in its turn."""
         return shadow.client.send_shadow(
             leg.method, shadow.identity_map.get_adapted(leg.target), leg.headers,
             self.get_adapted_body(shadow, leg.body))
 
-    def get_adapted_body(self, shadow, body):    # wf:phase-8:new
+    def get_adapted_body(self, shadow, body):
         """The body with the legacy's identifiers rewritten into the bridge's.
 
         Decoded as latin-1 and encoded back: the tokens are ASCII, and every
@@ -759,7 +759,7 @@ class TwinProxy:
         return shadow.identity_map.get_adapted(
             body.decode("latin-1")).encode("latin-1")
 
-    def is_static(self, target, reply_headers):    # wf:phase-8:new
+    def is_static(self, target, reply_headers):
         """The recorder's own rule, read off the legacy reply: the content type decides."""
         if target.split("?")[0].endswith("favicon.ico"):
             return True
@@ -768,7 +768,7 @@ class TwinProxy:
                 return any(token in value.lower() for token in STATIC_CONTENT_TYPES)
         return False
 
-    def get_marked_exchange(self, reader, header, value):    # wf:phase-8:new
+    def get_marked_exchange(self, reader, header, value):
         """The exchange whose request carried that header, once it is written.
 
         The HTTP recorder writes its line in the generator's `finally`, after the
@@ -784,12 +784,12 @@ class TwinProxy:
             time.sleep(EXCHANGE_POLL_SECONDS)
         return None
 
-    def get_label(self, reference, method, target):    # wf:phase-8:new
+    def get_label(self, reference, method, target):
         """The exchange as one readable name: the call, or the URL that carried it."""
         rpc = reference.get("rpc_method")
         return f"{method} {target.split('?')[0]}{f' {rpc}' if rpc else ''}"
 
-    def is_cold_start(self, reference):    # wf:phase-8:new
+    def is_cold_start(self, reference):
         """Is this exchange still part of the cold start?
 
         Everything before the first RPC is: each stack finishes building lazily
@@ -803,7 +803,7 @@ class TwinProxy:
             return False
         return not self.rpc_served
 
-    def compare_register(self, shadow, leg, reference, label, shadow_status):    # wf:phase-8:new
+    def compare_register(self, shadow, leg, reference, label, shadow_status):
         """How each stack reached that reply — the WARNING half.
 
         One call, one verdict, and nothing stops: a call that diverges is a
@@ -812,7 +812,7 @@ class TwinProxy:
         (owner, 2026-08-26).
         """
         if self.is_cold_start(reference):
-            self.say(leg, label, f"{leg.status}/{shadow_status}  "
+            self.report_call(leg, label, f"{leg.status}/{shadow_status}  "
                                  f"before the first RPC, not compared")
             return
         replayed = self.get_marked_exchange(shadow.shadow, REPLICA_HEADER,
@@ -828,7 +828,7 @@ class TwinProxy:
         measure = (f"{leg.status}/{shadow_status}  "
                    f"reg {reference_lines}/{shadow_lines}  "
                    f"{self.get_timing(reference)}/{self.get_timing(replayed)} ms")
-        self.say(leg, label, measure)
+        self.report_call(leg, label, measure)
         if shadow_status != leg.status:
             # the reply half already reported it; two stacks that answered
             # differently did not reach the same place by different roads.
@@ -839,16 +839,16 @@ class TwinProxy:
         else:
             self.record_verdict(leg, label, measure, "agree")
 
-    def say(self, leg, label, measure):    # wf:phase-8:new
+    def report_call(self, leg, label, measure):
         """One line per call, opening on the mark the whole comparison is written in."""
         print(f"  {leg.twin}  {label}  {measure}", flush=True)
 
-    def record_verdict(self, leg, label, measure, verdict):    # wf:phase-8:new
+    def record_verdict(self, leg, label, measure, verdict):
         """What this call turned out to be, kept for the closing table."""
         with self.verdict_lock:
             self.verdicts.append((leg.twin, label, measure, verdict))
 
-    def record_divergence(self, leg, severity, report):    # wf:phase-8:new
+    def record_divergence(self, leg, severity, report):
         """Write this divergence down, name the call and its weight, and carry on.
 
         Nothing stops and nothing is torn down. The unit of comparison is the
@@ -872,13 +872,13 @@ class TwinProxy:
             report_file.write(text)
         print(f"\n{text}\nwritten to {path}\nthe run carries on.\n", flush=True)
 
-    def get_timing(self, record):    # wf:phase-8:new
+    def get_timing(self, record):
         """The response time the recorder measured inside the stack that served it."""
         duration = record.get("duration_ms")
         return "-" if duration is None else f"{duration:.0f}"
 
     @property
-    def summary(self):    # wf:phase-8:new
+    def summary(self):
         """What the session came to: every call judged, and the ones that diverged."""
         errors = [row for row in self.verdicts if row[3] == ERROR]
         warnings = [row for row in self.verdicts if row[3] == WARNING]
@@ -894,7 +894,7 @@ class TwinProxy:
         lines.append(f"bridge archive: {self.bridge.archive_path}")
         return "\n".join(lines)
 
-    def serve(self):    # wf:phase-8:new
+    def serve(self):
         """Listen until something stops us; the finally is the only teardown."""
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port),
                                                       TwinHandler)
@@ -916,23 +916,23 @@ class TwinHandler(http.server.BaseHTTPRequestHandler):
         """Silent: the proxy prints one line per exchange, with the comparison on it."""
 
     def do_GET(self):
-        self.relay("GET")
+        self.relay_request("GET")
 
     def do_POST(self):
-        self.relay("POST")
+        self.relay_request("POST")
 
     @property
-    def request_body(self):    # wf:phase-8:new
+    def request_body(self):
         """The body as the browser sent it; a chunked request is refused, not guessed."""
         if (self.headers.get("Transfer-Encoding") or "").lower() == "chunked":
             raise RuntimeError("the twin proxy does not relay chunked requests")
         length = self.headers.get("Content-Length")
         return self.rfile.read(int(length)) if length else b""
 
-    def relay(self, method):    # wf:phase-8:new
+    def relay_request(self, method):
         """The whole exchange, from this side of the wire."""
         body = self.request_body
-        status, headers, answer = self.server.proxy.dispatch(
+        status, headers, answer = self.server.proxy.dispatch_request(
             method, self.path, dict(self.headers.items()), body)
         self.send_response(status)
         for key, value in headers:
@@ -956,10 +956,10 @@ class TwinRun:
         self.proxy = None
 
     @property
-    def parity(self):    # wf:phase-8:new
+    def parity(self):
         return GenropyParity()
 
-    def get_environment(self, bridge):    # wf:phase-8:new
+    def get_environment(self, bridge):
         """The child's environment: the run name always, the bridge's two only there.
 
         The legacy child gets neither the pin on its import path — it imports the
@@ -976,7 +976,7 @@ class TwinRun:
         return environment
 
     @property
-    def daemon_command(self):    # wf:phase-8:new
+    def daemon_command(self):
         """With a sitename it runs the site register server and stays up.
 
         Without one it starts the multi-site daemon, which spawns its children
@@ -985,7 +985,7 @@ class TwinRun:
         return [LEGACY_DAEMON, self.instances.legacy_name]
 
     @property
-    def legacy_command(self):    # wf:phase-8:new
+    def legacy_command(self):
         """Gunicorn's own command line, plus the debug the run declares.
 
         WITHOUT `--debug` the site reads `wsgi?debug` out of its merged
@@ -1002,7 +1002,7 @@ class TwinRun:
         return command + ["--debug"] if self.arguments.fulldebug else command
 
     @property
-    def bridge_command(self):    # wf:phase-8:new
+    def bridge_command(self):
         """The bridge's, with NO `--nodebug`: unset means debug, as the recipe reads it.
 
         That is what puts the two stacks on the same footing — the legacy takes
@@ -1013,7 +1013,7 @@ class TwinRun:
                    "-p", str(self.arguments.bridge_port)]
         return command + ["--fulldebug"] if self.arguments.fulldebug else command
 
-    def check_ground(self):    # wf:phase-8:new
+    def check_preconditions(self):
         """Refuse before anything is started, and name the remedy every time."""
         parity = self.parity
         if not parity.aligned:
@@ -1030,7 +1030,7 @@ class TwinRun:
                 f"recording factory would not import. Remedy:\n"
                 f"  export {DAEMON_PROVIDER_ENV}={DAEMON_PROVIDER}")
 
-    def start_stacks(self):    # wf:phase-8:new
+    def start_stacks(self):
         """The whole order, and none of it is a preference.
 
         The COPY first, because `createdb -T` needs its template free of
@@ -1054,20 +1054,20 @@ class TwinRun:
         self.daemon.clear_register()
         for stack in (self.daemon, self.legacy, self.bridge):
             stack.launch_process()
-            stack.wait_serving()
+            stack.wait_until_serving()
 
-    def stop_stacks(self):    # wf:phase-8:new
+    def stop_stacks(self):
         """Down in the reverse order they came up: the daemon outlives its site."""
         for stack in (self.bridge, self.legacy, self.daemon):
             if stack is not None:
                 stack.stop()
 
-    def serve(self):    # wf:phase-8:new
+    def serve(self):
         """Ground, stacks, proxy — and the teardown that runs whatever happens."""
         # The output is read while the run is going, from a pipe: block buffering
         # would hold the comparison lines back until the process ended.
         sys.stdout.reconfigure(line_buffering=True)
-        self.check_ground()
+        self.check_preconditions()
         try:
             self.start_stacks()
             self.proxy = TwinProxy(self.instances, self.legacy, self.bridge,
@@ -1081,7 +1081,7 @@ class TwinRun:
         finally:
             self.stop_stacks()
 
-    def on_signal(self, number, frame):    # wf:phase-8:new
+    def on_signal(self, number, frame):
         """A TERM closes the listener; the finally above does the rest."""
         if self.proxy is not None and self.proxy.server is not None:
             threading.Thread(target=self.proxy.server.shutdown, daemon=True).start()

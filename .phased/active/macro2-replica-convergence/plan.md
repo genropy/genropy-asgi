@@ -584,14 +584,71 @@ recognised rather than discovered.
     divergence has a named cause, and every recognised one a declared rule you
     signed.
 
-- [>] **Phase 8**: the live twin proxy, converging the owner's own session
-  > In execution since 2026-08-25T18:05:00+02:00
-  > Testing: awaiting the human's `Verify: now` checks | commit: 972d02b
-  > The tool is built and green: twin_proxy_check.py 30 assertions, the other
-    six bench checks, pytest tests/ 139 passed, ruff clean. Proven on a login
-    driven through the proxy — four exchanges, statuses identical on both
-    stacks, register calls 33/33, 35/35, 43/43, no divergence. What remains is
-    the owner's own browser session, which is the phase's Done.
+- [x] **Phase 8**: the live twin proxy, converging the owner's own session
+  > Done: the twin proxy exists and works — one CLI copies the db, empties the
+    legacy register, starts its daemon, gunicorn and the bridge, and serves a
+    proxy the owner browses through. Every request goes to both stacks, the
+    legacy answer reaches the browser, and the bridge is compared behind it.
+    CLOSED SHORT, with the owner's ok (2026-08-26): of the four criteria three
+    are met and the fourth is unreached, not red — the session he performs
+    himself in a browser is postponed and recorded as a deferred check. What was
+    driven instead is `drive_login`, up to four users at once through the proxy,
+    which is what measured everything below.
+  > Files: benchmarks/compare/twin_proxy.py (new),
+    benchmarks/compare/twin_proxy_check.py (new),
+    benchmarks/compare/run_archive.py,
+    benchmarks/compare/run_archive_check.py,
+    benchmarks/compare/structural_diff.py,
+    benchmarks/compare/structural_diff_check.py,
+    benchmarks/compare/serve_legacy.py,
+    benchmarks/compare/serve_bridge.py,
+    benchmarks/compare/bridge_recipe.py,
+    benchmarks/compare/README.md,
+    src/genropy_asgi/spa/config.py,
+    src/genropy_asgi/spa/cli.py,
+    src/genropy_asgi/spa/genropy_worker.py,
+    tests/test_genropy_spa_application.py,
+    .phased/active/macro2-replica-convergence/notes.md,
+    .phased/active/macro2-replica-convergence/plan.md,
+    .phased/active/macro2-replica-convergence/verify.md
+  > Verified: twin_proxy_check.py 35 assertions green; pytest tests/ 144 passed;
+    ruff clean; the other six bench checks green. Two users through the proxy on
+    the closing run (`prova 8 allineamento`): ZERO ERROR — what the browser
+    receives is identical on both stacks, byte for byte after masking — and ONE
+    WARNING, named below. Four users on `prova 3 indipendenti`: four independent
+    shadows and four workers born, which is the first time the bridge's pool grew
+    under the ceiling. Every run archived under the name the owner declared,
+    carrying per-exchange statuses, register counts and timings for both stacks.
+  > Review: the unit of comparison changed on the owner's ruling — one mark per
+    request, one verdict per call, no arrest — and so did the weight: what the
+    BROWSER receives is an ERROR, the register calls behind it a WARNING. The
+    reply is compared whole and not by its status, piggybacked datachanges
+    included.
+  > Review: the phase found that the two stacks were not comparable and the
+    bench could not see it. The launchers read the database from the instance's
+    own file and the debug from a command line, while the site reads both from
+    the merged configuration: the legacy ran in debug and the run row declared
+    it off. Both readings are now genropy's own `PathResolver` merge. And debug
+    stopped meaning two things at once — the werkzeug debugger is its own switch,
+    `debugger`, off unless asked, with `--fulldebug` asking for the pair on both
+    stacks.
+  > Review: `Files:` grew beyond what the plan listed, by two files its own
+    Decisions foresee — `structural_diff.py`, because a declared rule lives in
+    the rules table, and `serve_bridge.py`, because a run declares its
+    conditions. Two rules were added from measured signatures,
+    `stale-connection` and `service-warmup`, both with the owner's sign-off.
+  > Review: one WARNING is open and named — two `globalStore` calls from
+    `getMainStorePreference`, one per browser, where the LEGACY makes the extra
+    one. Same species of settling as `service-warmup`, the other way round, and
+    with a caller that rule does not cover. Counting by caller over a whole run,
+    the two stacks call from the same places in the same proportions.
+  > Review: naming review renamed six methods rather than accepting all —
+    `check_ground` carried a coined word, and `dispatch`, `relay`, `say`,
+    `follow`, `wait_serving` were transitive verbs without their object.
+  > Verify: deferred — needs a session of the owner's own: browse through the
+    proxy, exercise table subscriptions and datachanges with two windows, and
+    judge whether "no divergence left unexplained" is true. The roadmap border
+    of macro-phase 2 is this check, and it is the only thing the phase owes.
   - Run: opus / high
   - Pattern: `benchmarks/compare/replica.py` for identifier adaptation and the
     stop, `structural_diff.py` for the comparison and the declared rules,

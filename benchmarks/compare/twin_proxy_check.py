@@ -222,7 +222,7 @@ shadow.client = stub
 static_leg = ShadowLeg("GET", "/_rsrc/js/gnr.js", {}, b"", "twin-09999", 200,
                        [("Content-Type", "text/javascript")], b"", "carol")
 started = time.time()
-proxy.follow(shadow, static_leg)
+proxy.follow_leg(shadow, static_leg)
 elapsed = time.time() - started
 check("the static reached the bridge", stub.sent == [("GET", "/_rsrc/js/gnr.js")])
 check("it carried no join, because nothing will be joined",
