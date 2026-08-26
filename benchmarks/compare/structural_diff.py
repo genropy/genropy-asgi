@@ -6,6 +6,13 @@ request header the replica stamps on every call it sends (`replica.py`): the
 replica run's own archive says which reference exchange each of its exchanges
 reproduces, so nothing outside the two archives has to be kept in step.
 
+**Two lines are the same call when the call AND the caller agree.** The
+alignment of the two sequences is keyed on both, because `store:getItem` is made
+from all over the site: keyed on the call alone, the alignment pairs a general
+preference read with a user preference read and reports their arguments as a
+difference, while the real difference — an insertion elsewhere — goes unnamed
+(measured 2026-08-26).
+
 **Equal means equal by STRUCTURE.** Two exchanges agree when their register
 lines carry the same sequence of calls and the same SHAPE of arguments and
 answers. The shape is what survives a second run of the same session; the value
@@ -157,6 +164,26 @@ class LineShape:
         surface = self.record.get("surface")
         return (CLIENT_SURFACE if surface in REGISTER_CLIENT_SURFACES else surface,
                 self.record.get("verb"))
+
+    @property
+    def alignment_key(self):
+        """What makes two lines the SAME call for the purpose of lining up.
+
+        The call alone is not enough. `store:getItem` is made from all over the
+        site, so two lines wearing it are matched by the alignment even when one
+        reads a general preference and the other a user's — and the report then
+        says "the arguments differ" about two calls that were never the same
+        call. Measured on 2026-08-26: four insertions elsewhere in the sequence
+        slid the alignment, and the divergence it reported named preferences
+        while the cause was a service freshness check.
+
+        The caller closes it. It is the site code that made the call, cut by
+        dotted module name so the same file reads identically on the frozen copy
+        the legacy runs and on the checkout the bridge runs (Phase 1) — which is
+        exactly what a key has to be: equal when the two stacks did the same
+        thing, different when they did not.
+        """
+        return (*self.call, self.caller)
 
     @property
     def arguments(self):
@@ -491,7 +518,8 @@ class StructuralDiff:
                  in self.replica.get_register_lines(replica_exchange["exchange_id"])]
         differences = []
         matcher = difflib.SequenceMatcher(
-            a=[shape.call for shape in left], b=[shape.call for shape in right],
+            a=[shape.alignment_key for shape in left],
+            b=[shape.alignment_key for shape in right],
             autojunk=False)
         for tag, left_start, left_end, right_start, right_end in matcher.get_opcodes():
             if tag == "equal":

@@ -19,8 +19,9 @@ import sys
 
 from replica import TraceReader
 from run_archive import RunArchive
-from structural_diff import (DeclaredRule, DeclaredRules, ReferenceRace,
-                             ServiceWarmup, StaleConnection, StructuralDiff)
+from structural_diff import (DeclaredRule, DeclaredRules, LineShape,
+                             ReferenceRace, ServiceWarmup, StaleConnection,
+                             StructuralDiff)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMP = os.path.join(REPO_ROOT, "temp")
@@ -251,6 +252,29 @@ two[2] = dict(two[2], args=["something else"])
 diff, divergence = compare(IDENTICAL, two)
 check("with two differences the first one in the sequence is the one reported",
       divergence.ordinal == 2)
+
+# 8b. the alignment key: the same call from different site code is not the same call
+PREF_MAIN = register_line(REFERENCE_EXCHANGE, 4, "getItem", ["CACHE_TS._mainpref_"],
+                          "None", surface="store")
+PREF_MAIN["site_caller"] = ("gnr/web/gnrwebapp.py:27 getItem <- "
+                            "packages/adm/model/preference.py:23 getMainStorePreference")
+PREF_USER = dict(PREF_MAIN, args=["CACHE_TS.someone_preference"])
+PREF_USER["site_caller"] = ("gnr/web/gnrwebapp.py:27 getItem <- "
+                            "packages/adm/model/user.py:153 getPreference")
+one, other = LineShape(PREF_MAIN), LineShape(PREF_USER)
+check("two getItem from different site code carry different alignment keys",
+      one.alignment_key != other.alignment_key)
+check("and the call alone would have made them equal — which is the defect",
+      one.call == other.call)
+check("the same line is equal to itself",
+      LineShape(PREF_MAIN).alignment_key == one.alignment_key)
+
+diff, divergence = compare(IDENTICAL + [PREF_MAIN],
+                           replica_of(IDENTICAL) + [dict(PREF_USER,
+                                                         exchange_id=REPLICA_EXCHANGE)])
+check("so the pairing is reported as two different calls, not as one with "
+      "different arguments",
+      divergence is not None and divergence.kind == "different call")
 
 # 9. the declared-rules table: what does not stop the run
 check("the table ships with the one rule every driver needs",
