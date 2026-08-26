@@ -2,6 +2,16 @@
 
 ## Phase 8
 
+- **CLOSED BY THE OWNER'S DECISION, 2026-08-26, WITHOUT THE SESSION BEING RUN.**
+  The check below was never performed: no browser session went through the twin
+  proxy, and no run's divergences were read by a human. The owner declared the
+  verification accepted and closed macro-phase 2 on that declaration. What the
+  phase actually rests on is `drive_login` with up to four users, which is what
+  Phase 8 was driven by. Anyone reading a macro-phase 2 result should know this
+  criterion is accepted, not demonstrated.
+
+  The check as it was written, kept for whoever runs it later:
+
 - **deferred: needs a session of the owner's own.** Start the twin proxy and
   browse through it: open a grid, save a record, and exercise table
   subscriptions and datachanges with two browser windows logged in as two
