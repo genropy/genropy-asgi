@@ -665,3 +665,124 @@ exchanges, every status identical on both stacks, the first not compared by the
 cold-start rule, then 33/33, 35/35 and 43/43 register calls. The same figures the
 Phase 7 replica cycle measured, reached this time by a live proxy instead of a
 replay.
+
+### The owner's session, and what it changed in the instrument (2026-08-26)
+
+The proxy went to the browser and came back reshaped four times. What follows is
+each change with the measurement that forced it, because none of them was
+foreseen at the gate.
+
+**The arrest rule died here, and it was the owner who killed it** (2026-08-26).
+Every request now carries a mark of its own — `twin-00042`, this proxy's ordinal,
+which reaches BOTH archives — and the unit of comparison is the single call: it
+agrees or it diverges on its own merits, whatever the calls around it did. So a
+divergence is a finding about that call and no reason to stop: `twin-00043` is
+asked the same question with no assumption that one follows from the other. The
+first-divergence arrest the replica works under fits a linear replay of one
+recorded session; it does not fit a live session of several independent users,
+where the divergence of one must not end the session of the others. Each
+divergence is printed and written to a numbered file of its own.
+
+**Two weights, because the browser is the judge** (owner, 2026-08-26). What the
+browser receives is what the bridge exists to reproduce, so a difference in the
+REPLY is an ERROR and a difference in the register calls behind it is a WARNING.
+The reply is compared WHOLE, not by its status: the status alone would let two
+200s with different bodies pass as agreement, and everything the server pushes
+to the client — datachanges, client data — rides inside that body. Masked first
+are the two families that legitimately differ, the identifiers each stack mints
+and the clock (`ReplyShape`). The reply comparison runs on every exchange, cold
+start included: the register rule that excuses those is about how each stack
+builds itself and says nothing about what it answered.
+
+**Independent users mean nothing shared in the apparatus** (owner, 2026-08-26:
+"per testare chat e subscribe mi servono piu utenti... ogni utente non abbia
+nulla in comune con gli altri per evitare che ci siano errori che possano
+derivare dall'ambiente di misura"). Each browser now owns a `BrowserShadow`: the
+connection to the bridge, the cookie jar, the identifier map, the two archive
+readers, the comparison and the thread. Browsers run in parallel; the two legs
+of one request stay sequential because that browser's queue serves one at a
+time. Which browser a request came from is the proxy's OWN cookie, minted on
+first sight and stripped before either site sees it — measured twice on the way
+there: keying on the site's session cookie failed because its value CHANGES at
+login, when the connection rotates, so the page after the login read as a second
+browser and answered 400 on a jar that had never seen its page.
+
+**The two stacks were not comparable, and the bench could not see it.** The
+launchers read the database from the instance's own `instanceconfig.xml` and the
+debug from the gunicorn command line, while the SITE reads both from the merged
+configuration. So the legacy ran with `site.debug` True — the bench's own
+`temp/gnr/siteconfig/default.xml` declares `debug="True::B"` — while the run row
+declared it off, and the bridge ran without it. Every comparison of the phase up
+to that point, the 33/33 and 35/35 included, was between a site in debug and one
+not. Both readings are now `PathResolver.get_instanceconfig` and
+`get_siteconfig`, genropy's own merge, which is also what makes the bench correct
+on a deployment that keeps the db node — with its password — in the default
+instead of in the instance (owner's observation).
+
+**Debug stopped meaning two things at once.** On the legacy they are separable:
+`site.debug` comes from the configuration, the werkzeug debugger only from
+`serveprod --debug`. On the bridge `genropy_worker` welded them, so the SQL time
+counters could not be had without an error page that evaluates Python in the
+process. `debugger` is now its own switch (owner's baptism), off unless asked,
+and `--fulldebug` on both CLIs asks for the pair. The proxy runs both stacks
+with debug and no debugger, which is the state that makes their SQL counters
+comparable, and one flag governs both.
+
+### The divergences of the owner's session, closed one by one
+
+**`user_tags`, an unordered value serialised as text.** Same eight tags, three
+different orders in three processes: `gnrapp.py:1476` builds them with
+`','.join(list(set(tags)))`, and Python randomises string hashes per process. Not
+a difference between the stacks — two logins on the legacy alone would differ the
+same way. It reached the browser too, inside the avatar of the reply, so it was
+an ERROR and not only register noise. Filed as genropy#1173 (sort before joining,
+two lines, `user_tags` is persisted nowhere) and anticipated on the bench pin as
+`cad7055ce`, with `temp/legacy_venv` re-frozen from it so both stacks carry it
+together.
+
+**`pageModule` empty on the bridge.** The page's file path, which the site sends
+only under debug (`gnrwebpage.py:1338`). It was the debug mismatch above, seen
+from the browser's side: 103 bytes of difference on every page load. Closed by
+aligning debug, not by touching the page.
+
+**A service the freshly born worker had not instantiated yet.** With one worker
+per user, the first request of each user was still resolving storage services —
+six register calls the legacy did not make there, 291 ms against 100. The worker
+already settled `resources_dirs` and `storage('gnr')` at birth, with a comment
+saying it settles "exactly what the first request resolves"; `storage('dojo')`
+joined that list. The tail cannot be pre-warmed without instantiating the volume
+storages, which on a real site can be remote, in a just-forked process — so the
+owner accepted it as a settling difference and it became the declared rule
+`service-warmup`: a call the REPLICA made and the reference did not, whose caller
+chain passes through the service resolution. Narrow on purpose; two warm-ups that
+disagree are still a divergence.
+
+**A browser carrying a connection from before the run.** The legacy answered 400,
+`The connection is not longer valid`, because the run starts from an empty
+register while Chrome still held the cookie of the previous run; the bridge, whose
+jar inherited nothing, answered 200. Declared rule `stale-connection`, told apart
+from `reference-race` by what is missing: a race has an earlier exchange still in
+flight on the same cookie, this one has none. It lives in the PROXY's table and
+NOT in the default one — replaying a recorded session, a reference 400 from a
+stale tab is reproducible and must be reported. Measured by putting it in the
+default table: `replica_check` went red immediately, which is the check earning
+its keep.
+
+**And one divergence that was the instrument's own.** The report named a
+preference read where the cause was four insertions elsewhere: the alignment of
+the two sequences was keyed on `(surface, verb)`, and `store:getItem` is made
+from all over the site, so difflib paired a general preference read with a user
+preference read and called their arguments a difference. The caller closes it —
+cut by dotted module name, it reads identically on both trees, so it is equal
+exactly when the two stacks did the same thing. With the honest key the exchange
+that reported that divergence reports nothing at all, the four insertions being
+recognised as the warm-up they are.
+
+**Where the session stands.** Two users through the proxy: ZERO ERROR — what the
+browser receives is identical on both stacks, byte for byte after masking — and
+ONE WARNING. Counting `globalStore` by caller over a whole run, the two stacks
+call from the same places in the same proportions; the differences are the three
+of `getService`, already declared, and TWO on `getMainStorePreference`, one per
+browser, where it is the LEGACY that makes the extra call. Same species of
+settling, the other way round, and with a caller `service-warmup` does not cover.
+That one is open.

@@ -215,14 +215,39 @@ debug flag come from the command line it was given, the database from the
 instance's own `instanceconfig.xml`, the versions from the installed
 distributions, and the bench commit from git.
 
-**Why debug is off in the standard run.** `gnr web serveprod --debug` wraps the
-site in werkzeug's debugging middleware, which the bridge does not have: on
-error responses it would introduce a divergence produced by the instrument
-rather than by the two stacks. The cost is that the SQL counters stay at zero —
-they only increment when the site runs in debug — so `X-GnrSqlTime` and
-`X-GnrSqlCount` arrive as `0` (measured, not empty: the headers are present and
-carry a zero). The recorders collect the `X-Gnr*` headers either way; a debug
-run is the variant to declare when those two fields have to carry real numbers.
+**Debug, and the two things it used to mean.** Corrected 2026-08-26, when the twin
+proxy measured that this section's own premise was false: omitting `--debug` from
+the gunicorn command line does NOT put the legacy site out of debug. Without the
+flag `serveprod` builds `GnrWsgiSite(instance_name)` with no options, and the site
+then reads `wsgi?debug` from its MERGED siteconfig, where the bench's own
+`temp/gnr/siteconfig/default.xml` declares `debug="True::B"`. So the legacy was
+running in debug all along while the run row said otherwise, and the bridge — which
+always passes options — was not.
+
+The two things genropy keeps apart:
+
+- **`site.debug`** — the SQL time counters (`X-GnrSqlTime`, `X-GnrSqlCount` carry
+  real numbers instead of zero), `pageModule` in the page's own bootstrap, the
+  developer's extras. On the legacy it comes from the configuration; on the bridge
+  from `--nodebug`/the recipe.
+- **the werkzeug debugger** — an error page carrying a traceback and a console
+  that evaluates Python in the process. On the legacy only `serveprod --debug`
+  brings it; on the bridge it was welded to `site.debug` until 2026-08-26 and is
+  now its own switch, `debugger`, off unless asked.
+
+**The standard run therefore has debug ON and no debugger, on both stacks**, which
+is what makes the SQL counters comparable and keeps the werkzeug middleware — which
+the bridge answers errors differently under — out of the comparison.
+`--fulldebug` on the twin proxy adds the debugger to both stacks at once; on the
+legacy it becomes `serveprod --debug`.
+
+**And both configurations are read as the SITE reads them.** `PathResolver`'s own
+`get_instanceconfig` and `get_siteconfig` — the same merge `GnrApp` and
+`GnrWsgiSite` run at startup: the default of the gnr folder, then any template,
+then the instance's own file. Opening the instance's file alone was the defect
+behind the debug mismatch, and it would also miss a `db` node declared in the
+default, which is where a deployment usually keeps the connection and its
+password.
 
 `--debug` does **not** reduce concurrency: it forces `workers=1` (already the
 case) and its `threads` override never lands, so 16 threads survive.
@@ -1358,45 +1383,61 @@ dirty both timings — sequential warms the second, which is its own bias. Eithe
 way the timings here are indicative: the speed verdict is macro-phase 3's, with
 collection off.
 
-**The stop leaves everything standing.** At the first divergence nothing
-declares, the proxy prints the report, writes it to
-`<archive dir>/<run name>-divergence.txt`, and stops dispatching to the bridge. It
-does NOT exit and neither stack is torn down: the whole point of comparing live is
-that the two stacks are still answering while the divergence is investigated. The
-legacy keeps serving, so the browser stays usable.
+**One call, one verdict, and nothing stops** (owner, 2026-08-26). Every request
+carries a mark of its own — `twin-00042`, the proxy's own ordinal, stamped on the
+legacy leg and carried into both archives — and the unit of comparison is the
+single call: it agrees on the two stacks or it diverges, on its own merits,
+whatever the calls around it did. So a divergence is a finding about THAT call and
+no reason to arrest the run, and with several users the divergence of one must not
+end the session of the others. The first-divergence arrest stays where it belongs,
+in the replica, which replays one recorded session in a line.
 
-**The bridge's placement ceiling.** `--max-users-per-worker` reaches the recipe
-through `GNR_ASGI_WORKER_MAX_USERS`, which `spa/config.py` passes to the group as
-`worker_max_users` and `bridge_recipe.py` transcribes. Left out, the core's
-default governs: one worker takes everybody, two browsers land in the same
-process, and the cross-worker paths — the register population, the stores, the
-datachanges between users — are never exercised. With `1` each user gets a worker
-of his own. Since genro-asgi 2682ad7 the birth happens INSIDE the placement, so
-the second user waits the moment a fork costs instead of being answered 503 with
-`Retry-After: 30`; before that commit the ceiling could not be used at all. The
-value is declared in the bridge run row, because a run that cannot say how many
-users a worker was allowed to hold is not comparable to another.
+Each divergence is printed and written to a numbered file of its own beside the
+archives — `<run>-01-error.txt`, `<run>-02-warning.txt` — naming the call, the
+browser and both archives. Both stacks stay up throughout, which is what makes a
+divergence investigable while it is fresh, and the closing summary lists every
+call that diverged.
 
-**One shadow per browser.** The proxy keeps a bridge-side connection, cookie jar
-and identifier map for each browser, told apart by the value of the site's own
-session cookie — genropy names it after the site (`currentDomainIdentifier`,
-`gnrwebpage.py:395`). Two windows logged in as two users are two connections on
-the legacy stack, and a single jar would make them one on the bridge: every
-divergence after the second login would be the proxy's own fabrication. Before
-its first reply a browser carries no such cookie and shares the nameless shadow,
-which costs nothing — that exchange is a cold-start one and is not compared.
+**Two weights, because the browser is the judge.**
 
-**A second declared rule, `stale-connection`** (owner, 2026-08-26). A comparative
-run starts from an empty register, and a browser that was on the site before
-still holds the cookie of the run before: the legacy refuses the call with
-`The connection is not longer valid` while the twin, which inherited nothing,
-answers it normally. The two stacks are not disagreeing — they are being asked
-different questions. The rule reads the same literal `reference-race` reads and is
-told apart by what is missing: a race has an earlier exchange still in flight on
-the same cookie, this one has none. It lives in the PROXY's table and not in the
-default one: replaying a recorded session, a reference 400 from a stale tab is
-reproducible and must be reported. Measured on the owner's first session,
-2026-08-25, on `getRemoteTranslation` — 400 on the legacy, 200 on the bridge.
+- **ERROR — what the browser would have seen.** The status AND the whole reply
+  body, masked of the identifiers each stack mints and of the clock
+  (`ReplyShape`). Nothing else may differ: the reply is what the bridge exists to
+  reproduce, and everything the server pushes to the client — datachanges, client
+  data — rides inside it. Comparing the status alone would let two 200s with
+  different bodies pass as agreement. This check runs on EVERY exchange, cold
+  start included: the register rule that excuses those exchanges is about how each
+  stack builds itself, and says nothing about what it answered.
+- **WARNING — how the two stacks got there.** The sequence of register calls.
+  Real, worth a report, and not a failure of the emulation the browser sees.
+
+**Two lines are the same call when the call AND the caller agree.** The alignment
+of the two register sequences is keyed on both, because `store:getItem` is made
+from all over the site. Keyed on the call alone — measured 2026-08-26 — four
+insertions elsewhere slid the alignment, difflib paired a general preference read
+with a user preference read, and the report named preferences while the cause was
+a service freshness check. The `site_caller` closes it: cut by dotted module name,
+it reads identically on the frozen copy the legacy runs and on the checkout the
+bridge runs, so it is equal exactly when the two stacks did the same thing.
+
+**Two more declared rules, both from signatures measured here.**
+
+- **`stale-connection`** — the run starts from an empty register and the browser
+  still holds the cookie of the run before, so the legacy refuses the call while
+  the twin, which inherited nothing, serves it. Told apart from `reference-race`
+  by what is missing: a race has an earlier exchange still in flight on the same
+  cookie. It lives in the PROXY's table and NOT in the default one, because
+  replaying a recorded session a reference 400 from a stale tab IS reproducible
+  and must be reported.
+- **`service-warmup`** — with one worker per user, the first request of a
+  freshly born worker is still resolving storage services; the legacy makes the
+  same calls at the startup of its one long-lived process, outside any compared
+  exchange. The worker settles what it can at birth (`resources_dirs`,
+  `storage('gnr')`, `storage('dojo')`); the tail cannot be pre-warmed without
+  instantiating the volume storages, which can be remote, in a just-forked
+  process. The rule recognises one thing: a call the replica made and the
+  reference did not, whose caller chain passes through the service resolution.
+  Two warm-ups that disagree are still a divergence.
 
 **The declared run name.** `--run` is written into both archives — inside
 `conditions` and promoted to the `name` column of the `run` row, a copy like every
