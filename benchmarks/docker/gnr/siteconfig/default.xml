@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<GenRoBag>
+	<wsgi debug="False::B" reload="False::B" port="8080"/>
+	<gui css_theme="mimi"/>
+	<jslib dojo_version="11" gnr_version="11"/>
+	<resources>
+		<common/>
+		<js_libs/>
+	</resources>
+	<gnrdaemon host="localhost" port="40004" hmac_key="lab_bench_key"/>
+</GenRoBag>

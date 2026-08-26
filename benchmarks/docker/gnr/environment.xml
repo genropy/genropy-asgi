@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<GenRoBag>
+	<environment>
+		<gnrhome value="/src/genropy"></gnrhome>
+	</environment>
+	<projects>
+		<lab path="/lab/projects"></lab>
+		<genropy path="/src/genropy-projects"></genropy>
+	</projects>
+	<packages>
+		<genropy path="/src/genropy/packages"></genropy>
+	</packages>
+	<static>
+		<js>
+			<dojo_11 path="/src/genropy/dojo_libs/dojo_11" cdn=""></dojo_11>
+			<gnr_11 path="/src/genropy/gnrjs/gnr_d11"></gnr_11>
+		</js>
+	</static>
+	<resources>
+		<genropy path="/src/genropy/resources"></genropy>
+	</resources>
+	<webtools>
+		<genropy path="/src/genropy/webtools"></genropy>
+	</webtools>
+	<gnrdaemon host="localhost" port="40004" hmac_key="lab_bench_key" last_port="40407::L"></gnrdaemon>
+	<external_secret>lab_bench_external_secret</external_secret>
+</GenRoBag>

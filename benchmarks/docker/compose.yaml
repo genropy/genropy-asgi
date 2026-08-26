@@ -1,0 +1,75 @@
+# The measurement lab: one container per stack, one for the driver, one for
+# the database. Both stacks read the same source mounts and the same declared
+# resources, so a difference between them is theirs and not the machine's.
+# Bring it up:   ./scripts/dump_db.sh && docker compose up -d postgres legacy bridge
+# Drive a run:   docker compose run --rm bench python3 single_record_bench.py \
+#                    --base http://bridge:8098 --levels 1,2,4,8 --duration 15
+
+name: genro-bench-lab
+
+x-stack: &stack
+  build:
+    context: images
+    dockerfile: stack.Dockerfile
+    additional_contexts:
+      genropy: ${GENROPY_TREE:?}
+  cpus: 4
+  mem_limit: 2g
+  volumes:
+    - ${GENROPY_TREE:?}:/src/genropy:ro
+    - ${GENROPY_PROJECTS:?}:/src/genropy-projects:ro
+    - ${GENRO_ASGI_TREE:?}:/src/genro-asgi:ro
+    - ${GENROPY_ASGI_TREE:?}:/src/genropy-asgi:ro
+    - ./gnr:/lab/gnr:ro
+    - ./projects:/lab/projects
+    - ./entrypoints:/lab/entrypoints:ro
+    - uv_cache:/root/.cache/uv
+  depends_on:
+    postgres: { condition: service_healthy }
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: genro
+      POSTGRES_PASSWORD: genro
+      POSTGRES_DB: test_invoice_pg
+    volumes:
+      - ./runtime/initdb:/docker-entrypoint-initdb.d:ro
+      - pg_data:/var/lib/postgresql/data
+    cpus: 2
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genro -d test_invoice_pg"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  legacy:
+    <<: *stack
+    entrypoint: /lab/entrypoints/legacy.sh
+    environment:
+      LEGACY_WORKERS: ${LEGACY_WORKERS:-1}
+    ports: ["8099:8099"]
+
+  bridge:
+    <<: *stack
+    entrypoint: /lab/entrypoints/bridge.sh
+    environment:
+      GNR_DAEMON_PROVIDER: genropy-asgi
+      GNR_ASGI_INSPECTOR: "1"
+      GNR_ASGI_WORKER_MAX_USERS: ${GNR_ASGI_WORKER_MAX_USERS:-}
+    ports: ["8098:8098"]
+
+  bench:
+    build: { context: images, dockerfile: bench.Dockerfile }
+    profiles: ["bench"]
+    cpus: 2
+    mem_limit: 1g
+    volumes:
+      - ${GENROPY_ASGI_TREE:?}:/src/genropy-asgi:ro
+      - ./runtime:/lab/runtime
+
+volumes:
+  pg_data:
+  uv_cache:

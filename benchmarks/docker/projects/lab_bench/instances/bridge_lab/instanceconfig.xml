@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<GenRoBag>
+	<db dbname="test_invoice_bridge" implementation="postgres" host="postgres" port="5432" user="genro" password="genro"/>
+
+	<packages>
+		<gnrcore_sys pkgcode="gnrcore:sys"/>
+		<gnrcore_adm pkgcode="gnrcore:adm"/>
+		<invc path="/src/genropy-projects/test_invoice/packages"/>
+	</packages>
+
+	<authentication pkg="gnrcore:sys">
+		<py_auth defaultTags="user" method="authenticate" pkg="adm"/>
+	</authentication>
+</GenRoBag>
