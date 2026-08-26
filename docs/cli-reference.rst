@@ -1,36 +1,24 @@
 CLI reference — ``gnrasgiserve``
 ================================
 
-.. warning::
-
-   **SUPERSEDED (2026-08-22).** This page describes the pre-rebase front
-   (the ``--workers``/``--config`` selector, ``memory_limit_mb``,
-   ``GNR_ASGI_WORKERS``), all removed by the ``bridge-rebase-new-core``
-   workflow: the pool always runs, born from the recipe in
-   ``genropy_asgi/spa/config.py``, sized by the core's ``worker_max_number``.
-   Until this page is rewritten, trust ``gnrasgiserve --help`` and
-   ``spa/config.py`` — not what follows.
-
-
 ``gnrasgiserve`` is the ASGI replacement for ``gnrwsgiserve``. It resolves a
 GenroPy instance name to its path and starts a genro-asgi ``AsgiServer`` hosting
-the site. Single process by default; a commander with a worker pool with
-``--workers``.
+the site, with the pool already running.
 
 Synopsis
 --------
 
 .. code-block:: console
 
-   gnrasgiserve <instance> [-H HOST] [-p PORT] [--reload] [--nodebug]
-                           [--workers N] [--config CONFIG]
+   gnrasgiserve <instance> [-H HOST] [-p PORT] [--nodebug] [--fulldebug]
+                           [--reload] [--config CONFIG]
 
 Options
 -------
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 12 62
+   :widths: 24 14 62
 
    * - Option
      - Default
@@ -41,52 +29,44 @@ Options
        resolved through the GenroPy ``PathResolver``; an existing directory is
        used as-is.
    * - ``-H``, ``--host``
-     - ``0.0.0.0``
+     - ``127.0.0.1``
      - Bind host.
    * - ``-p``, ``--port``
-     - ``8080``
+     - ``8000``
      - Listening port.
-   * - ``--reload``
-     - off
-     - Auto-restart when files change (development).
    * - ``--nodebug``
      - off
-     - Disable debug mode.
-   * - ``--workers N``
-     - ``0``
-     - Serve through a commander with N worker subprocesses. ``0`` = single
-       process. Ignored when ``--config`` is given (the config owns the pool
-       shape).
+     - Turn debug off. Debug is **on** unless you say otherwise: it brings the
+       SQL counters and the developer's extras.
+   * - ``--fulldebug``
+     - off
+     - Debug **and** the werkzeug debugger. See the warning below.
+   * - ``--reload``
+     - off
+     - Accepted for surface compatibility with ``gnrwsgiserve``, then ignored
+       with a printed line. Restart to pick up code changes.
    * - ``--config CONFIG``
      - *(built-in)*
-     - Path to a server ``config.py`` (a ``ServerConfiguration``) to use instead
-       of the built-in recipe. The config carries the pool shape (worker count
-       and occupancy thresholds); the CLI ``instance`` still wins.
+     - A server ``config.py`` (a ``ServerConfiguration``) instead of the
+       built-in recipe. The config carries the shape; the CLI ``instance``,
+       host and port still win.
 
-.. note::
+.. warning::
 
-   The port and host defaults shown are the values the built-in recipe falls
-   back to when the CLI does not pass them. ``--config`` recipes are free to
-   choose their own defaults.
+   ``--fulldebug`` adds the werkzeug debugger, whose error page **evaluates
+   Python in the process**. Debug alone no longer brings it, so that page can
+   never appear by accident. Development only.
 
-Recipes
--------
+What is not there any more
+--------------------------
 
-**Serve single vs. pool** — without ``--config``, the mode is chosen by
-``--workers``:
+``--workers`` is gone, and so is the single/pool selector. The pool always runs
+and sizes itself: the number of processes is a reading, never a setting. A
+``GNR_ASGI_WORKERS`` still set in the environment is reported on startup and
+ignored.
 
-.. code-block:: console
-
-   $ gnrasgiserve mysite              # single process
-   $ gnrasgiserve mysite --workers 3  # commander + 3 workers
-
-The built-in ``--workers`` recipe starts the pool with the framework's default
-occupancy thresholds. To tune them (``reception_threshold`` /
-``admission_threshold``) or set the worker-count bounds (``min_workers`` /
-``max_workers``), use a config file — see :doc:`configuration`.
-
-**Run from a config file** — two equivalent launches, both starting the same pool
-from a config:
+Run from a config file
+----------------------
 
 .. code-block:: console
 
@@ -94,21 +74,18 @@ from a config:
    $ gnrasgiserve mysite --config path/to/pool_config.py -p 8080
 
    # through the genro-asgi core CLI — the config supplies everything
-   $ python -m genro_asgi serve path/to/pool_config.py
+   $ genroasgi serve path/to/pool_config.py
 
-.. note::
+The CLI writes the resolved instance path, and any host/port/debug you pass,
+into the environment **before** building the server. So a ``--config`` recipe
+that reads ``GNR_ASGI_PATH`` serves the instance you named on the command line.
+See :doc:`configuration`.
 
-   The CLI writes the resolved instance path (and any host/port/debug you pass)
-   into the environment **before** building the server, so a ``--config`` recipe
-   that reads ``GNR_ASGI_PATH`` serves the instance you named on the command line.
-   With ``--config`` the CLI leaves ``GNR_ASGI_WORKERS`` untouched — the config
-   owns the pool shape. See :doc:`configuration` for the environment variables.
+Remote database, SSL, and the rest
+----------------------------------
 
-Configure remote database, SSL, and the rest
----------------------------------------------
-
-Site-level launch concerns handled by GenroPy itself (a remote database over an
-SSH tunnel, SSL certificates, data restore) are configured the same way as with
-``gnrwsgiserve`` — through the site's own configuration and the GenroPy
-environment, not through genropy-asgi. genropy-asgi changes *how* the site is
-served (ASGI, no daemon), not *what* the site is.
+Site-level launch concerns handled by GenroPy itself — a remote database over an
+SSH tunnel, SSL certificates, a data restore — are configured exactly as with
+``gnrwsgiserve``, through the site's own configuration and the GenroPy
+environment. genropy-asgi changes *how* the site is served, not *what* the site
+is.

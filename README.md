@@ -3,8 +3,8 @@
 Serve legacy (synchronous) **GenroPy** sites on an ASGI server — no register
 daemon. genropy-asgi is the GenroPy-specific bridge on top of
 [genro-asgi](https://github.com/genropy/genro-asgi): it hosts an unmodified
-`GnrWsgiSite` behind uvicorn and, on demand, spreads the load over a supervised
-pool of worker processes.
+`GnrWsgiSite` and spreads its users over a supervised pool of worker processes,
+each user pinned to one of them.
 
 - **GitHub**: https://github.com/genropy/genropy-asgi
 - **Status**: Alpha
@@ -14,7 +14,7 @@ pool of worker processes.
 ## What it replaces
 
 - **`gnrwsgiserve`** (werkzeug/WSGI) → **`gnrasgiserve`** (uvicorn/ASGI). Same
-  site, same options, unmodified code — plus native WebSocket support.
+  site, same options, unmodified code.
 - **The register daemon** (Pyro4, then `genro-nodaemon`) → an **in-process**
   register. There is no daemon to start or connect to.
 
@@ -36,56 +36,56 @@ plus an existing site). genropy-asgi imports `gnr.*` only at runtime.
 
 ## Usage
 
-**Single process** — the drop-in for `gnrwsgiserve`:
-
 ```bash
 gnrasgiserve mysite -p 8080
-# site on http://0.0.0.0:8080/index
+# site on http://127.0.0.1:8080/index
 ```
 
-**Pool** — one commander supervising N workers, sticky per user:
+`mysite` is the GenroPy instance name — the same you pass to `gnrwsgiserve` — or
+a path to a site directory. That is the whole launch: there is no worker count
+to declare and no single/pool selector. The pool always runs, starts with one
+worker and adds another when the ones it has have no room for a newcomer.
 
-```bash
-gnrasgiserve mysite --workers 2 -p 8080
-```
+On macOS export `PGGSSENCMODE=disable`: the workers are born by `fork` and libpq
+negotiating Kerberos inside a forked child crashes it.
 
-`mysite` is the GenroPy instance name (or a site path). With `--workers N` the
-same command runs the commander/worker model: each user is routed to a stable
-worker and the pool grows under load.
-
-Watch the pool:
-
-```bash
-curl -s http://127.0.0.1:8080/_server/monitor_state | python3 -m json.tool
-```
-
-## How it works
-
-A GenroPy site is synchronous WSGI. genropy-asgi converts each ASGI request to a
-PEP 3333 environ and runs the site in a thread executor, so uvicorn is never
-blocked. The site's register — connections, pages, sessions, datachanges,
-stores — is served **in-process**, not by a daemon.
-
-- **Single** (`GenropySpaApplication` with `workers=0`): one process hosts the
-  site and is the commander of itself.
-- **Pool** (the same `GenropySpaApplication` with `workers=N`): its commander
-  supervises N spawned workers (`GenropyWorker`, one site each), forwards every
-  request to the right worker by an
-  `spa_connection_id` cookie — the connection id the site itself creates — and grows the pool on measured worker occupancy
-  (cpu + executor), not head counts. Datachanges live locally on the page's own worker (the *switch
-  model*); cross-worker changes arrive via the commander. The legacy
-  `globalStore()` is eventually coherent via the framework's global-store rail —
-  a write on one worker reaches the others after one channel round-trip.
-
-The commander serves a Prometheus `/metrics` endpoint exposing the pool's
-site-wide counters (users, pages, connections). Watch the pool with:
+Watch the site-wide counters, no authentication needed:
 
 ```bash
 curl -s http://127.0.0.1:8080/metrics
 ```
 
-See [`docs/`](docs/) for the full architecture, single-vs-multi guide,
-configuration, CLI reference, FAQ and troubleshooting.
+## How it works
+
+A GenroPy site is synchronous WSGI. genropy-asgi converts each ASGI request to a
+PEP 3333 environ and runs the site on a thread pool, so the event loop is never
+blocked. The site's register — connections, pages, sessions, datachanges,
+stores — is served **in-process**, not by a daemon: the package declares the
+`gnr.web:daemon` entry point, and GenroPy resolves its daemon namespace to it
+only when `GNR_DAEMON_PROVIDER` names the provider, which the CLI does for its
+own process. The choice is per process, so the classic stack and this one can
+share one virtualenv.
+
+- **Every user lives in one worker**, with all his pages. Routing is by identity:
+  the `spa_connection_id` cookie carries the connection id the site itself minted
+  while serving, and the commander knows whose it is.
+- **Workers are born by fork** out of a template process that builds the
+  `GnrWsgiSite` once for all of them, so starting one more costs a fork and not a
+  cold start.
+- **The pool sizes itself** on measured occupancy — the number of processes is a
+  reading, never a setting. `GNR_ASGI_WORKER_MAX_USERS` caps how many users one
+  worker may hold.
+- **A quiet user is frozen** to disk and his worker gets the memory back; his
+  next request wakes him. A restart parks everybody the same way, so nobody is
+  logged out by it.
+- **Changes travel addressed**: what one page writes, or a table event, reaches
+  the pages that subscribed it, wherever they sit. The legacy `globalStore()` is
+  one master on the commander with no replicas — a worker reads it with a call
+  and writes it through an all-or-nothing grant.
+
+See [`docs/`](docs/) for the pool, configuration, CLI reference, FAQ,
+troubleshooting — and [`docs/status.rst`](docs/status.rst) for what is built
+today.
 
 ## Documentation
 

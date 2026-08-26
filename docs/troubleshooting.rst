@@ -49,15 +49,18 @@ Fix pool behaviour
    wave.
 
 **A user's session seems to reset between requests**
-   Routing depends on the ``sticky_cid`` cookie. A client that drops cookies, or
-   opens a fresh connection without carrying them, is treated as a new visitor each
-   time and may land on the reception worker instead of the worker holding the
-   session. Make sure the client keeps cookies across requests.
+   Routing depends on the ``spa_connection_id`` cookie, which carries the
+   connection id the site itself minted while serving. A client that drops
+   cookies, or opens a fresh connection without carrying them, is a new visitor
+   at every request and is placed as one. Make sure the client keeps cookies
+   across requests.
 
 **A shared global value lags on another worker**
-   Expected: the global store is eventually coherent. A write on one worker reaches
-   the others after one channel round-trip (commander master → replica push), not
-   synchronously. See the global-store section of :doc:`single-vs-multi`.
+   There are no replicas to lag. The master lives on the commander and nowhere
+   else: a worker reads it with a call on the lane it already holds, and writes
+   through a grant that lands all at once at its release. A value that looks
+   stale is a value nobody has written yet. See the sharing section of
+   :doc:`the-pool`.
 
 Fix a stale build being served
 ------------------------------

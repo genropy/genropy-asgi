@@ -23,7 +23,7 @@ site uses. The typical *beside* shape:
 * ``/`` — the legacy ``GnrWsgiSite`` (the UI),
 * ``/api/`` — a REST/OpenAPI surface,
 * ``/mcp/`` — an MCP endpoint for AI agents,
-* ``/live/`` — a native async app (e.g. WebSocket).
+* ``/live/`` — a native async app of your own.
 
 Add a REST / OpenAPI API on the site's database
 -----------------------------------------------

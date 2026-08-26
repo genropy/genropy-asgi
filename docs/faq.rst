@@ -12,17 +12,16 @@ Do I have to change my site?
 
 How is this different from ``gnrwsgiserve``?
    ``gnrwsgiserve`` runs the site under werkzeug (WSGI); ``gnrasgiserve`` runs it
-   under uvicorn (ASGI), converting each request to WSGI in a thread executor so
-   the site code stays synchronous. You gain native WebSocket support and the
-   optional worker pool. The command-line experience is the same: a site name
-   and a port.
+   under uvicorn (ASGI), converting each request to WSGI on a thread pool so the
+   site code stays synchronous. What you gain is the worker pool with its
+   user-sticky routing, and no register daemon. The command-line experience is
+   the same: a site name and a port.
 
-Single or pool — which do I pick?
-   Single (the default) for development and low concurrency; it is the exact
-   drop-in for ``gnrwsgiserve``. Pool (``--workers N``) when many users hit one
-   host at once — a synchronous GenroPy site saturates one process at a few
-   concurrent users, and the pool spreads the load over N processes. See
-   :doc:`single-vs-multi`.
+Do I have to choose single or pool?
+   No. There is one shape: the pool always runs. It starts with one worker and
+   adds another when the ones it has have no room for a newcomer, so a small
+   site behaves like a single process and a busy one spreads out on its own.
+   ``--workers`` no longer exists. See :doc:`the-pool`.
 
 What happened to the register daemon?
    It is gone. Historically the site register was a separate process reached over
@@ -43,13 +42,14 @@ How does the pool decide to grow?
    occupancy in 0..1. The pool grows when no non-reception worker is under the
    admission threshold (0.8) — the group as a whole is under pressure. A spawn
    already in flight is waited for rather than duplicated. See
-   :doc:`single-vs-multi` for the full walk-through.
+   :doc:`the-pool` for the full walk-through.
 
 Can I tune when the pool grows?
-   Yes, but not from the CLI — through a config file, by setting the occupancy
-   thresholds (``reception_threshold`` / ``admission_threshold``) and the
-   worker-count bounds (``min_workers`` / ``max_workers``) on the application.
-   There are no per-user caps. See :doc:`configuration`.
+   The lever the environment exposes is ``GNR_ASGI_WORKER_MAX_USERS``: how many
+   users one worker may hold before it refuses the next. Unset, one worker takes
+   everybody and a small site never grows a second one. The occupancy setpoints
+   and the memory cascade live on the group, reachable through a ``--config``
+   recipe. See :doc:`configuration`.
 
 Is shared global state consistent across workers?
    Yes, eventually. The legacy ``globalStore()`` rides the framework's

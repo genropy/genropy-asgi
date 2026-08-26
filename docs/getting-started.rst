@@ -1,35 +1,25 @@
 Get started
 ===========
 
-By the end of this page you will have your existing GenroPy site served over
-ASGI — first as a single process (the drop-in for ``gnrwsgiserve``), then as a
-supervised worker pool — and you will know how to verify each is running.
+By the end of this page your existing GenroPy site is served over ASGI, with no
+register daemon, and you know how to check that it is running.
 
 Check the prerequisites
 -----------------------
 
-Before you install, confirm each of these:
-
 * **Python** >= 3.11.
 * **A working GenroPy environment** — ``~/.gnr/environment.xml`` exists and
   points at your GenroPy setup (the same file ``gnrwsgiserve`` needs).
-* **An existing site** — a directory with a ``root.py`` (the same site you serve
-  with ``gnrwsgiserve``). genropy-asgi runs your site; it does not create one.
+* **An existing site** — a directory with a ``root.py``, the same site you serve
+  with ``gnrwsgiserve``. genropy-asgi runs your site; it does not create one.
 * **psycopg2**, if the site is on PostgreSQL (GenroPy's ``pgsql`` extra, or
   ``psycopg2-binary``).
-* **A dedicated virtualenv** — installing genropy-asgi replaces the legacy
-  ``gnr.web.daemon`` module for every program in that environment (that is the
-  daemonless register, see below), so do not install it where you also run the
-  classic daemon-based stack.
 
 .. note::
 
-   ``PGGSSENCMODE=disable`` and ``OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`` are
-   **not** needed here, on macOS or anywhere else. Both guard against ``fork()``,
-   and nothing in this stack forks: a worker is a fresh interpreter, spawned with
-   ``subprocess.Popen([executable, "-m", ...])``, and ``os.fork`` appears nowhere
-   in genro-asgi or genropy-asgi. They belong to the classic GenroPy stack under
-   gunicorn, which does fork its workers.
+   **On macOS, export** ``PGGSSENCMODE=disable``. The workers of a group are
+   born by ``fork`` out of a template process, and libpq negotiating Kerberos
+   inside a forked child crashes it.
 
 .. note::
 
@@ -44,9 +34,15 @@ Install it
 
    $ pip install genropy-asgi
 
-→ installs the ``gnrasgiserve`` command and registers the ``gnr.web:daemon``
-entry point (the in-process, daemonless register). Nothing else to configure —
-there is no daemon to start.
+That installs the ``gnrasgiserve`` command and declares the ``gnr.web:daemon``
+entry point — the in-process register. Nothing else to configure, and no daemon
+to start.
+
+The entry point is **not** picked up on its own. GenroPy replaces its daemon
+namespace only when ``GNR_DAEMON_PROVIDER`` names a provider, and
+``gnrasgiserve`` sets it for its own process before anything imports the site
+machinery. Consequence worth knowing: the classic stack and this one can share
+one virtualenv, because the choice is made per process and not per installation.
 
 To follow current development, take **both** packages from GitHub:
 
@@ -55,70 +51,54 @@ To follow current development, take **both** packages from GitHub:
    $ pip install git+https://github.com/genropy/genro-asgi.git
    $ pip install git+https://github.com/genropy/genropy-asgi.git
 
-.. warning::
-
-   The declared floor is ``genro-asgi>=0.33.0``, so installing genropy-asgi alone
-   resolves the published genro-asgi release. That release predates the live
-   monitor and the fix that makes a protected route lead to the login (both
-   answered ``403`` before). The bridge runs on it — but the monitor described
-   below is not there.
-
 From a checkout, for development:
 
 .. code-block:: console
 
    $ pip install -e .[dev]
 
-Serve your site (single process)
---------------------------------
+Serve your site
+---------------
 
 .. code-block:: console
 
    $ gnrasgiserve mysite
    → site on http://127.0.0.1:8000/index
 
-``mysite`` is the GenroPy instance name (the same you pass to ``gnrwsgiserve``),
-or a path to a site directory. This is the exact drop-in for ``gnrwsgiserve``:
-one process, no daemon.
+``mysite`` is the GenroPy instance name — the same you pass to ``gnrwsgiserve``
+— or a path to a site directory.
 
 Change host and port:
 
 .. code-block:: console
 
-   $ gnrasgiserve mysite -p 9000              # a different port
-   $ gnrasgiserve mysite -H 127.0.0.1 -p 9000 # host + port
+   $ gnrasgiserve mysite -p 9000                # a different port
+   $ gnrasgiserve mysite -H 0.0.0.0 -p 9000     # host + port
 
 Turn debug off:
 
 .. code-block:: console
 
-   $ gnrasgiserve mysite --nodebug            # debug off
+   $ gnrasgiserve mysite --nodebug
 
 .. note::
 
    ``--reload`` is accepted for surface compatibility with ``gnrwsgiserve`` and
-   then ignored — the core server has no reloader, and it prints a line saying
-   so. Restart the process to pick up code changes.
+   then ignored — it prints a line saying so. Restart the process to pick up
+   code changes.
 
-Run it as a pool
-----------------
-
-.. code-block:: console
-
-   $ gnrasgiserve mysite --workers 2 -p 8080
-   → commander on http://0.0.0.0:8080/ routing users to 2 workers
-
-With ``--workers N`` the same command runs the commander/worker model: a front
-server routes each user to a stable worker (sticky per user) and grows the pool
-under load. See :doc:`single-vs-multi` to choose between the two shapes.
+There is no ``--workers``. The pool always runs and sizes itself: it starts with
+one worker and adds another when no existing one has room for a newcomer. A
+``GNR_ASGI_WORKERS`` still set in the environment is reported on startup and
+ignored. See :doc:`the-pool`.
 
 Verify it runs
 --------------
 
-**Single or pool** — open ``http://<host>:<port>/index`` in a browser. The site
-behaves exactly as it does under ``gnrwsgiserve``.
+Open ``http://<host>:<port>/index`` in a browser. The site behaves exactly as it
+does under ``gnrwsgiserve``.
 
-**Single or pool** — read the site-wide counters, no authentication needed:
+Read the site-wide counters — no authentication needed:
 
 .. code-block:: console
 
@@ -127,26 +107,24 @@ behaves exactly as it does under ``gnrwsgiserve``.
    genropy_site_counters{counter="pages"} 2
    genropy_site_counters{counter="connections"} 2
 
-**The live monitor** is served by genro-asgi at ``/_server/monitor/`` (the JSON
-it polls is ``/_server/monitor/snapshot``). Every route is gated
-``SERVER_ADMIN``, and the built-in recipe declares no administrator, so out of
-the box both answer ``401``. To open it, launch with a config that declares an
+The metric name is the one the legacy ``/metrics`` webtool exposes, kept
+identical so an existing collector keeps working.
+
+**The live monitor** is served by genro-asgi at ``/_server/monitor/``. Every
+route under ``/_server`` is gated ``SERVER_ADMIN``, and the built-in recipe
+declares no administrator, so out of the box it answers ``401``. To open it,
+launch with a ``--config`` recipe that declares an
 ``authentication.admin_password`` — plus a ``storage_key``, since the user store
 encrypts at rest — then sign in at ``/_server/login_page`` as ``admin``.
-
-.. note::
-
-   The site application renders the monitor's *generic* panel: you see the
-   server, its sections and the mounted app, not a per-worker breakdown. The
-   placement map — which user sits on which worker — lives in the front and is
-   not published over HTTP yet.
 
 Next steps
 ----------
 
-* :doc:`single-vs-multi` — choose a mode and watch the pool grow.
+* :doc:`the-pool` — how the pool grows, where a user lives, what happens when he
+  goes quiet.
 * :doc:`cli-reference` — every ``gnrasgiserve`` option.
-* :doc:`configuration` — tune the occupancy thresholds and pool bounds with a
-  config file.
+* :doc:`configuration` — the environment variables, and when a config file earns
+  its place.
 * :doc:`composition` — add a REST API, an MCP endpoint, or an async app beside
   the site.
+* :doc:`status` — what of all this is already built.
