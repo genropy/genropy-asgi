@@ -55,8 +55,7 @@ from datetime import datetime
 
 from genropy_asgi.spa.cli import cmd_serve, resolve_instance_path
 from genropy_asgi.spa.config import DEBUG_OFF_WORDS
-from gnr.app.gnrdeploy import PathResolver
-from gnr.core.gnrbag import Bag
+from gnr.app.pathresolver import PathResolver
 
 from bridge_recipe import RECORDING_WORKER
 from run_archive import ARCHIVE_DIR_ENV, DEFAULT_ARCHIVE_DIR, RUN_ENV, RunArchive
@@ -94,14 +93,40 @@ class RunConditions:
 
     @property
     def database(self):
-        """The db the instance actually points at, not the one we remember."""
-        instance = PathResolver().instance_name_to_path(self.sitename)
-        return dict(Bag(os.path.join(instance, "instanceconfig.xml")).getAttr("db"))
+        """The db the site will actually open, read as the site reads it.
+
+        `get_instanceconfig` is genropy's own merge of the gnr-folder default,
+        the templates and the instance's own file. Opening that last file alone
+        would miss a `db` node declared in the default, which is where a
+        deployment usually keeps the connection and its password.
+        """
+        return dict(PathResolver().get_instanceconfig(self.sitename).getAttr("db"))
+
+    @property
+    def worker_max_users(self):
+        """The placement ceiling the recipe will read, or None when nobody set one.
+
+        A run that cannot say how many users a worker was allowed to hold is not
+        comparable to another: with one worker per user the site exercises paths
+        that never run when everybody shares a process.
+        """
+        value = os.environ.get("GNR_ASGI_WORKER_MAX_USERS")
+        return int(value) if value else None
 
     @property
     def worker_max_number(self):
         """The pool's ceiling: the core's own default, since the recipe declares none."""
         return importlib.import_module(WORKER_MAX_NUMBER_SOURCE).WORKER_MAX_NUMBER
+
+    @property
+    def debugger(self):
+        """Is the werkzeug debugger wrapped around the site?
+
+        Its own condition since 2026-08-26, and not a shade of debug: the error
+        page it serves evaluates Python in the process, and a run that had it on
+        answered errors differently from one that did not.
+        """
+        return bool(os.environ.get("GNR_ASGI_DEBUGGER")) or "--fulldebug" in self.argv
 
     @property
     def debug(self):
@@ -115,6 +140,8 @@ class RunConditions:
         and debug changes what the site measures. The rule is imported from the
         recipe's own module rather than restated, so the two cannot drift.
         """
+        if "--fulldebug" in self.argv:
+            return True
         if "--nodebug" in self.argv:
             return False
         value = os.environ.get("GNR_ASGI_DEBUG")
@@ -129,9 +156,11 @@ class RunConditions:
                 "sitename": self.sitename,
                 "bind": f"{host}:{port}",
                 "workers": self.worker_max_number,
+                "worker_max_users": self.worker_max_users,
                 "threads": None,
                 "worker_class": RECORDING_WORKER,
                 "debug": self.debug,
+                "debugger": self.debugger,
                 "recorders": ["http", "register"],
                 "database": self.database,
                 "genropy": importlib.metadata.version("genropy"),

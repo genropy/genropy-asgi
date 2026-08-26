@@ -1365,6 +1365,39 @@ does NOT exit and neither stack is torn down: the whole point of comparing live 
 that the two stacks are still answering while the divergence is investigated. The
 legacy keeps serving, so the browser stays usable.
 
+**The bridge's placement ceiling.** `--max-users-per-worker` reaches the recipe
+through `GNR_ASGI_WORKER_MAX_USERS`, which `spa/config.py` passes to the group as
+`worker_max_users` and `bridge_recipe.py` transcribes. Left out, the core's
+default governs: one worker takes everybody, two browsers land in the same
+process, and the cross-worker paths — the register population, the stores, the
+datachanges between users — are never exercised. With `1` each user gets a worker
+of his own. Since genro-asgi 2682ad7 the birth happens INSIDE the placement, so
+the second user waits the moment a fork costs instead of being answered 503 with
+`Retry-After: 30`; before that commit the ceiling could not be used at all. The
+value is declared in the bridge run row, because a run that cannot say how many
+users a worker was allowed to hold is not comparable to another.
+
+**One shadow per browser.** The proxy keeps a bridge-side connection, cookie jar
+and identifier map for each browser, told apart by the value of the site's own
+session cookie — genropy names it after the site (`currentDomainIdentifier`,
+`gnrwebpage.py:395`). Two windows logged in as two users are two connections on
+the legacy stack, and a single jar would make them one on the bridge: every
+divergence after the second login would be the proxy's own fabrication. Before
+its first reply a browser carries no such cookie and shares the nameless shadow,
+which costs nothing — that exchange is a cold-start one and is not compared.
+
+**A second declared rule, `stale-connection`** (owner, 2026-08-26). A comparative
+run starts from an empty register, and a browser that was on the site before
+still holds the cookie of the run before: the legacy refuses the call with
+`The connection is not longer valid` while the twin, which inherited nothing,
+answers it normally. The two stacks are not disagreeing — they are being asked
+different questions. The rule reads the same literal `reference-race` reads and is
+told apart by what is missing: a race has an earlier exchange still in flight on
+the same cookie, this one has none. It lives in the PROXY's table and not in the
+default one: replaying a recorded session, a reference 400 from a stale tab is
+reproducible and must be reported. Measured on the owner's first session,
+2026-08-25, on `getRemoteTranslation` — 400 on the legacy, 200 on the bridge.
+
 **The declared run name.** `--run` is written into both archives — inside
 `conditions` and promoted to the `name` column of the `run` row, a copy like every
 other promoted column. It is the one declared condition no launcher can read from

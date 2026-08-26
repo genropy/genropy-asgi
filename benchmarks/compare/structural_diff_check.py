@@ -19,7 +19,8 @@ import sys
 
 from replica import TraceReader
 from run_archive import RunArchive
-from structural_diff import DeclaredRule, DeclaredRules, StructuralDiff
+from structural_diff import (DeclaredRule, DeclaredRules, ReferenceRace,
+                             ServiceWarmup, StaleConnection, StructuralDiff)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMP = os.path.join(REPO_ROOT, "temp")
@@ -252,8 +253,91 @@ check("with two differences the first one in the sequence is the one reported",
       divergence.ordinal == 2)
 
 # 9. the declared-rules table: what does not stop the run
-check("the table ships with the one rule already measured",
+check("the table ships with the one rule every driver needs",
       DeclaredRules().names == ["reference-race"])
+check("the stale connection is NOT in it: a replay must report a reference 400, "
+      "and only the live proxy may excuse one",
+      "stale-connection" not in DeclaredRules().names)
+
+
+class TraceWithOverlap:
+    """A trace answering the one question the two status rules ask of it."""
+
+    def __init__(self, overlapped=None):
+        self.overlapped = overlapped
+
+    def get_overlapped_exchange(self, record):
+        return self.overlapped
+
+
+REFUSED = {"exchange_id": "x", "status": 400,
+           "resp_body": "<p>ERROR REASON : The connection is not longer valid; "
+                        "SCRIPT_NAME=''; PATH_INFO='/'</p>"}
+# the proxy's own table, in the order it declares them: the narrower rule first
+rules = DeclaredRules([ReferenceRace(), StaleConnection()])
+check("without the stale rule the same refusal stops the run, as the replay needs",
+      DeclaredRules().get_status_reason(TraceWithOverlap(), REFUSED) is None)
+reason = rules.get_status_reason(TraceWithOverlap(), REFUSED)
+check("a refusal with nothing in flight is the browser's leftover connection",
+      reason is not None and reason.startswith("stale-connection:"))
+check("and the reason says what made it stale",
+      "started from an empty register" in reason)
+raced = rules.get_status_reason(
+    TraceWithOverlap({"rpc_method": "login_doLogin", "path": "/"}), REFUSED)
+check("the same refusal WITH an earlier call in flight stays a race",
+      raced is not None and raced.startswith("reference-race:"))
+check("a reply that never mentions the connection is recognised by neither",
+      rules.get_status_reason(TraceWithOverlap(),
+                              {"resp_body": "<GenRoBag/>"}) is None)
+
+
+# 9b. the service-warmup rule: what it takes off the table and what it leaves
+SERVICE_CALLER = ("gnr/lib/services/__init__.py:243 __call__ <- "
+                  "gnr/lib/services/__init__.py:75 getService <- "
+                  "gnr/web/gnrwsgisite.py:723 getService")
+PREFERENCE_CALLER = ("gnr/web/gnrwebapp.py:27 getItem <- "
+                     "packages/adm/model/preference.py:23 getMainStorePreference")
+
+
+class Paired:
+    """One side of a divergence, as the rule reads it."""
+
+    def __init__(self, caller, verb="getItem", surface="store", arguments=("x",)):
+        self.caller = caller
+        self.call = (surface, verb)
+        self.arguments = arguments
+
+
+class Pairing:
+    """A divergence with the two sides the rule asks about."""
+
+    def __init__(self, reference, replica):
+        self.reference = reference
+        self.replica = replica
+
+
+warmup = ServiceWarmup()
+reason = warmup.get_divergence_reason(
+    Pairing(Paired(PREFERENCE_CALLER), Paired(SERVICE_CALLER)))
+check("a replica line that is resolving a service, against one that is not, is warm-up",
+      reason is not None and "still instantiating a service" in reason)
+check("the reason names the call, so an unexpected service is still visible",
+      "store:getItem" in reason)
+check("an extra call with no counterpart is the same family",
+      warmup.get_divergence_reason(Pairing(None, Paired(SERVICE_CALLER))) is not None)
+check("the reference resolving a service and the replica not is NOT warm-up",
+      warmup.get_divergence_reason(
+          Pairing(Paired(SERVICE_CALLER), Paired(PREFERENCE_CALLER))) is None)
+check("two warm-ups that disagree are a real difference",
+      warmup.get_divergence_reason(
+          Pairing(Paired(SERVICE_CALLER), Paired(SERVICE_CALLER))) is None)
+check("a difference with no service resolution anywhere is untouched",
+      warmup.get_divergence_reason(
+          Pairing(Paired(PREFERENCE_CALLER), Paired(PREFERENCE_CALLER))) is None)
+check("a line missing on the replica side is untouched",
+      warmup.get_divergence_reason(Pairing(Paired(SERVICE_CALLER), None)) is None)
+check("it answers nothing about a recorded status",
+      warmup.get_status_reason(None, {"resp_body": ""}) is None)
 
 
 class ExtraPageStoreIsKnown(DeclaredRule):

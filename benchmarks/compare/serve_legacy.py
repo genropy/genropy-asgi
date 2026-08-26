@@ -48,8 +48,7 @@ import urllib.request
 from datetime import datetime
 
 import gunicorn
-from gnr.app.gnrdeploy import PathResolver
-from gnr.core.gnrbag import Bag
+from gnr.app.pathresolver import PathResolver
 from gnr.web import gnrwsgisite
 from gnr.web.cli.gnrserveprod import main
 
@@ -77,10 +76,37 @@ class RunConditions:
         return None
 
     @property
+    def resolver(self):
+        return PathResolver()
+
+    @property
     def database(self):
-        """The db the instance actually points at, not the one we remember."""
-        path = PathResolver().instance_name_to_path(self.sitename)
-        return dict(Bag(os.path.join(path, "instanceconfig.xml")).getAttr("db"))
+        """The db the site will actually open, read as the site reads it.
+
+        `get_instanceconfig` is genropy's own merge — the default of the gnr
+        folder, then any template, then the instance's own file — and it is the
+        same sequence `GnrApp.load_instance_config` runs at startup. Opening the
+        instance's file alone would miss a `db` node declared in the default,
+        which is where a deployment usually keeps the connection and its password.
+        """
+        return dict(self.resolver.get_instanceconfig(self.sitename).getAttr("db"))
+
+    @property
+    def debug(self):
+        """Debug as the SITE will have it, not as the command line looks.
+
+        `serveprod` builds `GnrWsgiSite(instance_name)` with no options unless
+        `--debug` is on the command line, and the site then reads `wsgi?debug`
+        out of its merged siteconfig (`gnrwsgisite.py:552-559`, where the literal
+        `force` also means on). So the flag alone answers a different question,
+        and debug is not cosmetic: it changes the reply the browser receives and
+        it turns on the SQL time counters.
+        """
+        if "--debug" in self.argv:
+            return True
+        declared = self.resolver.get_siteconfig(self.sitename).getAttr("wsgi") or {}
+        value = declared.get("debug")
+        return True if str(value).lower() == "force" else bool(value)
 
     @property
     def declared(self):
@@ -90,7 +116,8 @@ class RunConditions:
                 "workers": self.get_option("-w", "--workers"),
                 "threads": self.get_option("--threads"),
                 "worker_class": self.get_option("-k", "--worker-class"),
-                "debug": "--debug" in self.argv,
+                "debug": self.debug,
+                "debugger": "--debug" in self.argv,
                 "recorders": ["http", "register"],
                 "database": self.database,
                 "genropy": importlib.metadata.version("genropy"),

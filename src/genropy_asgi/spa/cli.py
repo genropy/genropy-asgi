@@ -24,6 +24,9 @@ Usage:
     gnrasgiserve test_invoice_pg
     gnrasgiserve test_invoice_pg -p 8000
     gnrasgiserve test_invoice_pg -H 0.0.0.0 -p 8080 --nodebug
+
+``--fulldebug`` adds the werkzeug debugger to debug; debug alone no longer
+brings it, so an error page that evaluates Python never appears by accident.
 """
 
 from __future__ import annotations
@@ -69,6 +72,13 @@ def cmd_serve(argv: list[str]) -> int:
     )
     parser.add_argument("--nodebug", action="store_true")
     parser.add_argument(
+        "--fulldebug",
+        action="store_true",
+        help="debug AND the werkzeug debugger: the error page with a traceback "
+        "and a console that evaluates Python in the process. Debug alone gives "
+        "the SQL counters and the developer's extras without that page",
+    )
+    parser.add_argument(
         "--config",
         default=None,
         help="server config.py (a ServerConfiguration) instead of the built-in recipe; "
@@ -91,6 +101,9 @@ def cmd_serve(argv: list[str]) -> int:
         os.environ["GNR_ASGI_PORT"] = str(opts.port)
     if opts.nodebug:
         os.environ["GNR_ASGI_DEBUG"] = ""
+    if opts.fulldebug:
+        os.environ["GNR_ASGI_DEBUG"] = "1"
+        os.environ["GNR_ASGI_DEBUGGER"] = "1"
     if os.environ.get("GNR_ASGI_WORKERS"):
         print(
             "GNR_ASGI_WORKERS is set but no longer read: the pool always runs "

@@ -100,6 +100,8 @@ def booted(monkeypatch):
     monkeypatch.delenv("GNR_ASGI_FROZEN_USERS_PATH", raising=False)
     monkeypatch.delenv("GNR_ASGI_INSTANCE_DIR", raising=False)
     monkeypatch.delenv("GNR_ASGI_WORKERS", raising=False)
+    monkeypatch.delenv("GNR_ASGI_WORKER_MAX_USERS", raising=False)
+    monkeypatch.delenv("GNR_ASGI_DEBUGGER", raising=False)
     return AsgiServer(str(CONFIG))
 
 
@@ -156,6 +158,44 @@ def test_the_debug_flag_unset_stays_the_dev_default(monkeypatch):
     monkeypatch.delenv("GNR_ASGI_DEBUG", raising=False)
     server = AsgiServer(str(CONFIG))
     assert server.config.group_kwargs("site")["pool"]["worker_kwargs"]["debug"] is True
+
+
+def test_the_werkzeug_debugger_is_off_until_it_is_asked_for_by_name(booted):
+    # its error page evaluates Python in the process, so it must never come on
+    # as a side effect of the flag somebody set to get the SQL counters
+    assert booted.config.group_kwargs("site")["pool"]["worker_kwargs"]["debugger"] is False
+
+
+def test_the_debugger_travels_beside_debug_when_asked(monkeypatch):
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_DEBUG", "1")
+    monkeypatch.setenv("GNR_ASGI_DEBUGGER", "1")
+    worker_kwargs = AsgiServer(str(CONFIG)).config.group_kwargs("site")["pool"]["worker_kwargs"]
+    assert (worker_kwargs["debug"], worker_kwargs["debugger"]) == (True, True)
+
+
+def test_debug_alone_does_not_bring_the_debugger(monkeypatch):
+    # the pair the bench needs: real SQL counters, no interactive error page
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_DEBUG", "1")
+    monkeypatch.delenv("GNR_ASGI_DEBUGGER", raising=False)
+    worker_kwargs = AsgiServer(str(CONFIG)).config.group_kwargs("site")["pool"]["worker_kwargs"]
+    assert (worker_kwargs["debug"], worker_kwargs["debugger"]) == (True, False)
+
+
+def test_the_user_ceiling_is_absent_until_somebody_declares_one(booted):
+    # unset means the core's own default governs: a worker takes everybody, and
+    # the recipe must not put a number of its own in front of that decision
+    assert "worker_max_users" not in booted.config.group_kwargs("site")["pool"]
+
+
+def test_the_user_ceiling_reaches_the_group_as_a_number(monkeypatch):
+    # the bench sets it to 1 so each user lands on a worker of his own, which is
+    # what exercises the cross-worker paths at all
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.setenv("GNR_ASGI_WORKER_MAX_USERS", "1")
+    server = AsgiServer(str(CONFIG))
+    assert server.config.group_kwargs("site")["pool"]["worker_max_users"] == 1
 
 
 def test_a_leftover_workers_variable_changes_nothing(monkeypatch):

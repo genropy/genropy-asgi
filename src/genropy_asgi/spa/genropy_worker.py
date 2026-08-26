@@ -9,7 +9,7 @@ exactly the legacy site:
 
 - the constructor takes ``source`` (a site name or a site directory path)
   and ``debug``, builds the ``GnrWsgiSite`` (the Werkzeug debugger wrapper
-  when ``debug``, ``site._local_mode = True``, atexit ``on_site_stop``) and
+  when ``debugger``, ``site._local_mode = True``, atexit ``on_site_stop``) and
   assigns the possibly-wrapped site to ``self.wsgi_app`` — the core's
   consumer seam for the http CALL form;
 - the site's lazy per-process state is settled right after creation,
@@ -106,6 +106,7 @@ class GenropyWorker(SpaWorker):
         *,
         source: str,
         debug: bool = False,
+        debugger: bool = False,
         group_engine: Any = None,
         **kwargs: Any,
     ) -> None:
@@ -113,7 +114,15 @@ class GenropyWorker(SpaWorker):
         name: the worker's name (the one its handler minted).
         source: the GenroPy site — a site name or a site directory path.
             Ignored when ``group_engine`` arrives: the site is already built.
-        debug: True wraps the site in the Werkzeug debugger middleware.
+        debug: True builds the site in debug mode — the SQL time counters,
+            ``pageModule`` in the page's own bootstrap, the developer's extras.
+        debugger: True wraps the site in the Werkzeug debugger middleware, whose
+            error page carries a traceback AND a console that evaluates Python
+            inside the process. Its own switch since 2026-08-26, and off by
+            default: it must never come on as a side effect of a flag somebody
+            set to get the SQL counters. GenroPy keeps the two separate too —
+            ``site.debug`` comes from the configuration, the werkzeug wrapper
+            only from ``serveprod --debug``.
         group_engine: the ``GnrWsgiSite`` the group's template built, handed
             to a worker born by fork (fork contract §8, 2026-08-24). When it
             is None the worker was spawned and builds its own site.
@@ -141,7 +150,7 @@ class GenropyWorker(SpaWorker):
         # while the first request is already running on a pool thread.
         self._register_client = self._gnr_site.register
         self.wsgi_app = self._gnr_site
-        if debug:
+        if debugger:
             # Deferred import, transcribed from the pre-rebase host: importing
             # gnr.web at module top would drag the register client (and with it
             # the whole site machinery) into every import of this module.
@@ -151,10 +160,19 @@ class GenropyWorker(SpaWorker):
         # Settle the site's lazy per-process state HERE, single-threaded:
         # ``resources_dirs`` is published and only then reversed in place, and
         # the uncached service scan it drives would let a first concurrent
-        # request iterate a torn list (genropy#984). ``storage('gnr')`` is
-        # exactly what the first request resolves in ``build_arg_dict``.
+        # request iterate a torn list (genropy#984). ``storage('gnr')`` and
+        # ``storage('dojo')`` are exactly what the first request resolves in
+        # ``build_arg_dict``.
+        #
+        # `dojo` joined the list on 2026-08-26, measured by the twin proxy: a
+        # worker born for one user was still instantiating that service inside
+        # its first page — six register calls the legacy did not make there, and
+        # 291 ms against 100. The legacy makes them too, at the startup of its
+        # one long-lived process. Settling them here puts them where the legacy
+        # has them: outside the request, in the birth.
         self._gnr_site.resources_dirs
         self._gnr_site.storage("gnr")
+        self._gnr_site.storage("dojo")
         self._gnr_site.spa_worker = self
 
     def build_registry(self) -> RegisterRegistry:

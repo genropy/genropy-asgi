@@ -86,6 +86,10 @@ DICT_NULL_KEY = re.compile(r"'([A-Za-z_][A-Za-z0-9_]*)':\s*None\b")
 # 2026-08-25), so a declared rule matching on the call writes `client` and never
 # has to know which stack declared the verb. `store` stays distinct: it is another
 # object's surface, the live Bag's, not another way into this one.
+# How much of a reply travels into the report around the first difference: enough
+# to recognise the place, not so much that the report becomes the body.
+REPLY_WINDOW = 240
+
 CLIENT_SURFACE = "client"
 REGISTER_CLIENT_SURFACES = ("client", "passthrough")
 
@@ -93,6 +97,52 @@ REGISTER_CLIENT_SURFACES = ("client", "passthrough")
 # Copied verbatim from `gnr/web/gnrwebpage.py:307`, typo and all: it is a literal
 # the site writes, not a sentence, and correcting it here would match nothing.
 CONNECTION_ROTATED = "The connection is not longer valid"
+
+
+class ReplyShape:
+    """One reply body as it survives a second run: masked, and comparable whole.
+
+    What the BROWSER receives is what the bridge has to reproduce, so the reply is
+    compared entire and not only by its status (owner, 2026-08-26). Two families
+    of difference are legitimate and go first: the identifiers each stack mints
+    for itself — page ids, connection ids, register item ids — and the clock.
+    What is left is a difference the browser would see, piggybacked datachanges
+    and client data included, since those ride inside the same reply.
+    """
+
+    def __init__(self, body):
+        self.body = body or ""
+
+    @property
+    def masked(self):
+        """The body with minted identifiers, timestamps and dates masked."""
+        text = DATETIME_REPR.sub("<datetime>", self.body)
+        text = ISO_TIMESTAMP.sub("<ts>", text)
+        text = ISO_DATE.sub("<date>", text)
+        text = HEX_IDENTIFIER.sub("<hex>", text)
+        return MINTED_IDENTIFIER.sub("<id>", text)
+
+    def get_difference(self, other):
+        """Where the two replies first part company, or None when they do not.
+
+        A window around the first differing character rather than a line diff: a
+        Bag reply is one long line, and a line diff of it says only that the line
+        differs.
+        """
+        mine, theirs = self.masked, other.masked
+        if mine == theirs:
+            return None
+        offset = 0
+        for offset, (left, right) in enumerate(zip(mine, theirs)):
+            if left != right:
+                break
+        else:
+            offset = min(len(mine), len(theirs))
+        start = max(0, offset - REPLY_WINDOW // 2)
+        return (f"the replies differ at character {offset} of "
+                f"{len(mine)}/{len(theirs)}\n"
+                f"  legacy: ...{mine[start:offset + REPLY_WINDOW]}...\n"
+                f"  bridge: ...{theirs[start:offset + REPLY_WINDOW]}...")
 
 
 class LineShape:
@@ -155,11 +205,7 @@ class LineShape:
 
     def get_masked(self, text):
         """The text with minted identifiers, timestamps and dates masked."""
-        text = DATETIME_REPR.sub("<datetime>", text)
-        text = ISO_TIMESTAMP.sub("<ts>", text)
-        text = ISO_DATE.sub("<date>", text)
-        text = HEX_IDENTIFIER.sub("<hex>", text)
-        return MINTED_IDENTIFIER.sub("<id>", text)
+        return ReplyShape(text).masked
 
     def get_bag_paths(self, xml):
         """The node paths of a Bag, values dropped, attribute names kept."""
@@ -257,10 +303,108 @@ class ReferenceRace(DeclaredRule):
                 f"still in flight on the same cookie")
 
 
+class StaleConnection(DeclaredRule):
+    """The browser came back with a connection the register no longer knows.
+
+    A comparative run starts from an EMPTY register, and a browser that was on
+    the site before still holds the cookie of the run before: the site refuses
+    the call, and the twin — which keeps a jar of its own and inherited nothing —
+    answers the call normally. The two stacks are not disagreeing, they are being
+    asked different questions, and comparing the register calls of a refusal with
+    those of a served call says nothing about either.
+
+    The signature is the same literal `ReferenceRace` reads, and the two rules are
+    told apart by what is NOT there: a race has an earlier exchange still in
+    flight on the same cookie, which rotated the connection a moment ago. This one
+    has none — nothing rotated it, it simply outlived the register.
+
+    Measured on the owner's first session through the twin proxy, 2026-08-25: the
+    third exchange, `getRemoteTranslation`, answered 400 on the legacy and 200 on
+    the bridge, with the cookie of the previous run in the request.
+    """
+
+    name = "stale-connection"
+
+    def get_status_reason(self, trace, record):
+        if CONNECTION_ROTATED not in (record.get("resp_body") or ""):
+            return None
+        if trace.get_overlapped_exchange(record) is not None:
+            return None
+        return ("the browser carried a connection from before this run, which "
+                "started from an empty register")
+
+
+class ServiceWarmup(DeclaredRule):
+    """A service the freshly born worker had not instantiated yet.
+
+    The bridge gives every user a worker of his own when the ceiling says so, and
+    a worker born a moment ago has instantiated no service: the first request it
+    serves resolves them, and each resolution reads the register. The legacy makes
+    the very same calls — once, at the startup of its one long-lived process,
+    outside any exchange a comparison looks at. So the two stacks do the same work
+    at two different moments, and only one of the two moments is inside a compared
+    exchange.
+
+    The worker already settles what it can at birth (`genropy_worker.py`,
+    `resources_dirs` and the local storages), which is where a resolution belongs.
+    What stays is the tail nobody can pre-warm without opening remote volumes in a
+    just-forked process, and the owner accepted it as a settling difference on
+    2026-08-26: it sits on the register surface only — the reply the browser
+    receives is compared apart, and agrees.
+
+    NARROW ON PURPOSE. It recognises one thing: a call the REPLICA made and the
+    reference did not, whose caller chain passes through the service resolution.
+    A different order, a different argument, an extra call from anywhere else, and
+    anything at all on the reference side, all stay divergences.
+    """
+
+    name = "service-warmup"
+
+    # The two frames that say "this call is a service being resolved", read from
+    # `gnr/lib/services/__init__.py` where `getService` instantiates on demand.
+    SERVICE_RESOLUTION = ("lib/services/__init__.py", "getService")
+
+    def get_divergence_reason(self, divergence):
+        """The replica is resolving a service and the reference is not, or None.
+
+        Both shapes the diff produces are covered by the same question. Where the
+        extra call has no counterpart the alignment reports it as an insertion;
+        where the call happens to wear the same surface and verb as the reference's
+        — `store:getItem` on both, one reading a preference and the other a
+        service definition — the alignment pairs them and reports the arguments.
+        What tells the family apart is the CALLER, not the shape of the pairing.
+
+        And when BOTH sides are resolving a service and still differ, that is a
+        real difference: two warm-ups that do not agree are not a warm-up.
+        """
+        if divergence.replica is None or not self.is_resolution(divergence.replica):
+            return None
+        if divergence.reference is not None and self.is_resolution(divergence.reference):
+            return None
+        surface, verb = divergence.replica.call
+        return (f"the worker was still instantiating a service — "
+                f"{surface}:{verb}({divergence.replica.arguments}) under "
+                f"{divergence.replica.caller.split(' <- ')[0]}")
+
+    def is_resolution(self, shape):
+        """Does this line come from a service being resolved on demand?"""
+        return all(frame in shape.caller for frame in self.SERVICE_RESOLUTION)
+
+
 class DeclaredRules:
     """The table: every difference the bench recognises, and nothing else.
 
-    It is born with the one rule already measured. The known bridge divergences
+    It is born with the one rule every driver needs. `StaleConnection` is NOT in
+    it: the same reply means different things to the two drivers, and only the
+    driver knows which. Replaying a recorded session, a reference 400 from a stale
+    tab IS reproducible and must be reported; browsing live through the twin
+    proxy, the browser's leftover connection is the proxy's own situation and the
+    bridge cannot share it. So the proxy declares that rule in its own table —
+    where ORDER MATTERS, because both rules read the same literal and
+    `ReferenceRace` is the narrower: it must be asked first, or a race would be
+    reported as a stale connection.
+
+    The known bridge divergences
     (S1, S2, S3, S5) enter as the first cycle against the bridge shows each of
     them, with the owner's sign-off — a rule written from a document would
     declare a signature nobody observed.

@@ -60,6 +60,14 @@ that serves the request, not by whoever sends it:
   which is exactly what `TraceReader.get_exchange_replaying` and
   `StructuralDiff` already read. Neither module is modified.
 
+**One shadow per browser.** The bridge-side connection, cookie jar and page-id
+map are per-browser things, so the proxy keeps one of each per browser: two
+windows logged in as two users are two connections on the legacy stack, and a
+single jar would make them one on the bridge. Which browser a request came from
+is said by the proxy's OWN cookie, `bench_twin`, minted on first sight and
+stripped from everything sent onward. The site's session cookie cannot serve:
+its value changes at login, because the connection rotates.
+
 **Identifiers.** The bridge mints its own page ids, so the same `IdentityMap` the
 replica uses rewrites the tokens of the legacy request into the tokens the bridge
 minted, in the query string and in the body alike. Cookies are never forwarded to
@@ -68,6 +76,26 @@ jar of its own for the shadow. Every OTHER request header is forwarded as it
 came — the user agent among them, because the site writes it into the connection
 register item, and a missing one would read as a divergence of the stack.
 
+**The bridge's placement ceiling.** `--max-users-per-worker` reaches the recipe
+through `GNR_ASGI_WORKER_MAX_USERS`, which `spa/config.py` passes to the group as
+`worker_max_users`. Left out, the core's default governs and one worker takes
+everybody: two browsers land in the same process and the cross-worker paths —
+the register population, the stores, the datachanges between users — are never
+exercised. With `1` each user gets a worker of his own. The birth happens inside
+the placement since genro-asgi 2682ad7, so the second user waits the moment a
+fork costs instead of being answered 503.
+
+**Debug, one flag for two stacks.** Genropy keeps two things apart that the
+bridge used to weld together: `site.debug` — the SQL time counters, `pageModule`
+in the page's bootstrap — and the werkzeug debugger, an error page that evaluates
+Python in the process. On the legacy the first comes from the merged siteconfig
+and the second only from `serveprod --debug`; on the bridge they now have a
+switch each, `debug` and `debugger` (2026-08-26). So this proxy runs both stacks
+with debug ON and no debugger, which is the pair that makes the SQL counters
+carry real numbers on both sides, and `--fulldebug` adds the debugger to both.
+The legacy cannot be talked out of its configured debug from a command line, so
+the bridge follows it rather than the other way round.
+
 **The two rules inherited from Phase 7, both binding.** The exchanges before the
 first RPC are not compared, each stack finishing its lazy build there and the
 bridge doing it in the template whose lines are dropped by construction. And the
@@ -75,13 +103,20 @@ bridge doing it in the template whose lines are dropped by construction. And the
 not attribute a call, so anything of it that reappears here is a new measurement
 with attribution, not a continuation of the old figure.
 
-**The stop leaves everything standing.** At the first divergence nothing
-declares, the proxy prints the report, writes it beside the archives, and stops
-dispatching to the bridge — it does NOT exit, and neither stack is torn down. The
-whole point of comparing live is that the two stacks are still answering while
-the divergence is investigated; a proxy that died at the stop would leave the
-archives as the only evidence. The legacy keeps serving, so the browser stays
-usable.
+**One call, one verdict, and nothing stops.** Every request carries a mark of its
+own — `twin-00042` — which reaches BOTH archives, so the unit of comparison is the
+single call: it either agrees on the two stacks or it diverges, on its own merits,
+whatever the calls around it did. A divergence is therefore a finding about that
+call and no reason to arrest the run: `twin-00043` is asked the same question with
+no assumption that one follows from the other (owner, 2026-08-26, replacing the
+first-divergence arrest the replica works under — that rule fits a linear replay of
+one recorded session, not a live session of several independent users, where the
+divergence of one must not end the session of the others).
+
+Each divergence is printed, and written to a numbered file of its own beside the
+archives, naming the call and the browser. Both stacks stay up throughout, which
+is what makes a divergence investigable while it is fresh; the closing summary
+lists every call that diverged.
 
 Run, from the repository root:
 
@@ -107,6 +142,7 @@ import json
 import os
 import queue
 import re
+import uuid
 import signal
 import subprocess
 import sys
@@ -118,8 +154,8 @@ BENCH = os.path.dirname(BENCH_DIR)
 BENCH_ROOT = os.path.dirname(BENCH)
 sys.path.insert(0, BENCH)
 
-from gnr.app.gnrdeploy import PathResolver           # noqa: E402
-from gnr.app.pathresolver import EntityNotFoundException   # noqa: E402
+from gnr.app.pathresolver import (EntityNotFoundException,  # noqa: E402
+                                  PathResolver)
 from gnr.core.gnrbag import Bag                      # noqa: E402
 
 from genropy_parity_check import GenropyParity       # noqa: E402
@@ -128,7 +164,9 @@ from replica import (EXCHANGE_POLL_SECONDS, EXCHANGE_WAIT_SECONDS,  # noqa: E402
                      REPLICA_HEADER, IdentityMap, ReplicaClient, TraceReader)
 from run_archive import (ARCHIVE_DIR_ENV, DEFAULT_ARCHIVE_DIR,  # noqa: E402
                          RUN_NAME_ENV)
-from structural_diff import DeclaredRules, StructuralDiff   # noqa: E402
+from structural_diff import (DeclaredRules, ReferenceRace,  # noqa: E402
+                             ReplyShape, ServiceWarmup, StaleConnection,
+                             StructuralDiff)
 
 # This proxy's own ordinal on the legacy leg. The exchange id is minted inside
 # the stack, so the sender needs a mark of its own to find the line it caused.
@@ -136,6 +174,24 @@ TWIN_HEADER = "X-Bench-Twin-Request"
 
 # The suffix that names the bridge's twin of an instance (owner, 2026-08-25).
 BRIDGE_SUFFIX = "_asgi"
+
+# The proxy's own cookie, and the only thing that says which browser a request
+# came from. The site's session cookie cannot do it: its value CHANGES at login,
+# because the connection rotates — measured 2026-08-26, where the page load after
+# the login read as a second browser. This one is minted once per cookie jar and
+# never changes, which is also exactly the granularity that matters: two users
+# need two jars, since two windows of one profile share the site's cookie and the
+# legacy stack cannot tell them apart either. It is stripped from everything sent
+# onward, so neither site ever sees a cookie the bench invented.
+TWIN_COOKIE = "bench_twin"
+
+# The two weights a divergence carries (owner, 2026-08-26). What the browser
+# receives is what the bridge must reproduce, so a difference in the REPLY — its
+# status or its body, piggybacked datachanges included — is an ERROR. The register
+# calls are how the two stacks got there, and a difference in them is a WARNING:
+# real, worth a report, and not a failure of the emulation the browser sees.
+ERROR = "ERROR"
+WARNING = "WARNING"
 
 # The bridge's daemon override engages only when genropy is told which provider
 # to use (genropy #1070). Unset, `gnr.web.daemon.siteregister_client` stays
@@ -145,6 +201,11 @@ BRIDGE_SUFFIX = "_asgi"
 # this is a condition of the run, declared by whoever starts it.
 DAEMON_PROVIDER_ENV = "GNR_DAEMON_PROVIDER"
 DAEMON_PROVIDER = "genropy-asgi"
+
+# How many users one worker of the bridge may hold. The recipe reads it here and
+# passes it to the group; unset, the core's own default governs and one worker
+# takes everybody, so the pool never grows and the cross-worker paths never run.
+WORKER_MAX_USERS_ENV = "GNR_ASGI_WORKER_MAX_USERS"
 
 LEGACY_PYTHON = os.path.join(BENCH_ROOT, "temp", "legacy_venv", "bin", "python")
 LEGACY_DAEMON = os.path.join(BENCH_ROOT, "temp", "legacy_venv", "bin", "gnrdaemon")
@@ -206,9 +267,14 @@ class TwinInstances:
         return self.resolver.instance_name_to_path(name)
 
     def get_database(self, name):    # wf:phase-8:new
-        """The db node of an instance, read from its own instanceconfig.xml."""
-        path = os.path.join(self.get_instance_path(name), "instanceconfig.xml")
-        return dict(Bag(path).getAttr("db"))
+        """The db an instance will actually open, read as the site reads it.
+
+        Genropy's own merge, not the instance's file alone: the `db` node can
+        come from the default of the gnr folder — which is where a deployment
+        usually keeps the connection and its password — and a copy made on the
+        name found in the wrong place would copy the wrong database.
+        """
+        return dict(self.resolver.get_instanceconfig(name).getAttr("db"))
 
     @property
     def legacy_database(self):    # wf:phase-8:new
@@ -382,10 +448,64 @@ class SiteDaemonProcess(StackProcess):
         return Bag(self.descriptor_path).getAttr("params").get("pid") == self.process.pid
 
 
+class BrowserShadow:
+    """The bridge-side twin of ONE browser, and the thread that keeps it.
+
+    Everything a browser has of its own lives here: the connection to the bridge,
+    the cookie jar, the page ids, the two archive readers, the comparison, and the
+    thread that runs them. Two users must share NOTHING of the measuring
+    apparatus, or a difference between them could be the bench's and not the
+    stacks' — and testing table subscriptions and datachanges is exactly testing
+    what one user's action does to another (owner, 2026-08-26).
+
+    The thread is not only isolation. SQLite refuses a connection used from a
+    thread other than the one that opened it, so the readers must be built here;
+    and the two legs of one request stay sequential because this browser's queue
+    is served one leg at a time, while OTHER browsers run in parallel — which is
+    what browsers actually do, and what delivery between users needs in order to
+    be observed at all.
+    """
+
+    def __init__(self, proxy, identity):
+        self.proxy = proxy
+        self.identity = identity
+        self.client = ShadowClient("127.0.0.1", proxy.bridge_port)
+        self.identity_map = IdentityMap()
+        self.legs = queue.Queue()
+        self.reference = None
+        self.shadow = None
+        self.diff = None
+        threading.Thread(target=self.serve_legs, daemon=True).start()
+
+    def serve_legs(self):    # wf:phase-8:new
+        """Build this browser's own view of the two runs, then follow it."""
+        self.reference = TraceReader(self.proxy.legacy.archive_path)
+        self.shadow = TraceReader(self.proxy.bridge.archive_path)
+        self.diff = StructuralDiff(self.reference, self.shadow, self.proxy.rules)
+        while True:
+            leg = self.legs.get()
+            try:
+                self.proxy.follow(self, leg)
+            except Exception as failure:
+                self.proxy.record_divergence(
+                    leg, ERROR, f"the shadow leg of {leg.method} {leg.target} "
+                                f"failed: {failure!r}")
+            finally:
+                leg.done.set()
+
+    def follow_leg(self, leg):    # wf:phase-8:new
+        """Hand this browser's thread one leg, and wait for it to be done."""
+        self.legs.put(leg)
+        leg.done.wait()
+
+
 class ShadowLeg:
     """One request waiting for its shadow leg, and the answer that it is done."""
 
-    def __init__(self, method, target, headers, body, twin, status, reply_headers):
+    def __init__(self, method, target, headers, body, twin, status, reply_headers,
+                 reply_body=b"", identity=""):
+        self.identity = identity
+        self.reply_body = reply_body
         self.method = method
         self.target = target
         self.headers = headers
@@ -438,66 +558,93 @@ class TwinProxy:
         self.legacy_port = legacy_port
         self.bridge_port = bridge_port
         self.run_name = run_name
-        self.rules = rules or DeclaredRules()
-        self.reference = None
-        self.shadow = None
-        self.diff = None
-        self.client = None
-        self.identity = IdentityMap()
+        self.rules = rules or DeclaredRules(
+            [ReferenceRace(), StaleConnection(), ServiceWarmup()])
+        self.shadows = {}
+        self.shadows_lock = threading.Lock()
         self.ordinal_lock = threading.Lock()
-        self.legs = queue.Queue()
-        self.opened = threading.Event()
+        self.verdict_lock = threading.Lock()
         self.ordinal = 0
-        self.compared = 0
         self.dispatched = 0
+        self.verdicts = []
+        self.divergences = 0
         # the cold start, decided as the session goes instead of by rescanning:
         # once the first RPC has been served, nothing after it is cold any more.
+        # Global on purpose: it is a fact about the two PROCESSES finishing their
+        # lazy build, not about any one browser.
         self.rpc_served = False
-        self.divergence = None
         self.server = None
 
     def open_comparison(self):    # wf:phase-8:new
-        """Both stacks are up: start the shadow thread and wait for it to be ready."""
-        threading.Thread(target=self.run_shadow, daemon=True).start()
-        self.opened.wait()
+        """Both stacks are up: say which two runs are being compared, then serve."""
+        print(StructuralDiff(TraceReader(self.legacy.archive_path),
+                             TraceReader(self.bridge.archive_path),
+                             self.rules).header)
         print(f"\ndeclared run: {self.run_name}")
         print(f"browse http://127.0.0.1:{self.port} — the legacy answers you, "
               f"the bridge shadows every request")
+        print("every request carries a mark of its own; a divergence names it "
+              "and the run carries on")
+        print("ERROR = the reply the browser would have seen; "
+              "WARNING = the register calls behind it")
 
-    def run_shadow(self):    # wf:phase-8:new
-        """The one thread that talks to the bridge and reads the two archives.
+    def get_shadow(self, identity):    # wf:phase-8:new
+        """The shadow of that browser, made — with its thread — on first sight."""
+        with self.shadows_lock:
+            shadow = self.shadows.get(identity)
+            if shadow is None:
+                shadow = BrowserShadow(self, identity)
+                self.shadows[identity] = shadow
+                print(f"  a browser appears — shadow #{len(self.shadows)}")
+            return shadow
 
-        A thread of its own, and not a lock, for a reason each half of the work
-        gives on its own: SQLite refuses a connection used from a thread other
-        than the one that opened it, and serving is threaded; and the two legs of
-        a request have to stay sequential, which a queue makes structural instead
-        of something every future caller has to remember.
+    def get_identity(self, headers):    # wf:phase-8:new
+        """The browser's mark, minted here the first time and never changing.
+
+        Returns the mark and whether it was minted now, because a mark nobody has
+        yet has to travel back in a `Set-Cookie` or the next request mints another.
         """
-        self.reference = TraceReader(self.legacy.archive_path)
-        self.shadow = TraceReader(self.bridge.archive_path)
-        self.diff = StructuralDiff(self.reference, self.shadow, self.rules)
-        self.client = ShadowClient("127.0.0.1", self.bridge_port)
-        print(self.diff.header)
-        self.opened.set()
-        while True:
-            leg = self.legs.get()
-            try:
-                self.follow(leg)
-            except Exception as failure:
-                self.stop_shadowing(f"the shadow leg of {leg.method} "
-                                    f"{leg.target} failed: {failure!r}")
-            finally:
-                leg.done.set()
+        for morsel in (headers.get("Cookie") or "").split(";"):
+            name, _, value = morsel.strip().partition("=")
+            if name == TWIN_COOKIE:
+                return value, False
+        return uuid.uuid4().hex[:16], True
+
+    def get_browser_headers(self, headers):    # wf:phase-8:new
+        """The browser's headers with the bench's own cookie taken back out.
+
+        Neither site ever sees it: the proxy's mark is the proxy's business, and a
+        cookie the bench invented has no place in a recorded exchange.
+        """
+        cookies = [morsel.strip() for morsel in (headers.get("Cookie") or "").split(";")
+                   if morsel.strip() and not morsel.strip().startswith(f"{TWIN_COOKIE}=")]
+        cleaned = {key: value for key, value in headers.items()
+                   if key.lower() != "cookie"}
+        if cookies:
+            cleaned["Cookie"] = "; ".join(cookies)
+        return cleaned
 
     @property
-    def report_path(self):    # wf:phase-8:new
-        """Where the divergence report is written, beside the two archives."""
-        directory = os.environ.get(ARCHIVE_DIR_ENV) or DEFAULT_ARCHIVE_DIR
-        name = re.sub(r"[^A-Za-z0-9_-]+", "-", self.run_name).strip("-")
-        return os.path.join(directory, f"{name}-divergence.txt")
+    def report_dir(self):    # wf:phase-8:new
+        return os.environ.get(ARCHIVE_DIR_ENV) or DEFAULT_ARCHIVE_DIR
+
+    @property
+    def run_slug(self):    # wf:phase-8:new
+        """The declared name as a filename: what the reports are called."""
+        return re.sub(r"[^A-Za-z0-9_-]+", "-", self.run_name).strip("-")
+
+    def get_report_path(self, number, severity):    # wf:phase-8:new
+        """One file per divergence, numbered and weighed: a finding of its own."""
+        return os.path.join(self.report_dir,
+                            f"{self.run_slug}-{number:02d}-{severity.lower()}.txt")
 
     def get_next_twin(self):    # wf:phase-8:new
-        """The mark this proxy puts on the legacy leg of the next request."""
+        """The mark this proxy puts on the legacy leg of the next request.
+
+        It is the id of ONE call, and the unit the whole comparison is written in:
+        the same mark reaches both archives, so `twin-00042` either agrees on the
+        two stacks or diverges, on its own, whatever the calls around it did.
+        """
         with self.ordinal_lock:
             self.ordinal += 1
             return f"twin-{self.ordinal:05d}"
@@ -518,41 +665,90 @@ class TwinProxy:
 
     def dispatch(self, method, target, headers, body):    # wf:phase-8:new
         """One request on both stacks, in sequence; the LEGACY reply is returned."""
+        identity, minted = self.get_identity(headers)
+        headers = self.get_browser_headers(headers)
         twin = self.get_next_twin()
         status, reply_headers, reply_body = self.send_legacy(
             method, target, headers, body, twin)
-        self.dispatched += 1
-        if self.divergence is None:
-            # The shadow leg runs on its own thread and this one waits for it:
-            # in sequence, never together. Whatever happens over there is a
-            # divergence to report, never a failure the browser is told about —
-            # the owner's work does not stop because the twin did.
-            leg = ShadowLeg(method, target, headers, body, twin,
-                            status, reply_headers)
-            self.legs.put(leg)
-            leg.done.wait()
+        if minted:
+            reply_headers = list(reply_headers) + [
+                ("Set-Cookie", f"{TWIN_COOKIE}={identity}; Path=/; SameSite=Lax")]
+        with self.verdict_lock:
+            self.dispatched += 1
+        # The shadow leg runs on this browser's own thread and this one waits for
+        # it: the two legs of one request in sequence, browsers in parallel.
+        # Whatever happens over there is a divergence to report, never a failure
+        # the browser is told about.
+        self.get_shadow(identity).follow_leg(
+            ShadowLeg(method, target, headers, body, twin,
+                      status, reply_headers, reply_body, identity))
         return status, reply_headers, reply_body
 
-    def follow(self, leg):    # wf:phase-8:new
-        """The shadow leg and its comparison; a stop here never touches the browser."""
-        reference = self.get_marked_exchange(self.reference, TWIN_HEADER, leg.twin)
-        if reference is None:
-            self.stop_shadowing(f"the legacy archive carries no exchange marked "
-                                f"{leg.twin}: the comparison has lost its reference")
-            return
-        self.client.replaying = reference["exchange_id"]
-        shadow_status, shadow_body = self.client.send_shadow(
-            leg.method, self.identity.get_adapted(leg.target), leg.headers,
-            self.get_adapted_body(leg.body))
-        self.identity.learn_page_id(reference.get("resp_body"),
-                                    shadow_body.decode("utf-8", "replace"))
-        label = self.get_label(reference, leg.method, leg.target)
-        if self.is_static(leg.target, leg.reply_headers):
-            print(f"  {label}  {leg.status}/{shadow_status}  static, not compared")
-            return
-        self.compare(reference, label, leg.status, shadow_status)
+    def follow(self, shadow, leg):    # wf:phase-8:new
+        """The shadow leg and its comparison, on this browser's own thread.
 
-    def get_adapted_body(self, body):    # wf:phase-8:new
+        A STATIC is settled first, and before any archive is read. It is dispatched
+        like everything else — the bridge must see the traffic the legacy sees — but
+        it is not compared, so it needs no reference line, and asking for one would
+        be worse than useless: the recorder writes a static as a stub carrying its
+        exchange id alone, with no request headers to find it by. Measured on the
+        first browser session, 2026-08-25: every static waited out the archive
+        timeout, one after another, and the browser stalled.
+        """
+        if self.is_static(leg.target, leg.reply_headers):
+            shadow.client.replaying = None
+            shadow_status, _body = self.send_shadow(shadow, leg)
+            self.say(leg, f"{leg.method} {leg.target.split('?')[0]}",
+                     f"{leg.status}/{shadow_status}  static, not compared")
+            return
+        reference = self.get_marked_exchange(shadow.reference, TWIN_HEADER, leg.twin)
+        if reference is None:
+            self.record_divergence(
+                leg, WARNING,
+                f"the legacy archive carries no exchange marked {leg.twin}: "
+                f"this call has no reference for its register calls")
+            shadow.client.replaying = None
+            shadow_status, shadow_body = self.send_shadow(shadow, leg)
+            self.compare_reply(leg, f"{leg.method} {leg.target.split('?')[0]}",
+                               shadow_status, shadow_body)
+            return
+        shadow.client.replaying = reference["exchange_id"]
+        shadow_status, shadow_body = self.send_shadow(shadow, leg)
+        shadow.identity_map.learn_page_id(reference.get("resp_body"),
+                                          shadow_body.decode("utf-8", "replace"))
+        label = self.get_label(reference, leg.method, leg.target)
+        self.compare_reply(leg, label, shadow_status, shadow_body)
+        self.compare_register(shadow, leg, reference, label, shadow_status)
+
+    def compare_reply(self, leg, label, shadow_status, shadow_body):    # wf:phase-8:new
+        """What the BROWSER would have seen on each stack — the ERROR half.
+
+        The status and the whole body, the second masked of the identifiers each
+        stack mints and of the clock. Nothing else is allowed to differ: the reply
+        is what the bridge exists to reproduce, and everything the server pushes
+        to the client rides inside it.
+
+        It runs on every exchange, cold start included: the register rule that
+        excuses those exchanges is about how each stack builds itself, and says
+        nothing about what it answered.
+        """
+        if shadow_status != leg.status:
+            self.record_divergence(
+                leg, ERROR, f"{label}: the legacy answered {leg.status}, "
+                            f"the bridge {shadow_status}")
+            return
+        difference = ReplyShape(leg.reply_body.decode("utf-8", "replace")).get_difference(
+            ReplyShape(shadow_body.decode("utf-8", "replace")))
+        if difference is not None:
+            self.record_divergence(leg, ERROR, f"{label}: {difference}")
+
+    def send_shadow(self, shadow, leg):    # wf:phase-8:new
+        """The request the browser just made, sent to the bridge in its turn."""
+        return shadow.client.send_shadow(
+            leg.method, shadow.identity_map.get_adapted(leg.target), leg.headers,
+            self.get_adapted_body(shadow, leg.body))
+
+    def get_adapted_body(self, shadow, body):    # wf:phase-8:new
         """The body with the legacy's identifiers rewritten into the bridge's.
 
         Decoded as latin-1 and encoded back: the tokens are ASCII, and every
@@ -560,7 +756,8 @@ class TwinProxy:
         """
         if not body:
             return body
-        return self.identity.get_adapted(body.decode("latin-1")).encode("latin-1")
+        return shadow.identity_map.get_adapted(
+            body.decode("latin-1")).encode("latin-1")
 
     def is_static(self, target, reply_headers):    # wf:phase-8:new
         """The recorder's own rule, read off the legacy reply: the content type decides."""
@@ -606,54 +803,96 @@ class TwinProxy:
             return False
         return not self.rpc_served
 
-    def compare(self, reference, label, status, shadow_status):    # wf:phase-8:new
-        """Statuses first, then the register calls; the first stop ends the shadow."""
+    def compare_register(self, shadow, leg, reference, label, shadow_status):    # wf:phase-8:new
+        """How each stack reached that reply — the WARNING half.
+
+        One call, one verdict, and nothing stops: a call that diverges is a
+        finding about THAT call, and `twin-00043` is asked the same question
+        `twin-00042` was with no assumption that one follows from the other
+        (owner, 2026-08-26).
+        """
         if self.is_cold_start(reference):
-            print(f"  {label}  {status}/{shadow_status}  before the first RPC, "
-                  f"not compared")
+            self.say(leg, label, f"{leg.status}/{shadow_status}  "
+                                 f"before the first RPC, not compared")
             return
-        shadow = self.get_marked_exchange(self.shadow, REPLICA_HEADER,
-                                          reference["exchange_id"])
-        if shadow is None:
-            self.stop_shadowing(f"{label}: the bridge archive carries no exchange "
-                                f"stamped with {reference['exchange_id']}")
+        replayed = self.get_marked_exchange(shadow.shadow, REPLICA_HEADER,
+                                            reference["exchange_id"])
+        if replayed is None:
+            self.record_divergence(
+                leg, WARNING, f"{label}: the bridge archive carries no exchange "
+                              f"stamped with {reference['exchange_id']}")
             return
-        reference_lines = len(self.reference.get_register_lines(reference["exchange_id"]))
-        shadow_lines = len(self.shadow.get_register_lines(shadow["exchange_id"]))
-        timings = (f"{self.get_timing(reference)}/{self.get_timing(shadow)} ms")
-        print(f"  {label}  {status}/{shadow_status}  "
-              f"reg {reference_lines}/{shadow_lines}  {timings}")
-        self.compared += 1
-        if shadow_status != status:
-            self.stop_shadowing(f"{label}: the legacy answered {status}, "
-                                f"the bridge {shadow_status}")
+        reference_lines = len(shadow.reference.get_register_lines(
+            reference["exchange_id"]))
+        shadow_lines = len(shadow.shadow.get_register_lines(replayed["exchange_id"]))
+        measure = (f"{leg.status}/{shadow_status}  "
+                   f"reg {reference_lines}/{shadow_lines}  "
+                   f"{self.get_timing(reference)}/{self.get_timing(replayed)} ms")
+        self.say(leg, label, measure)
+        if shadow_status != leg.status:
+            # the reply half already reported it; two stacks that answered
+            # differently did not reach the same place by different roads.
             return
-        divergence = self.diff.get_divergence(reference, shadow, self.compared)
+        divergence = shadow.diff.get_divergence(reference, replayed, self.ordinal)
         if divergence is not None:
-            self.stop_shadowing(divergence.report)
+            self.record_divergence(leg, WARNING, divergence.report)
+        else:
+            self.record_verdict(leg, label, measure, "agree")
+
+    def say(self, leg, label, measure):    # wf:phase-8:new
+        """One line per call, opening on the mark the whole comparison is written in."""
+        print(f"  {leg.twin}  {label}  {measure}", flush=True)
+
+    def record_verdict(self, leg, label, measure, verdict):    # wf:phase-8:new
+        """What this call turned out to be, kept for the closing table."""
+        with self.verdict_lock:
+            self.verdicts.append((leg.twin, label, measure, verdict))
+
+    def record_divergence(self, leg, severity, report):    # wf:phase-8:new
+        """Write this divergence down, name the call and its weight, and carry on.
+
+        Nothing stops and nothing is torn down. The unit of comparison is the
+        single call, so a divergence is a finding about that call and says nothing
+        about the next one; and with several users the divergence of one must not
+        end the session of the others.
+        """
+        with self.verdict_lock:
+            self.divergences += 1
+            number = self.divergences
+            self.verdicts.append((leg.twin, leg.target, "", severity))
+        text = (f"{severity} #{number} — run {self.run_name}\n"
+                f"call: {leg.twin}  {leg.method} {leg.target}\n"
+                f"browser: shadow of {leg.identity}\n"
+                f"legacy archive: {self.legacy.archive_path}\n"
+                f"bridge archive: {self.bridge.archive_path}\n"
+                f"{self.dispatched} request(s) dispatched so far\n\n"
+                f"{report}\n")
+        path = self.get_report_path(number, severity)
+        with open(path, "w") as report_file:
+            report_file.write(text)
+        print(f"\n{text}\nwritten to {path}\nthe run carries on.\n", flush=True)
 
     def get_timing(self, record):    # wf:phase-8:new
         """The response time the recorder measured inside the stack that served it."""
         duration = record.get("duration_ms")
         return "-" if duration is None else f"{duration:.0f}"
 
-    def stop_shadowing(self, report):    # wf:phase-8:new
-        """Print the divergence, write it down, and stop dispatching to the bridge.
-
-        Nothing is torn down. Both stacks keep answering, which is what makes the
-        divergence investigable at all, and the legacy keeps serving the browser.
-        """
-        self.divergence = report
-        text = (f"DIVERGENCE — run {self.run_name}\n"
-                f"legacy archive: {self.legacy.archive_path}\n"
-                f"bridge archive: {self.bridge.archive_path}\n"
-                f"{self.dispatched} request(s) dispatched, {self.compared} compared\n\n"
-                f"{report}\n")
-        with open(self.report_path, "w") as report_file:
-            report_file.write(text)
-        print(f"\n{text}\nshadow off: the bridge is no longer dispatched to. "
-              f"Both stacks are still up.\nreport written to {self.report_path}",
-              flush=True)
+    @property
+    def summary(self):    # wf:phase-8:new
+        """What the session came to: every call judged, and the ones that diverged."""
+        errors = [row for row in self.verdicts if row[3] == ERROR]
+        warnings = [row for row in self.verdicts if row[3] == WARNING]
+        lines = [f"run {self.run_name}: {self.dispatched} request(s) through "
+                 f"{len(self.shadows)} browser(s), "
+                 f"{len(errors)} ERROR, {len(warnings)} WARNING",
+                 "  ERROR = what the browser would have seen: the status or the "
+                 "reply body, identifiers and clock masked",
+                 "  WARNING = how the two stacks got there: the register calls"]
+        for twin, label, _measure, severity in errors + warnings:
+            lines.append(f"  {severity:<7} {twin}  {label}")
+        lines.append(f"legacy archive: {self.legacy.archive_path}")
+        lines.append(f"bridge archive: {self.bridge.archive_path}")
+        return "\n".join(lines)
 
     def serve(self):    # wf:phase-8:new
         """Listen until something stops us; the finally is the only teardown."""
@@ -664,6 +903,7 @@ class TwinProxy:
         try:
             self.server.serve_forever()
         finally:
+            print(f"\n{self.summary}", flush=True)
             self.server.server_close()
 
 
@@ -728,6 +968,8 @@ class TwinRun:
         """
         environment = dict(os.environ, PGGSSENCMODE="disable")
         environment[RUN_NAME_ENV] = self.arguments.run
+        if bridge and self.arguments.max_users_per_worker:
+            environment[WORKER_MAX_USERS_ENV] = str(self.arguments.max_users_per_worker)
         if not bridge:
             environment.pop("PYTHONPATH", None)
             environment.pop(DAEMON_PROVIDER_ENV, None)
@@ -744,15 +986,32 @@ class TwinRun:
 
     @property
     def legacy_command(self):    # wf:phase-8:new
-        return [LEGACY_PYTHON, SERVE_LEGACY, self.instances.legacy_name,
-                "-b", f"127.0.0.1:{self.arguments.legacy_port}",
-                "-w", str(self.arguments.workers), "-k", "gthread",
-                "--threads", "16", "-c", GUNICORN_RECORDERS]
+        """Gunicorn's own command line, plus the debug the run declares.
+
+        WITHOUT `--debug` the site reads `wsgi?debug` out of its merged
+        siteconfig, which the bench's own configuration sets to True: the SQL
+        time counters carry real numbers and no werkzeug debugger is wrapped
+        around anything. WITH it, `serveprod` also wraps the site in that
+        debugger — the same pair `--fulldebug` gives the bridge, which is why one
+        flag governs both stacks.
+        """
+        command = [LEGACY_PYTHON, SERVE_LEGACY, self.instances.legacy_name,
+                   "-b", f"127.0.0.1:{self.arguments.legacy_port}",
+                   "-w", str(self.arguments.workers), "-k", "gthread",
+                   "--threads", "16", "-c", GUNICORN_RECORDERS]
+        return command + ["--debug"] if self.arguments.fulldebug else command
 
     @property
     def bridge_command(self):    # wf:phase-8:new
-        return [sys.executable, SERVE_BRIDGE, self.instances.bridge_name,
-                "-p", str(self.arguments.bridge_port), "--nodebug"]
+        """The bridge's, with NO `--nodebug`: unset means debug, as the recipe reads it.
+
+        That is what puts the two stacks on the same footing — the legacy takes
+        its debug from the configuration and cannot be talked out of it from a
+        command line, so the bridge follows rather than the other way round.
+        """
+        command = [sys.executable, SERVE_BRIDGE, self.instances.bridge_name,
+                   "-p", str(self.arguments.bridge_port)]
+        return command + ["--fulldebug"] if self.arguments.fulldebug else command
 
     def check_ground(self):    # wf:phase-8:new
         """Refuse before anything is started, and name the remedy every time."""
@@ -836,6 +1095,14 @@ if __name__ == "__main__":
                         help="the name you give this run; both archives carry it")
     parser.add_argument("-w", "--workers", type=int, default=1,
                         help="gunicorn workers on the legacy stack")
+    parser.add_argument("--fulldebug", action="store_true",
+                        help="add the werkzeug debugger to both stacks; without "
+                             "it both run with debug and no debugger, which is "
+                             "what makes their SQL counters comparable")
+    parser.add_argument("--max-users-per-worker", type=int,
+                        help="the bridge's placement ceiling: with 1 each user "
+                             "lands on a worker of his own, which is what "
+                             "exercises the cross-worker paths")
     parser.add_argument("--port", type=int, default=8097,
                         help="where you browse")
     parser.add_argument("--legacy-port", type=int, default=8099)

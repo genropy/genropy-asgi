@@ -55,6 +55,9 @@ class ServerConfiguration(BridgeConfiguration):
         source = os.environ.get("GNR_ASGI_PATH") or ""
         debug_env = os.environ.get("GNR_ASGI_DEBUG")
         debug = True if debug_env is None else debug_env.strip().lower() not in DEBUG_OFF_WORDS
+        # The werkzeug debugger is NOT part of debug: its error page evaluates
+        # Python in the process, so it comes on only when asked for by name.
+        debugger = bool(os.environ.get("GNR_ASGI_DEBUGGER"))
         site_key = os.path.basename(os.path.normpath(source)) or "site"
         frozen_users_path = os.environ.get("GNR_ASGI_FROZEN_USERS_PATH") or os.path.join(
             source, "data", "_frozen_users"
@@ -82,11 +85,20 @@ class ServerConfiguration(BridgeConfiguration):
             "name": "pool",
             "entry_module": "genro_asgi.spa.orchestration.worker_entry",
             "worker_class": RECORDING_WORKER,
-            "worker_kwargs": {"source": source, "debug": debug},
+            "worker_kwargs": {"source": source, "debug": debug, "debugger": debugger},
             "engine_factory": RECORDING_ENGINE_FACTORY,
             "engine_kwargs": {"source": source, "debug": debug},
         }
         idle_minutes = os.environ.get("GNR_ASGI_IDLE_FREEZE_MINUTES")
         if idle_minutes:
             group_kwargs["user_idle_freeze_minutes"] = float(idle_minutes)
+        # How many users one worker may hold before it refuses the next. Unset,
+        # the core's own default governs and a worker takes everybody, so the
+        # pool never grows on a small site. Set to 1 the bench puts each user on
+        # a worker of his own, which is the only way the cross-worker paths —
+        # the register population, the stores, the datachanges between users —
+        # are exercised at all.
+        max_users = os.environ.get("GNR_ASGI_WORKER_MAX_USERS")
+        if max_users:
+            group_kwargs["worker_max_users"] = int(max_users)
         commander.groups().group(**group_kwargs)
