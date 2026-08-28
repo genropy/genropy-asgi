@@ -33,8 +33,10 @@ test suite — so changes here no longer drag the genro-asgi framework test suit
 
 - **Front** (`GenropySpaApplication` on the core's `SpaApplicationNew`): ROOT mount (`""`),
   serves `/metrics` natively and forwards site paths to the pool. The pool is born at
-  startup from OUR recipe (`spa/config.py`): `commander(...)` + ONE
-  `group(worker_class=GenropyWorker, ...)`. The debug door mounts the core console on
+  startup from OUR recipe (`spa/config.py`): `orchestration().commander(...)` + ONE
+  `group(worker_class=GenropyWorker, ...)` — genro-asgi 0.36 put the pool under the
+  application's `orchestration` node, so the path is
+  `applications.site.orchestration.commander`. The debug door mounts the core console on
   `_console` when `GNR_ASGI_CONSOLE` is set (mounting IS the gate).
 - **Worker** (`GenropyWorker` on the core's `SpaWorker`): a child process hosting the
   `GnrWsgiSite`; registers user/connection/page items, runs the site in a thread.

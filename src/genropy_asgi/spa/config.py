@@ -9,12 +9,15 @@ instance ``path``, host/port/debug, the installation paths, the idle valve)
 come from the environment; the rest of the recipe is fixed. No register daemon
 in either shape: the register is served in-process, on each worker.
 
-ONE shape: a single ``GenropySpaApplication`` whose pool is declared here, on
-its ``commander`` section — one group named ``pool`` (the cemented decision:
-one group, the reception serves the guests). There is no worker count to
-declare and no single/pool selector: the pool always runs and sizes itself.
-A ``GNR_ASGI_WORKERS`` still set in the environment is reported by the CLI
-and ignored.
+ONE shape: a single ``GenropySpaApplication`` whose pool is declared here, under
+its ``orchestration`` node — ``orchestration.commander`` and, below that, one
+group named ``pool`` (the cemented decision: one group, the reception serves the
+guests). There is no worker count to declare and no single/pool selector: the
+pool always runs and sizes itself. A ``GNR_ASGI_WORKERS`` still set in the
+environment is reported by the CLI and ignored.
+
+The group sets ``cpu_retirement_quiet_seconds=60.0`` explicitly; every other
+threshold is the core's own default.
 
 The environment enters the tree as VALUES read at recipe-build time: the CLI
 writes the variables just before the server is built, and ``main()`` runs
@@ -120,7 +123,15 @@ class ServerConfiguration(AsgiConfigBuilder):
                 mount="_console",
                 app_class=SpaConsoleMcpApplication,
             )
-        commander = front.commander(
+        # genro-asgi 0.36 moved the pool one rung down: a front declares an
+        # ``orchestration`` node, and the commander lives under it. The node is
+        # mandatory for a spa front — declared without one, the server does not
+        # start. Its own three words (profiles_path, profile_name,
+        # control_enabled) are left at their defaults here: the profile archive
+        # keeps being mounted as the ``_sysop`` application above, exactly as
+        # before, so this migration changes the SHAPE of the recipe and nothing
+        # of what it builds.
+        commander = front.orchestration().commander(
             frozen_users_path=frozen_users_path,
             instance_dir=instance_dir,
         )
@@ -135,6 +146,13 @@ class ServerConfiguration(AsgiConfigBuilder):
             # would have used to build its own site.
             "engine_factory": "genropy_asgi.spa.site_engine_factory:GenropySiteEngineFactory",
             "engine_kwargs": {"source": source, "debug": debug},
+            # How long the cpu must stay silent before a worker may be retired.
+            # Written here rather than left to the core's default because it is
+            # a decision of this product: without the quiet period a worker is
+            # closed while the pool is still climbing, and the pool regrows it
+            # seconds later. Every other threshold stays the core's default —
+            # the laboratory's 50/30/80/0 belongs to the laboratory.
+            "cpu_retirement_quiet_seconds": 60.0,
         }
         idle_minutes = os.environ.get("GNR_ASGI_IDLE_FREEZE_MINUTES")
         if idle_minutes:

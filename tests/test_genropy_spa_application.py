@@ -67,7 +67,9 @@ class _SourcelessRecipe(AsgiConfigBuilder):
         front = cfg.applications().application(
             code="site", mount="", app_class=GenropySpaApplication
         )
-        commander = front.commander(frozen_users_path="/tmp/gnr_probe_frozen")
+        commander = front.orchestration().commander(
+            frozen_users_path="/tmp/gnr_probe_frozen"
+        )
         commander.groups().group(name="pool", entry_module="never.launched")
 
 
