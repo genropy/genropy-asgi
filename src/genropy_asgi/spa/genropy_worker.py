@@ -128,13 +128,22 @@ class GenropyWorker(SpaWorker):
             is None the worker was spawned and builds its own site.
         kwargs: forwarded to ``SpaWorker`` — the spawn grammar
             (``freeze_handler``, ``group``, the pools) plus the policies.
-            ``user_idle_freeze_minutes`` not named here is read from the
-            site's ``<cleanup>`` section (``connection_max_age`` seconds,
-            7200 where the site is silent): a caller's value always wins
-            over the site's.
+            ``user_idle_freeze_minutes`` is the one exception: core 0.36 moved
+            it to the group, so it is taken out here and kept on this worker.
+            Not named at all, it is read from the site's ``<cleanup>`` section
+            (``connection_max_age`` seconds, 7200 where the site is silent):
+            a caller's value always wins over the site's.
         """
-        idle_from_site = "user_idle_freeze_minutes" not in kwargs
+        # The valve is the bridge's own since core 0.36: ``SpaWorker`` no longer
+        # takes it, the group does. A caller's value is therefore kept HERE and
+        # never forwarded — passing it on raises TypeError — while the site's
+        # own ``<cleanup>`` answers when the caller named none. Which of the two
+        # wins is unchanged: the caller's.
+        caller_idle = kwargs.pop("user_idle_freeze_minutes", None)
+        idle_from_site = caller_idle is None
         super().__init__(name, **kwargs)
+        if not idle_from_site:
+            self.user_idle_freeze_minutes = float(caller_idle)
         # The forked worker receives the site its template built; the spawned
         # one builds its own. Nothing below this line differs between them.
         self._gnr_site = group_engine

@@ -77,7 +77,12 @@ class ServerConfiguration(BridgeConfiguration):
                 mount="_console",
                 app_class=SpaConsoleMcpApplication,
             )
-        commander = front.commander(
+        # genro-asgi 0.36: the pool hangs off the front's ``orchestration``
+        # node, and that node is mandatory for a spa front. Only the shape
+        # moves — the group below, its parameters and what this bench measures
+        # are untouched.
+        orchestration = front.orchestration()
+        commander = orchestration.commander(
             frozen_users_path=frozen_users_path,
             instance_dir=instance_dir,
         )
