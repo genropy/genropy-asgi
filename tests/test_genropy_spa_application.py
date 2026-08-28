@@ -102,6 +102,7 @@ def booted(monkeypatch):
     monkeypatch.delenv("GNR_ASGI_WORKERS", raising=False)
     monkeypatch.delenv("GNR_ASGI_WORKER_MAX_USERS", raising=False)
     monkeypatch.delenv("GNR_ASGI_DEBUGGER", raising=False)
+    monkeypatch.delenv("GNR_ASGI_ORCHESTRATION_PROFILES", raising=False)
     return AsgiServer(str(CONFIG))
 
 
@@ -133,7 +134,9 @@ def test_the_recipe_declares_the_pool_where_the_core_reads_it(booted):
     worker_kwargs = pool["worker_kwargs"]
     assert worker_kwargs["source"] == "/tmp/genropy_asgi_recipe_probe"
     assert worker_kwargs["debug"] is False  # --nodebug writes an empty GNR_ASGI_DEBUG
-    assert worker_kwargs["user_idle_freeze_minutes"] == 45.0  # the env-driven valve
+    # the env-driven valve is a GROUP setting: the group reads the clocks and
+    # decides who sleeps, the worker keeps no gauge of its own (wf/41)
+    assert pool["user_idle_freeze_minutes"] == 45.0
 
 
 @pytest.mark.parametrize(
