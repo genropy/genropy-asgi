@@ -40,6 +40,11 @@ The two installation paths and the valve, overridable per installation:
   observes. The door is full ``eval`` by construction, so mounting IS the
   gate (core doctrine): unset here means the door does not exist, and a
   production environment never sets it.
+- ``GNR_ASGI_ORCHESTRATION_PROFILES`` — set to any value, mounts the named
+  JSON profile editor below ``/_sysop/configuration`` and its MCP tools below
+  ``/_sysop/mcp``. Unset, the write surface does not exist. Profiles default
+  to ``<site>/data/_orchestration_profiles``; move them with
+  ``GNR_ASGI_ORCHESTRATION_PROFILES_PATH``.
 """
 
 import os
@@ -48,6 +53,7 @@ from typing import Any
 
 from genro_bag.resolvers import EnvResolver
 
+from genro_asgi import ConfigurationProfilesApplication
 from genro_asgi.applications.spa_console import SpaConsoleMcpApplication
 from genro_asgi.config import AsgiConfigBuilder
 
@@ -93,6 +99,19 @@ class ServerConfiguration(AsgiConfigBuilder):
             mount="",
             app_class=GenropySpaApplication,
         )
+        if os.environ.get("GNR_ASGI_ORCHESTRATION_PROFILES"):
+            # Persistence only: applying a profile to the live pool will be a
+            # separate SpaApplication command. Mounting is explicit because
+            # this first version has no sysop authentication of its own.
+            profiles_path = os.environ.get(
+                "GNR_ASGI_ORCHESTRATION_PROFILES_PATH"
+            ) or os.path.join(source, "data", "_orchestration_profiles")
+            applications.application(
+                code="_sysop",
+                mount="_sysop",
+                app_class=ConfigurationProfilesApplication,
+                folder=profiles_path,
+            )
         if os.environ.get("GNR_ASGI_CONSOLE"):
             # The first path segment decides the app, so the door answers on
             # /_console while the site keeps every other URL of the root mount.

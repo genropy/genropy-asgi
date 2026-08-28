@@ -201,6 +201,34 @@ def test_the_user_ceiling_reaches_the_group_as_a_number(monkeypatch):
     assert server.config.group_kwargs("site")["pool"]["worker_max_users"] == 1
 
 
+def test_orchestration_profiles_default_inside_the_site(monkeypatch, tmp_path):
+    site = tmp_path / "site"
+    monkeypatch.setenv("GNR_ASGI_PATH", str(site))
+    monkeypatch.setenv("GNR_ASGI_ORCHESTRATION_PROFILES", "1")
+    monkeypatch.delenv("GNR_ASGI_ORCHESTRATION_PROFILES_PATH", raising=False)
+    server = AsgiServer(str(CONFIG))
+    profile_app = server.applications["_sysop"]
+    assert profile_app.mount == "_sysop"
+    assert profile_app.profile_store.folder == (
+        site / "data" / "_orchestration_profiles"
+    ).resolve()
+
+
+def test_orchestration_profiles_path_can_be_overridden(monkeypatch, tmp_path):
+    override = tmp_path / "shared_profiles"
+    monkeypatch.setenv("GNR_ASGI_PATH", str(tmp_path / "site"))
+    monkeypatch.setenv("GNR_ASGI_ORCHESTRATION_PROFILES", "1")
+    monkeypatch.setenv("GNR_ASGI_ORCHESTRATION_PROFILES_PATH", str(override))
+    server = AsgiServer(str(CONFIG))
+    assert server.applications["_sysop"].profile_store.folder == override.resolve()
+
+
+def test_orchestration_profiles_are_not_mounted_implicitly(monkeypatch):
+    monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")
+    monkeypatch.delenv("GNR_ASGI_ORCHESTRATION_PROFILES", raising=False)
+    assert "_sysop" not in AsgiServer(str(CONFIG)).applications
+
+
 def test_a_leftover_workers_variable_changes_nothing(monkeypatch):
     # the single/pool selector is gone: the pool always runs and sizes itself
     monkeypatch.setenv("GNR_ASGI_PATH", "/tmp/genropy_asgi_recipe_probe")

@@ -47,6 +47,16 @@ Environment variables
    * - ``GNR_ASGI_CONSOLE``
      - Any value mounts the pool's debug door on ``/_console`` as MCP tools.
        Full ``eval``: mounting **is** the gate. Never in production.
+   * - ``GNR_ASGI_ORCHESTRATION_PROFILES``
+     - Any value mounts the orchestration profile archive: a browser page and
+       REST API on ``/_sysop/configuration/`` and MCP tools on ``/_sysop/mcp``.
+       It **stores** named JSON profiles — it applies nothing to the running
+       pool (applying a profile is a planned, separate command). The mount is
+       unauthenticated in this first version: development and lab only, never
+       in production. See :ref:`orchestration-profiles`.
+   * - ``GNR_ASGI_ORCHESTRATION_PROFILES_PATH``
+     - Where the profiles live. Defaults to
+       ``<site>/data/_orchestration_profiles``.
    * - ``GNR_DAEMON_PROVIDER``
      - Set by the CLI to ``genropy-asgi`` before the site machinery is imported.
        It is what makes GenroPy resolve its daemon namespace to the in-process
@@ -78,6 +88,57 @@ What ``gnrasgiserve`` builds, without a config file:
 
 The recipe is ``genropy_asgi/spa/config.py``, and reading it is the shortest
 answer to any question this page does not cover.
+
+.. _orchestration-profiles:
+
+The orchestration profile archive
+---------------------------------
+
+Set ``GNR_ASGI_ORCHESTRATION_PROFILES=1`` and the recipe mounts genro-asgi's
+``ConfigurationProfilesApplication`` on ``/_sysop``:
+
+.. code-block:: console
+
+   $ GNR_ASGI_ORCHESTRATION_PROFILES=1 gnrasgiserve mysite
+
+The archive **stores** named JSON profiles in a directory of the site. It does
+not touch the running pool: applying a stored profile to the live
+``SpaApplication`` — with validation and an audit of the previous and new
+configuration — is a planned second phase, not part of this mount.
+
+Surfaces:
+
+* browser page: ``http://localhost:8000/_sysop/configuration/``;
+* REST: ``GET .../profiles``, ``GET .../read?name=foo``,
+  ``POST .../save?name=foo`` (JSON object body),
+  ``DELETE .../delete?name=foo`` — all below ``/_sysop/configuration/``;
+* MCP: JSON-RPC on ``POST /_sysop/mcp`` with tools ``profiles``, ``read``,
+  ``save`` and ``delete``;
+* OpenAPI docs: ``/_sysop/_meta/docs``.
+
+A profile is one ``<name>.json`` file. Names are 1–64 characters — letters,
+digits, dot, dash, underscore, starting alphanumeric — and ``.json`` may be
+given or omitted. The content must be a JSON object of at most 1 MiB; writes
+are atomic. Example:
+
+.. code-block:: json
+
+   {
+     "cpu_grow_percent": 50,
+     "cpu_grow_rearm_percent": 40,
+     "occupancy_max_percent": 80,
+     "reception_reserved_percent": 0
+   }
+
+Profiles live in ``<site>/data/_orchestration_profiles`` unless
+``GNR_ASGI_ORCHESTRATION_PROFILES_PATH`` points elsewhere.
+
+.. warning::
+
+   The mount is **unauthenticated** in this first version: whoever reaches the
+   port can read and write profiles. It is opt-in precisely for that reason —
+   development and lab use only. Before production the sysop surface must be
+   gated.
 
 When a config file earns its place
 ----------------------------------
