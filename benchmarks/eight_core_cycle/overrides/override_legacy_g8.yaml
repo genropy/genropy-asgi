@@ -1,0 +1,25 @@
+# La gamba legacy del ciclo a otto core: gnrdaemon piu' Gunicorn a otto worker.
+#
+# La riga di Gunicorn e' quella dell'entrypoint tracciato, che non viene toccato:
+#   python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 \
+#       -w "${LEGACY_WORKERS:-1}" -k gthread --threads 16
+# La worker class gthread e i 16 thread sono cablati LI'. Questo override decide
+# soltanto quanti worker, e i limiti di risorsa.
+#
+# TRAPPOLA PAGATA: fuori dal .env il default di LEGACY_WORKERS e' 1. Una corsa
+# comparativa che non lo imposta misura un Gunicorn con un worker solo. Qui e'
+# obbligatorio, cosi' un valore mancante ferma il compose invece di falsare la
+# misura.
+#
+# NOTA SULLA TOPOLOGIA: l'entrypoint fa `exec`, quindi il master di Gunicorn E'
+# il pid 1 e i suoi otto worker portano ppid=1. E' la topologia che il
+# classificatore di bench_common riconosce dal commit cb9388b: il master e' il
+# processo Gunicorn senza un padre Gunicorn.
+services:
+  legacy:
+    cpus: 8
+    mem_limit: ${CYCLE_MEM_LIMIT:-4g}
+    environment:
+      LEGACY_WORKERS: ${LEGACY_WORKERS:?}
+    volumes:
+      - ${CYCLE_RUNTIME_DIR:?}:/lab/runtime

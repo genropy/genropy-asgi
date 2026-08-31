@@ -1,0 +1,44 @@
+{
+  "kind": "eight_core_cycle_plans_spec",
+  "generator": "make_cycle_trace.py",
+  "note": "I piani NON sono versionati: pesano megabyte e si rigenerano identici da questa specifica. Qui stanno il seed, gli argomenti esatti e l'hash atteso. make_plans.sh genera ogni piano UNA VOLTA per campagna e confronta l'hash con quello dichiarato: un hash diverso significa che il generatore o le sue dipendenze sono cambiati, e la campagna si ferma.",
+  "depends_on": [
+    "../session_capture.jsonl",
+    "../usernames_all.txt"
+  ],
+  "plans": [
+    {
+      "name": "cycle_plan.json",
+      "role": "il ciclo: 120 utenti a una richiesta al secondo ciascuno, 50 in pausa per 60s e rientro a uno al secondo",
+      "seed": 20260831,
+      "args": [],
+      "calls_total": 52065,
+      "sha256": "25e13bf5c3fbfebe1c566fcbc614920e4d18d6617a40f8895faa3c8e4ecd4d2a"
+    },
+    {
+      "name": "cycle_smoke_plan.json",
+      "role": "lo smoke: 16 utenti sugli stessi 8 worker, 2 ciascuno, 8 in pausa, finestre corte",
+      "seed": 20260831,
+      "args": [
+        "--users",
+        "16",
+        "--paused",
+        "8",
+        "--stabilize-seconds",
+        "10",
+        "--measure-seconds",
+        "20",
+        "--pause-seconds",
+        "15",
+        "--baseline-seconds",
+        "10",
+        "--settle-seconds",
+        "10",
+        "--observe-seconds",
+        "20"
+      ],
+      "calls_total": 1132,
+      "sha256": "848e47fdb67543437c471ae15d8a82dedae3465a7a624f69dad631ebe95d407d"
+    }
+  ]
+}
