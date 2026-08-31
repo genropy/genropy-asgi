@@ -44,8 +44,8 @@ from admission_guard import AdmissionGuard                                      
 from bench_common.container_probe import COLUMNS                                  # noqa: E402
 from bench_common.stop_guard import StopFlag                                      # noqa: E402
 from cycle_probe import (                                                          # noqa: E402
-    CYCLE_COLUMNS, LOGIN_ATTEMPTS_MAX, LOGIN_RETRY_SECONDS, CycleEngine,
-    CycleProbe, InvalidRun)                                # noqa: E402
+    CYCLE_COLUMNS, LOGIN_ATTEMPTS_MAX, LOGIN_RETRY_SECONDS, REQUIRED_SETTINGS,
+    CycleEngine, CycleProbe, InvalidRun)                                # noqa: E402
 
 failures = []
 
@@ -546,17 +546,18 @@ try:
     print("\n== i worker attesi: regola diversa per i due stack ==")
 
     class FakeEyes:
-        def __init__(self, placed):
+        def __init__(self, placed, worker_count=None):
             self.placed = placed
+            self.count = worker_count
 
         def population(self):
-            return {"placed": self.placed}
+            return {"placed": self.placed, "worker_count": self.count}
 
-    def expected_for(stack, placed, per_worker=15, maximum=8):
+    def expected_for(stack, placed, per_worker=15, maximum=8, topology="fixed"):
         probe = CycleProbe.__new__(CycleProbe)
         probe.eyes = None if stack == "legacy" else FakeEyes(placed)
         probe.arguments = argparse.Namespace(
-            expect_workers=maximum, expect_per_worker=per_worker)
+            topology=topology, expect_workers=maximum, expect_per_worker=per_worker)
         return probe.expected_workers_now
 
     check("legacy: gli otto worker ci sono anche a popolazione zero",
@@ -576,6 +577,21 @@ try:
           expected_for("bridge", 16, per_worker=2), 8)
     check("le due regole NON coincidono a popolazione zero",
           expected_for("legacy", 0) == expected_for("bridge", 0), False)
+
+    print("\n  -- in dinamica non si attende un numero: si passa l'osservato --")
+
+    def dynamic_expected(worker_count, placed=120):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.eyes = FakeEyes(placed, worker_count=worker_count)
+        probe.arguments = argparse.Namespace(
+            topology="dynamic", expect_workers=16, expect_per_worker=0)
+        return probe.expected_workers_now
+
+    check("cinque worker osservati, cinque attesi", dynamic_expected(5), 5)
+    check("undici osservati, undici attesi", dynamic_expected(11), 11)
+    check("nessuno osservato: almeno uno", dynamic_expected(0), 1)
+    check("e il numero NON dipende dagli utenti collocati",
+          dynamic_expected(5, placed=30), 5)
 
     print("\n== il verdetto delle fasi: una mancante ferma tutto ==")
 
@@ -666,6 +682,195 @@ try:
     check("zero bloccanti", record["withheld_after_ramp_blocking"], {})
     check("porta aperta", record["admission_open"], True)
     check("tutte e sei le fasi giocate", record["played"], every)
+
+    print("\n== le due topologie: forma dichiarata contro forma risultato ==")
+
+    class EyesFinti:
+        def __init__(self, live=None, population=None, events=None):
+            self.live = live or {}
+            self.pop = population or {}
+            self.events = events or {}
+
+        def live_settings(self):
+            return {"effective_settings": self.live}
+
+        def population(self):
+            return self.pop
+
+        def read_journal_events(self):
+            return self.events
+
+    POLICY_REALE = {"cpu_grow_percent": 50.0, "cpu_grow_rearm_percent": 30.0,
+                    "user_idle_freeze_minutes": None, "occupancy_max_percent": 80.0,
+                    "reception_reserved_percent": 0.0,
+                    "cpu_retirement_quiet_seconds": 60.0,
+                    "restart_occupancy_max_percent": 95.0,
+                    "worker_max_users": None, "worker_min_life_seconds": 60.0,
+                    "worker_max_number": 16}
+    POLICY_FISSA = {"cpu_grow_percent": None, "user_idle_freeze_minutes": None,
+                    "worker_min_life_seconds": 3600.0, "occupancy_max_percent": 80.0,
+                    "reception_reserved_percent": 0.0, "worker_max_users": 15,
+                    "worker_max_number": 8}
+
+    def settings_probe(topology, live, workers=8, per_worker=15):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.eyes = EyesFinti(live=live)
+        probe.arguments = argparse.Namespace(
+            topology=topology, expect_workers=workers, expect_per_worker=per_worker)
+        probe.checkpoints = []
+        return probe
+
+    print("\n  -- i due insiemi di setpoint sono diversi e dicono cose diverse --")
+    check("in dinamica la crescita per CPU e' accesa a 50",
+          REQUIRED_SETTINGS["dynamic"]["cpu_grow_percent"], 50.0)
+    check("con isteresi a 30", REQUIRED_SETTINGS["dynamic"]["cpu_grow_rearm_percent"], 30.0)
+    check("in dinamica nessun cap di utenti per worker",
+          REQUIRED_SETTINGS["dynamic"]["worker_max_users"], None)
+    check("in fissa la crescita per CPU e' spenta",
+          REQUIRED_SETTINGS["fixed"]["cpu_grow_percent"], None)
+    check("in fissa il min_life e' il controllo sperimentale",
+          REQUIRED_SETTINGS["fixed"]["worker_min_life_seconds"], 3600.0)
+    check("e in dinamica il min_life NON e' dichiarato",
+          "worker_min_life_seconds" in REQUIRED_SETTINGS["dynamic"], False)
+
+    print("\n  -- la policy reale passa in dinamica --")
+    check("nessun problema", settings_probe("dynamic", POLICY_REALE)
+          .certify_settings()["problemi"], [])
+
+    print("\n  -- e la policy fissa passa in fissa --")
+    check("nessun problema", settings_probe("fixed", POLICY_FISSA)
+          .certify_settings()["problemi"], [])
+
+    print("\n  -- ma incrociate falliscono entrambe --")
+    for topology, live, atteso in (("dynamic", POLICY_FISSA, "cpu_grow_percent"),
+                                   ("fixed", POLICY_REALE, "cpu_grow_percent")):
+        try:
+            settings_probe(topology, live).certify_settings()
+            check(f"{topology} con la policy sbagliata deve fallire",
+                  "non ha sollevato", "InvalidRun")
+        except InvalidRun as failure:
+            check(f"{topology} con la policy sbagliata solleva",
+                  atteso in str(failure), True)
+
+    print("\n  -- in dinamica il min_life sperimentale e' vietato --")
+    live = dict(POLICY_REALE, worker_min_life_seconds=3600.0)
+    try:
+        settings_probe("dynamic", live).certify_settings()
+        check("deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("solleva e spiega perche'",
+              "controllo sperimentale" in str(failure), True)
+
+    print("\n  -- in dinamica i due cap NON vengono asseriti --")
+    live = dict(POLICY_REALE, worker_max_number=31)
+    check("un tetto diverso non e' un problema in dinamica",
+          settings_probe("dynamic", live, workers=16).certify_settings()["problemi"], [])
+    live = dict(POLICY_FISSA, worker_max_number=31)
+    try:
+        settings_probe("fixed", live).certify_settings()
+        check("mentre in fissa lo e'", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("in fissa un tetto diverso solleva",
+              "worker_max_number" in str(failure), True)
+
+    print("\n== la distribuzione: asserita in fissa, registrata in dinamica ==")
+
+    def dist_probe(topology, population, workers=8, per_worker=15, reached=True):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.eyes = EyesFinti(population=population)
+        probe.arguments = argparse.Namespace(
+            topology=topology, expect_workers=workers, expect_per_worker=per_worker)
+        probe.checkpoints = []
+        probe.reached_full = reached
+        probe.plan = {"users": 120}
+        return probe
+
+    SBILANCIATA = {"authenticated": 120, "placed": 120, "frozen": 0, "guest": 0,
+                   "unplaced": 0, "worker_count": 5,
+                   "per_worker": {"pool_0001": 40, "pool_0002": 30, "pool_0003": 25,
+                                  "pool_0004": 20, "pool_0005": 5}}
+    PARI = {"authenticated": 120, "placed": 120, "frozen": 0, "guest": 0,
+            "unplaced": 0, "worker_count": 8,
+            "per_worker": {f"pool_000{i}": 15 for i in range(1, 9)}}
+
+    record = dist_probe("dynamic", SBILANCIATA).check_distribution("prova")
+    check("una forma sbilanciata passa in dinamica", record["problemi"], [])
+    check("e viene registrata", record["obtained"], [40, 30, 25, 20, 5])
+    check("senza una forma attesa", record["expected"], [])
+    check("col numero di worker osservato", record["worker_count"], 5)
+
+    try:
+        dist_probe("fixed", SBILANCIATA).check_distribution("prova")
+        check("la stessa forma in fissa deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("in fissa la forma sbilanciata solleva",
+              "distribuzione" in str(failure), True)
+    check("e la forma pari passa in fissa",
+          dist_probe("fixed", PARI).check_distribution("prova")["problemi"], [])
+
+    print("\n  -- cio' che resta bloccante in DINAMICA non conta worker --")
+    for guasto, atteso in (
+            ({"guest": 3}, "guest"),
+            ({"frozen": 2}, "congelati"),
+            ({"placed": 100}, "collocati"),
+            ({"worker_count": 0, "per_worker": {}}, "nessun worker vivo")):
+        pop = dict(SBILANCIATA, **guasto)
+        try:
+            dist_probe("dynamic", pop).check_distribution("prova")
+            check(f"{atteso} deve fallire", "non ha sollevato", "InvalidRun")
+        except InvalidRun as failure:
+            check(f"{atteso} solleva anche in dinamica", atteso in str(failure), True)
+
+    print("\n== la crescita dinamica: la forma delle decisioni, non il numero ==")
+
+    def growth_probe(events, history=None, topology="dynamic"):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.eyes = EyesFinti(events=events)
+        probe.arguments = argparse.Namespace(topology=topology)
+        probe.checkpoints = []
+        probe.worker_history = history or [
+            {"worker_count": 1}, {"worker_count": 5}, {"worker_count": 8},
+            {"worker_count": 8}]
+        return probe
+
+    SANI = {"start_worker": 8, "new_worker_created_for_placement": 7,
+            "placement": 120, "cpu_grow": 4, "order_issued": 8}
+    record = growth_probe(SANI).certify_dynamic_growth()
+    check("otto nascite con sette placement passano", record["problemi"], [])
+    check("le nascite sono registrate", record["births"], 8)
+    check("e quelle da placement", record["births_for_placement"], 7)
+    check("il massimo raggiunto", record["workers_max"], 8)
+    check("e il numero finale", record["workers_final"], 8)
+
+    print("\n  -- una nascita non spiegata da un placement e' vietata --")
+    try:
+        growth_probe(dict(SANI, start_worker=9)).certify_dynamic_growth()
+        check("deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("solleva e nomina la scansione CPU",
+              "sola scansione CPU" in str(failure), True)
+
+    print("\n  -- nessuna nascita e' vietata --")
+    try:
+        growth_probe({"placement": 1}).certify_dynamic_growth()
+        check("deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("solleva", "nessun worker e' nato" in str(failure), True)
+
+    print("\n  -- i quattro eventi indesiderati sono vietati --")
+    for evento in ("restart_worker", "close_worker", "process_quitted",
+                   "placement_fallback"):
+        try:
+            growth_probe(dict(SANI, **{evento: 1})).certify_dynamic_growth()
+            check(f"{evento} deve fallire", "non ha sollevato", "InvalidRun")
+        except InvalidRun as failure:
+            check(f"{evento} solleva", evento in str(failure), True)
+
+    print("\n  -- in topologia fissa la certificazione non si applica --")
+    check("ritorna None", growth_probe(dict(SANI, start_worker=99),
+                                      topology="fixed").certify_dynamic_growth(), None)
+    check("e non aggiunge un checkpoint",
+          len(growth_probe(SANI, topology="fixed").checkpoints), 0)
 
     print("\n== le colonne condivise non cambiano ==")
     check("CYCLE_COLUMNS aggiunge esattamente tre colonne",

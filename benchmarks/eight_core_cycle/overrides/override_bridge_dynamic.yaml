@@ -1,0 +1,28 @@
+# Il bridge con la sua orchestrazione REALE: il pool decide la propria dimensione.
+#
+# Differenza dall'override a otto worker fissi: monta `dynamic_recipe.py` e NON
+# passa `GNR_ASGI_WORKER_MAX_USERS`. Quel tetto non esiste in questa prova, e
+# passarlo vuoto non basterebbe: la recipe dinamica non lo legge affatto.
+#
+# Le variabili le esporta il runner, non il file .env:
+#   CYCLE_DIR            la directory di questo scenario, per montare la recipe
+#   CYCLE_RUNTIME_DIR    la runtime del laboratorio, montata su /lab/runtime
+#   GNR_ASGI_ORCH_LOG    il path del journal DENTRO il container
+#   CYCLE_MEM_LIMIT      il limite di memoria, uguale a tutte le configurazioni
+#
+# GNR_ASGI_WORKER_MAX_NUMBER e' il TETTO, non un obiettivo: il default del core e'
+# sei, piu' basso degli otto gia' misurati, quindi lasciarlo stare limiterebbe la
+# crescita sotto la forma nota. La recipe spiega perche' sedici.
+services:
+  bridge:
+    cpus: 8
+    mem_limit: ${CYCLE_MEM_LIMIT:-4g}
+    environment:
+      GNR_ASGI_POOL_RECIPE: "/lab/configs/dynamic_recipe.py"
+      GNR_ASGI_ORCH_LOG: ${GNR_ASGI_ORCH_LOG:?}
+      GNR_ASGI_WORKER_MAX_NUMBER: ${GNR_ASGI_WORKER_MAX_NUMBER:-16}
+      GNR_ASGI_CONSOLE: ${GNR_ASGI_CONSOLE:-1}
+      PYTHONPATH: "/src/genro-asgi/src:/src/genropy-asgi/src"
+    volumes:
+      - ${CYCLE_DIR:?}/dynamic_recipe.py:/lab/configs/dynamic_recipe.py:ro
+      - ${CYCLE_RUNTIME_DIR:?}:/lab/runtime

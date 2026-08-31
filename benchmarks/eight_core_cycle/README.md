@@ -180,6 +180,9 @@ Nuovo, e solo questo:
 | `run_cycle.sh`, `run_smoke.sh` | il runner comparativo e lo smoke |
 | `tests/test_cycle_tools.py` | i test mirati: piano, guardia, verdetto, mappa, ruoli |
 | `tests/test_cycle_runner.sh` | il verdetto del runner, con un `docker` finto |
+| `dynamic_recipe.py` | la recipe del bridge con la policy REALE, il pool decide |
+| `run_profiles.sh` | i tre profili in sequenza, con certificazione viva |
+| `tests/test_profiles.sh` | l'ordine dei profili, con un `docker` finto |
 
 `CycleEngine` aggiunge quattro cose al motore condiviso e non ne toglie nessuna:
 la riga si offre solo a un utente ammesso; ogni chiamata completata va alla
@@ -193,6 +196,82 @@ utenti per l'etichetta `user_N`: senza la traduzione la ricerca non trovava mai
 nulla e la colonna restava sempre vuota — in questo scenario e in quelli
 precedenti. Un utente che il census non colloca resta assente dalla mappa: la
 casella vuota è una **mancata osservazione**, non un worker inventato.
+
+## Le due topologie, e i tre profili aggiunti
+
+La prova a otto worker fissi è un **punto controllato**: crescita per CPU spenta,
+quindici utenti per worker, esattamente otto worker. Resta valida per quello che è,
+ma non è l'orchestrazione con cui il pool gira in produzione.
+
+| topologia | la forma dei worker | che cosa il driver fa |
+|---|---|---|
+| `fixed` | **dichiarata** in anticipo | la **asserisce**: `[15×8]` o l'esecuzione fallisce |
+| `dynamic` | è un **risultato** | la **registra**, e asserisce solo la forma delle decisioni |
+
+Asserire un numero in topologia dinamica deciderebbe in anticipo la risposta alla
+domanda per cui la prova esiste.
+
+### I cinque profili della comparazione a otto core
+
+| profilo | processi di servizio | recipe / riga | dati |
+|---|---|---|---|
+| `bridge_w8` | 8 worker fissi, 15 utenti ciascuno | `cycle_recipe.py` | corsa `e8cv5`, **non si ripete** |
+| `bridge_dynamic` | **il pool decide** | `dynamic_recipe.py` | da misurare |
+| `legacy_w8` | Gunicorn `-w 8` | — | corsa `e8cv5`, **non si ripete** |
+| `legacy_w12` | Gunicorn `-w 12` | — | da misurare |
+| `legacy_w16` | Gunicorn `-w 16` | — | da misurare |
+
+Tutti a otto core e quattro gibibyte, sullo **stesso piano byte per byte**, con la
+stessa politica di login, la stessa `full_warmup` e le stesse due guardie. Cambia
+una cosa per volta.
+
+```bash
+./run_profiles.sh                      # legacy_w12 -> bridge_dynamic -> legacy_w16
+```
+
+Il runner **rifiuta di partire** se il piano non è quello della corsa valida: il suo
+hash è dichiarato dentro il runner, e un workload diverso non si confronta con
+quella corsa.
+
+Prima di ogni profilo certifica la configurazione **viva**, letta dal container, e
+blocca: `cpu.max` uguale a otto core, `memory.max` uguale a quattro gibibyte,
+contatori OOM a zero, il numero esatto di processi Gunicorn con il suo master e il
+suo daemon, il path del journal che il pid 1 porta davvero, e — sul profilo
+dinamico — l'**assenza** del cap di utenti per worker.
+
+### Che cosa resta bloccante in topologia dinamica
+
+Il numero dei worker non è giudicato. È giudicata la **forma delle decisioni**,
+letta dal journal dell'orchestratore e non indovinata:
+
+- almeno un worker è nato;
+- **ogni nascita oltre la prima porta la ragione "serviva a collocare un utente"**.
+  Il core avvia un worker con il gruppo, quindi l'invariante è
+  `start_worker == new_worker_created_for_placement + 1`. Se una scansione CPU
+  avesse creato un worker da sé, le nascite supererebbero le ragioni di placement e
+  l'uguaglianza cadrebbe — che è esattamente ciò che non deve accadere;
+- nessuno fra `restart_worker`, `close_worker`, `process_quitted`,
+  `placement_fallback` compare;
+- nessun guest, nessun congelato, ogni utente autenticato effettivamente collocato,
+  almeno un worker vivo a popolazione piena.
+
+La cronologia dei worker (`*_worker_history.json`) porta una riga ogni volta che
+l'insieme dei worker vivi cambia: quali sono nati, quali usciti, sotto quale padre,
+in quale fase, con quanti utenti collocati, e CPU e memoria del container a quel
+momento.
+
+### Il tetto che ho dovuto scrivere
+
+`worker_max_number` **non** si può lasciare al default: il core dice **sei**, meno
+degli otto già misurati, quindi lasciarlo starebbe limitando la crescita sotto la
+forma nota. È fissato a **sedici**, il doppio degli otto, e la corsa riporta il
+massimo raggiunto: un risultato che tocca sedici è un risultato **limitato dal
+tetto** e va letto come tale.
+
+Ha un secondo effetto, dichiarato perché non è ovvio: il core deriva
+`worker_memory_max_percent` come `100 / worker_max_number`. A sedici sono 6,25% di
+quattro gibibyte, circa 256 MB per worker, contro i 50–60 MB che un worker teneva
+davvero. Alzare il tetto restringerebbe quella quota.
 
 ## I worker attesi: due regole, non una
 
@@ -285,6 +364,7 @@ bash -n run_cycle.sh run_smoke.sh
 python3 -m py_compile make_cycle_trace.py cycle_probe.py admission_guard.py
 python3 tests/test_cycle_tools.py
 bash tests/test_cycle_runner.sh
+bash tests/test_profiles.sh
 ```
 
 Nessuno dei due avvia un container. `test_cycle_runner.sh` mette un `docker`

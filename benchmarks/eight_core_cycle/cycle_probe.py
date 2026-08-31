@@ -90,15 +90,47 @@ USERNAMES_ALL = os.path.join(BENCHMARKS_DIR, "usernames_all.txt")
 SAMPLE_S = 2.0
 
 # I setpoint che la recipe dichiara e che il driver ricontrolla vivi prima di
-# misurare. user_idle_freeze_minutes DEVE tornare null: e' il freeze spento, e la
-# pausa di sessanta secondi deve lasciare gli utenti residenti sul loro worker.
+# misurare, UNO PER TOPOLOGIA.
+#
+# `user_idle_freeze_minutes` deve tornare null in entrambe: e' il freeze spento, e
+# la pausa di sessanta secondi deve lasciare gli utenti residenti sul loro worker.
+#
+# FIXED e' il punto controllato: la crescita per CPU spenta, un tetto di utenti
+# per worker, e un `worker_min_life` lungo che impedisce al retirement di cambiare
+# la topologia a meta' corsa. Misura una forma decisa in anticipo.
+#
+# DYNAMIC e' la policy di produzione: la crescita per CPU accesa, nessun tetto di
+# utenti per worker, e il `worker_min_life` del core. Il numero dei worker non e'
+# dichiarato: e' un risultato. Cio' che resta bloccante e' la FORMA delle
+# decisioni, non il loro esito — vedi `certify_dynamic_growth`.
 REQUIRED_SETTINGS = {
-    "cpu_grow_percent": None,
-    "user_idle_freeze_minutes": None,
-    "worker_min_life_seconds": 3600.0,
-    "occupancy_max_percent": 80.0,
-    "reception_reserved_percent": 0.0,
+    "fixed": {
+        "cpu_grow_percent": None,
+        "user_idle_freeze_minutes": None,
+        "worker_min_life_seconds": 3600.0,
+        "occupancy_max_percent": 80.0,
+        "reception_reserved_percent": 0.0,
+    },
+    "dynamic": {
+        "cpu_grow_percent": 50.0,
+        "cpu_grow_rearm_percent": 30.0,
+        "user_idle_freeze_minutes": None,
+        "occupancy_max_percent": 80.0,
+        "reception_reserved_percent": 0.0,
+        "cpu_retirement_quiet_seconds": 60.0,
+        "restart_occupancy_max_percent": 95.0,
+        "worker_max_users": None,
+    },
 }
+
+# I nomi che l'orchestratore scrive nel suo journal. Sono del core: si leggono,
+# non si inventano. `start_worker` e' la nascita; `new_worker_created_for_placement`
+# e' la ragione "serviva a collocare un utente"; gli altri quattro non devono
+# comparire in una corsa sana.
+BIRTH_EVENT = "start_worker"
+BIRTH_FOR_PLACEMENT = "new_worker_created_for_placement"
+UNWANTED_EVENTS = ("restart_worker", "close_worker", "process_quitted",
+                   "placement_fallback")
 
 # LA POLITICA DEI LOGIN A FREDDO, e perche' vive QUI e non nel piano.
 #
@@ -264,6 +296,8 @@ class CycleProbe:
         self.previous_ticks = {}
         self.previous_cpu_usec = None
         self.previous_stamp = None
+        self.worker_history = []
+        self.seen_workers = set()
         self.accounts = [line.strip() for line in open(USERNAMES_ALL) if line.strip()]
         self.lookups = self.accounts[:self.plan["lookups"]]
 
@@ -302,7 +336,13 @@ class CycleProbe:
         """
         if self.eyes is None:
             return self.arguments.expect_workers
-        placed = (self.eyes.population() or {}).get("placed") or 0
+        population = self.eyes.population() or {}
+        if self.arguments.topology == "dynamic":
+            # Il numero e' il risultato della prova: si passa l'osservato, cosi'
+            # `certify` verifica i singleton e i processi non classificati e non
+            # decide in anticipo quanti worker sarebbero "giusti".
+            return population.get("worker_count") or 1
+        placed = population.get("placed") or 0
         per_worker = max(1, self.arguments.expect_per_worker)
         needed = -(-placed // per_worker)
         return max(1, min(self.arguments.expect_workers, needed))
@@ -508,15 +548,26 @@ class CycleProbe:
         if self.eyes is None:
             return None
         live = self.eyes.live_settings()["effective_settings"]
+        required = REQUIRED_SETTINGS[self.arguments.topology]
         problems = [f"{key} vale {live.get(key)!r} invece di {value!r}"
-                    for key, value in REQUIRED_SETTINGS.items() if live.get(key) != value]
-        if live.get("worker_max_users") != self.arguments.expect_per_worker:
-            problems.append(f"worker_max_users vale {live.get('worker_max_users')!r} "
-                            f"invece di {self.arguments.expect_per_worker}")
-        if live.get("worker_max_number") != self.arguments.expect_workers:
-            problems.append(f"worker_max_number vale {live.get('worker_max_number')!r} "
-                            f"invece di {self.arguments.expect_workers}")
-        record = {"stage": "settings", "live_settings": live, "problemi": problems}
+                    for key, value in required.items() if live.get(key) != value]
+        if self.arguments.topology == "fixed":
+            # La forma decisa in anticipo: i due cap si asseriscono.
+            if live.get("worker_max_users") != self.arguments.expect_per_worker:
+                problems.append(f"worker_max_users vale {live.get('worker_max_users')!r} "
+                                f"invece di {self.arguments.expect_per_worker}")
+            if live.get("worker_max_number") != self.arguments.expect_workers:
+                problems.append(f"worker_max_number vale {live.get('worker_max_number')!r} "
+                                f"invece di {self.arguments.expect_workers}")
+        else:
+            # In dinamica `worker_min_life_seconds` NON deve essere il valore
+            # sperimentale della prova fissa: quello impediva al retirement di
+            # agire, e qui il retirement e' parte di cio' che si misura.
+            if live.get("worker_min_life_seconds") == 3600.0:
+                problems.append("worker_min_life_seconds vale 3600: e' il controllo "
+                                "sperimentale della prova fissa, non la policy reale")
+        record = {"stage": "settings", "topology": self.arguments.topology,
+                  "live_settings": live, "problemi": problems}
         self.checkpoints.append(record)
         print(f"  setpoint vivi: freeze={live.get('user_idle_freeze_minutes')} "
               f"cpu_grow={live.get('cpu_grow_percent')} "
@@ -528,28 +579,48 @@ class CycleProbe:
         return record
 
     def check_distribution(self, stage):
-        """The bridge's declared shape. Blocking only at the full population."""
+        """The bridge's shape: asserted when it was declared, recorded when it is a result.
+
+        With a FIXED topology the shape is a declaration — ``[15] * 8`` — and a
+        different shape means the run did not measure what it said. With a DYNAMIC
+        topology the shape is the RESULT: asserting a number in advance would
+        decide the answer to the question the run exists to ask. What stays
+        blocking in both is structural and has nothing to do with counting: no
+        guest, no frozen user, the whole population authenticated, at least one
+        worker alive, and every authenticated user actually placed.
+        """
         if self.eyes is None:
             return None
         population = self.eyes.population()
-        expected = [self.arguments.expect_per_worker] * self.arguments.expect_workers
         obtained = sorted(population["per_worker"].values(), reverse=True)
+        dynamic = self.arguments.topology == "dynamic"
+        expected = ([] if dynamic
+                    else [self.arguments.expect_per_worker] * self.arguments.expect_workers)
         problems = []
         if population["guest"]:
             problems.append(f"{population['guest']} guest presenti")
+        if population["frozen"]:
+            problems.append(f"{population['frozen']} utenti congelati: il freeze "
+                            f"doveva restare spento")
         if self.reached_full:
             if population["authenticated"] != self.plan["users"]:
                 problems.append(f"utenti reali {population['authenticated']} "
                                 f"invece di {self.plan['users']}")
-            if obtained != sorted(expected, reverse=True):
+            if not dynamic and obtained != sorted(expected, reverse=True):
                 problems.append(f"distribuzione {obtained} invece di {expected}")
-        if population["frozen"]:
-            problems.append(f"{population['frozen']} utenti congelati: il freeze "
-                            f"doveva restare spento")
-        record = {"stage": stage, "expected": expected, "obtained": obtained,
+            if dynamic:
+                if not population["worker_count"]:
+                    problems.append("nessun worker vivo a popolazione piena")
+                if population["placed"] != population["authenticated"]:
+                    problems.append(f"collocati {population['placed']} su "
+                                    f"{population['authenticated']} autenticati")
+        record = {"stage": stage, "topology": self.arguments.topology,
+                  "expected": expected, "obtained": obtained,
                   "reached_full": self.reached_full, **population, "problemi": problems}
         self.checkpoints.append(record)
-        print(f"  distribuzione [{stage}]: attesa {expected} ottenuta {obtained}", flush=True)
+        shape = "risultato" if dynamic else f"attesa {expected}"
+        print(f"  distribuzione [{stage}]: {shape} ottenuta {obtained} "
+              f"su {population['worker_count']} worker", flush=True)
         if problems:
             raise InvalidRun(f"distribuzione non conforme a {stage}: " + "; ".join(problems))
         return record
@@ -642,6 +713,7 @@ class CycleProbe:
             placement = ((self.eyes.read_census() or {}).get("groups", {})
                          .get("pool", {}).get("user_worker_map", {}))
             self.engine.worker_of = self.get_worker_of_labels(placement)
+            self.record_topology(row, population, processes)
             row.update({
                 "users_authenticated": population.get("authenticated", ""),
                 "users_placed": population.get("placed", ""),
@@ -666,6 +738,43 @@ class CycleProbe:
         self.sampler_rows += 1
         self.sampler_ready.set()
         return started
+
+    def record_topology(self, row, population, processes):
+        """A line every time the set of living workers changes.
+
+        The sampler already writes the whole per-process table into the CSV, so
+        this adds no observation: it marks WHEN the shape moved, and with what
+        around it. For a dynamic pool that is the history of the decisions —
+        which worker appeared, under which parent, in which phase, with how many
+        users placed and how much CPU and memory in the container at that instant.
+        """
+        living = set(population.get("workers") or [])
+        if living == self.seen_workers:
+            return
+        born = sorted(living - self.seen_workers)
+        gone = sorted(self.seen_workers - living)
+        pids = {info["role"]: {"pid": info["pid"], "ppid": info["ppid"]}
+                for info in processes.values() if info["role"].startswith("pool_")}
+        self.worker_history.append({
+            "ts": row["ts"], "epoch": row["epoch"], "phase": row["phase"],
+            "born": born, "gone": gone,
+            "workers": sorted(living), "worker_count": len(living),
+            "pids": {name: pids.get(name) for name in born},
+            "users_authenticated": population.get("authenticated"),
+            "users_placed": population.get("placed"),
+            "users_unplaced": population.get("unplaced"),
+            "per_worker": dict(population.get("per_worker") or {}),
+            "cpu_total_pct": row.get("cpu_total_pct"),
+            "cg_current": row.get("cg_current"),
+            "pss_total_kb": row.get("pss_total_kb"),
+            "admission_open": self.admission.admission_open,
+        })
+        self.seen_workers = living
+        if born:
+            print(f"  [{row['phase']}] nati {born} -> {len(living)} worker, "
+                  f"{population.get('placed')} utenti collocati", flush=True)
+        if gone:
+            print(f"  [{row['phase']}] usciti {gone} -> {len(living)} worker", flush=True)
 
     def sample_loop(self, writer, handle, stop):
         try:
@@ -727,6 +836,49 @@ class CycleProbe:
         self.engine.play_cycle_window(phase)
         self.check_sampler(phase)
         self.phases_played.append(phase)
+
+    def certify_dynamic_growth(self):
+        """What a dynamic pool must have done, whatever number it arrived at.
+
+        The count is not judged — it is the answer the run went looking for. The
+        SHAPE of the decisions is judged, and it is judged from the orchestrator's
+        own journal, not from a guess:
+
+        - at least one worker was born;
+        - every birth after the first carries the reason "a placement needed it".
+          The core starts one worker with the group, so the invariant is
+          ``start_worker == new_worker_created_for_placement + 1``. If a CPU scan
+          had created a worker on its own, the births would outnumber the
+          placement reasons and this equality would break — which is exactly the
+          thing the mandate forbids;
+        - none of restart, close, quit or placement fallback appears.
+        """
+        if self.eyes is None or self.arguments.topology != "dynamic":
+            return None
+        events = self.eyes.read_journal_events()
+        births = events.get(BIRTH_EVENT, 0)
+        for_placement = events.get(BIRTH_FOR_PLACEMENT, 0)
+        problems = []
+        if births < 1:
+            problems.append("nessun worker e' nato")
+        if births != for_placement + 1:
+            problems.append(f"{births} nascite ma {for_placement} ragioni di placement: "
+                            f"attese {for_placement + 1}. Una nascita non spiegata da un "
+                            f"placement e' una nascita della sola scansione CPU")
+        present = {name: events[name] for name in UNWANTED_EVENTS if events.get(name)}
+        if present:
+            problems.append(f"eventi indesiderati: {present}")
+        counts = [line["worker_count"] for line in self.worker_history] or [0]
+        record = {"stage": "crescita dinamica", "events": events,
+                  "births": births, "births_for_placement": for_placement,
+                  "workers_max": max(counts), "workers_final": counts[-1],
+                  "history_lines": len(self.worker_history), "problemi": problems}
+        self.checkpoints.append(record)
+        print(f"  crescita dinamica: {births} nascite, {for_placement} da placement, "
+              f"massimo {max(counts)} worker, finale {counts[-1]}", flush=True)
+        if problems:
+            raise InvalidRun("crescita dinamica non conforme: " + "; ".join(problems))
+        return record
 
     def require_every_phase(self):
         """Every phase the plan declares was played, or this is not a comparison.
@@ -837,6 +989,7 @@ class CycleProbe:
             self.check_sampler("return_ramp")
             self.play_steady("full_measure_2")
             self.check_distribution("alla fine delle finestre")
+            self.certify_dynamic_growth()
             self.require_every_phase()
             outcome["result"] = "completa"
         except StopRequested as stop_asked:
@@ -882,6 +1035,8 @@ class CycleProbe:
         guard.write(verdict)
         outcome["memory"] = verdict
         outcome["admission"] = self.admission.verdict
+        outcome["topology"] = self.arguments.topology
+        outcome["worker_history"] = self.worker_history
         outcome["reached_full_population"] = self.reached_full
         outcome["login_policy"] = {
             "attempts_max": LOGIN_ATTEMPTS_MAX,
@@ -903,6 +1058,7 @@ class CycleProbe:
                               ("population_log", self.population_log),
                               ("logouts", self.logouts),
                               ("return_calls", self.engine.return_calls),
+                              ("worker_history", self.worker_history),
                               ("outcome", outcome)):
             with open(f"{self.arguments.out}_{name}.json", "w") as handle:
                 json.dump(payload, handle, indent=2)
@@ -932,6 +1088,9 @@ def main(argv=None):
     parser.add_argument("--plan", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--password", default="a")
+    parser.add_argument("--topology", default="fixed", choices=("fixed", "dynamic"),
+                        help="fixed: la forma e' dichiarata e si asserisce. "
+                             "dynamic: la forma e' un risultato e si registra")
     parser.add_argument("--expect-workers", type=int, required=True)
     parser.add_argument("--expect-per-worker", type=int, required=True)
     parser.add_argument("--memory-threshold", type=float, default=80.0)

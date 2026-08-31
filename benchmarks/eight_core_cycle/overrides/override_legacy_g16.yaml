@@ -1,0 +1,20 @@
+# Il legacy a 16 processi: gnrdaemon piu' Gunicorn con 16 worker.
+#
+# La riga di Gunicorn e' quella dell'entrypoint tracciato, che non viene toccato:
+#   python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 \
+#       -w "${LEGACY_WORKERS:-1}" -k gthread --threads 16
+# La worker class gthread e i 16 thread sono cablati LI'. Questo override decide
+# soltanto quanti worker, e i limiti di risorsa — identici a tutte le altre
+# configurazioni della comparazione: otto core e quattro gibibyte.
+#
+# TRAPPOLA PAGATA: fuori dal .env il default di LEGACY_WORKERS e' 1. Qui e'
+# obbligatorio, cosi' un valore mancante ferma il compose invece di falsare la
+# misura. Il runner lo impone a 16.
+services:
+  legacy:
+    cpus: 8
+    mem_limit: ${CYCLE_MEM_LIMIT:-4g}
+    environment:
+      LEGACY_WORKERS: ${LEGACY_WORKERS:?}
+    volumes:
+      - ${CYCLE_RUNTIME_DIR:?}:/lab/runtime
