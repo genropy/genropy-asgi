@@ -42,10 +42,12 @@ instead, so the phases are never reached in a shape nobody asked for.
 and outside every measured window: the first construction of the site costs a
 service process seconds, and that cost belongs nowhere near a measure.
 
-THE LOGIN IS RETRIED, up to the plan's limit, with a fresh connection each time.
-A service process asked to build the site while answering a login answers 500;
-those 500s are classified ``cold_start``, counted on their own, and never folded
-into the errors of a measured window. A user that never gets in fails the run.
+THE LOGIN IS RETRIED, five times five seconds apart, with a fresh connection each
+time — see ``LOGIN_ATTEMPTS_MAX`` for the measurement that set those numbers. A
+service process asked to build the site while answering a login answers 500; those
+500s are classified ``cold_start``, counted on their own, and never folded into the
+errors of a measured window. A user that never gets in fails the run. The retry
+exists ONLY in the login: no application call is ever retried from here.
 
     python3 cycle_probe.py --stack bridge --run e8c_bridge \\
         --base http://127.0.0.1:8098 --container genro-bench-lab-bridge-1 \\
@@ -97,6 +99,27 @@ REQUIRED_SETTINGS = {
     "occupancy_max_percent": 80.0,
     "reception_reserved_percent": 0.0,
 }
+
+# LA POLITICA DEI LOGIN A FREDDO, e perche' vive QUI e non nel piano.
+#
+# La finestra fredda del legacy e' stata MISURATA il 2026-08-31 sulla prova
+# completa: circa quattordici secondi, dal primo 500 alle 14:10:19 all'ultimo
+# recupero alle 14:10:33. Cinque tentativi distanziati di cinque secondi coprono
+# venti secondi, che la contengono. La politica precedente — tre tentativi a due
+# secondi — copriva quattro secondi, e il secondo utente della rampa li esauriva
+# tutti dentro i primi cinque secondi dei quattordici.
+#
+# Il piano porta ancora `login_attempts_max` e `login_retry_seconds` dalla
+# versione precedente: sono SUPERATI da queste costanti e non vanno letti.
+# Cambiarli nel piano vorrebbe dire rigenerarlo, e il piano descrive QUANDO ogni
+# utente chiama — cosa che questa politica non tocca: agisce solo prima di
+# `full_warmup`, fuori da ogni finestra misurata. Nessuna richiesta applicativa
+# viene mai ritentata da qui.
+#
+# La politica e' identica sui due stack, e la corsa registra quella EFFETTIVA in
+# `outcome["login_policy"]`, cosi' non serve dedurla.
+LOGIN_ATTEMPTS_MAX = 5
+LOGIN_RETRY_SECONDS = 5.0
 
 # Le colonne dello scenario: quelle condivise, piu' le tre che questo ciclo
 # aggiunge. Il formato dei CSV degli scenari precedenti non e' toccato.
@@ -311,10 +334,14 @@ class CycleProbe:
     def build_user(self, index, login_calls, pages):
         """One account logged in, with its runner started and admitted.
 
-        Up to ``login_attempts_max`` attempts, a FRESH connection every time —
-        ``LoggedUser`` builds its own opener and its own ``HTTPConnection``, so
-        re-constructing it is a new TCP connection by construction. Every attempt
-        is recorded with its status, its body and its exception.
+        Up to ``LOGIN_ATTEMPTS_MAX`` attempts, ``LOGIN_RETRY_SECONDS`` apart, with
+        a FRESH connection every time — ``LoggedUser`` builds its own opener and
+        its own ``HTTPConnection``, so re-constructing it is a new TCP connection
+        by construction. Every attempt is recorded with its status, its body and
+        its exception. The span the attempts cover is
+        ``(LOGIN_ATTEMPTS_MAX - 1) * LOGIN_RETRY_SECONDS``, and it has to contain
+        the cold window of the stack: read the constants for the measurement that
+        set them.
 
         The first construction of the site costs a service process seconds, and a
         process asked to do it while answering a login answers 500. Those 500s are
@@ -325,8 +352,8 @@ class CycleProbe:
         """
         label = f"user_{index + 1}"
         username = self.accounts[index]
-        attempts_max = int(self.protocol["login_attempts_max"])
-        wait = float(self.protocol["login_retry_seconds"])
+        attempts_max = LOGIN_ATTEMPTS_MAX
+        wait = LOGIN_RETRY_SECONDS
         attempts, logged = [], None
         for attempt in range(1, attempts_max + 1):
             record = {"ts": time.strftime("%H:%M:%S"), "user": label, "username": username,
@@ -856,6 +883,11 @@ class CycleProbe:
         outcome["memory"] = verdict
         outcome["admission"] = self.admission.verdict
         outcome["reached_full_population"] = self.reached_full
+        outcome["login_policy"] = {
+            "attempts_max": LOGIN_ATTEMPTS_MAX,
+            "retry_seconds": LOGIN_RETRY_SECONDS,
+            "window_covered_seconds": (LOGIN_ATTEMPTS_MAX - 1) * LOGIN_RETRY_SECONDS,
+        }
         outcome["login_attempts_total"] = len(self.login_attempts)
         outcome["cold_start_errors"] = self.cold_start_errors
         outcome["login_failure"] = self.login_failure
