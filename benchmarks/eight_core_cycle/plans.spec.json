@@ -12,8 +12,8 @@
       "role": "il ciclo: 120 utenti a una richiesta al secondo ciascuno, 50 in pausa per 60s e rientro a uno al secondo",
       "seed": 20260831,
       "args": [],
-      "calls_total": 52065,
-      "sha256": "25e13bf5c3fbfebe1c566fcbc614920e4d18d6617a40f8895faa3c8e4ecd4d2a"
+      "calls_total": 52185,
+      "sha256": "562d45743547a2b023c150a4bf57b41565bc2c5fd6dad7a10999e5f639746dab"
     },
     {
       "name": "cycle_smoke_plan.json",
@@ -37,8 +37,8 @@
         "--observe-seconds",
         "20"
       ],
-      "calls_total": 1132,
-      "sha256": "848e47fdb67543437c471ae15d8a82dedae3465a7a624f69dad631ebe95d407d"
+      "calls_total": 1148,
+      "sha256": "157f7d42cbe40d4c52806bf674f10a2b71aab8e21f03dc72a0e02000bc8b13d2"
     }
   ]
 }

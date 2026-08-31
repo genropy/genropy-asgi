@@ -159,12 +159,20 @@ Non sono versionati: il piano pieno pesa 6,6 MB. Si rigenerano identici da
 
 | piano | utenti | in pausa | richieste | sha256 |
 |---|---|---|---|---|
-| `cycle_plan.json` | 120 | 50 | 52 065 | `25e13bf5c3fbfebe…` |
-| `cycle_smoke_plan.json` | 16 | 8 | 1 132 | `848e47fdb6754343…` |
+| `cycle_plan.json` | 120 | 50 | 52 185 | `562d45743547a2b0…` |
+| `cycle_smoke_plan.json` | 16 | 8 | 1 148 | `157f7d42cbe40d4c…` |
 
 Il seed pesca soltanto **quali** cinquanta utenti si fermano, in quale ordine
 rientrano, e quale username cerca ogni richiesta. Tutto il resto è aritmetica.
-Generato due volte in directory diverse, il piano è identico byte per byte.
+Generato due volte in directory diverse, il piano è identico byte per byte, e lo
+è anche fra macOS e Linux: gli hash qui sopra sono gli stessi sulle due
+piattaforme.
+
+Cambiando il generatore, i piani già in `traces/` vanno rigenerati con `--force`:
+`make_plans.sh` lascia stare un piano che esiste e ne verifica solo l'hash, per
+non far leggere due file diversi alle due gambe. Un hash diverso da quello
+dichiarato ferma la campagna — ed è così che è stato colto un piano vecchio
+rimasto in `traces/` dopo una modifica al generatore.
 
 Nello smoke la fase si chiama ancora `pause_50` pur mettendo in pausa otto utenti:
 il nome della fase è strutturale e non conta i suoi utenti.
