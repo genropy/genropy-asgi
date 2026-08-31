@@ -85,9 +85,9 @@ lab_wait_for_load 8.0 || exit 4
 lab_arm_cleanup
 
 certify_live () {
-  # certify_live <profilo> <servizio> <container> <processi attesi>
+  # certify_live <profilo> <servizio> <container> <processi attesi> <base http>
   # La configurazione VIVA, letta dal container, prima di misurare. Blocca.
-  local profile="$1" service="$2" container="$3" expected="$4"
+  local profile="$1" service="$2" container="$3" expected="$4" base="$5"
   local out="$WORK_DIR/${PREFIX}_${profile}_live_config.txt"
   local problems=0
   {
@@ -147,11 +147,20 @@ certify_live () {
       problems=1
     fi
     if [ "$profile" = "bridge_dynamic" ]; then
-      if grep -q "GNR_ASGI_WORKER_MAX_USERS" "$out"; then
-        lab_log "  STOP: GNR_ASGI_WORKER_MAX_USERS presente: il cap e' vietato qui"
-        problems=1
+      # Il NOME della variabile non prova nulla: il compose base la dichiara
+      # vuota per ogni profilo bridge, e dynamic_recipe.py non la legge. Conta il
+      # VALORE, e conta soprattutto il setpoint VIVO. Li giudica entrambi
+      # certify_dynamic_cap.py, che si prova a parte senza laboratorio.
+      local cap
+      cap="$(docker exec "$container" sh -c \
+        'tr "\0" "\n" < /proc/1/environ | sed -n "s/^GNR_ASGI_WORKER_MAX_USERS=//p"' \
+        2>/dev/null | head -1)"
+      if python3 "$SCENARIO_DIR/certify_dynamic_cap.py" --env-value "$cap" \
+           --status-url "$base" --out "${out%_live_config.txt}_dynamic_cap.json"; then
+        lab_log "  nessun cap di utenti per worker, ne' nell'ambiente ne' vivo: ok"
       else
-        lab_log "  nessun cap di utenti per worker: ok"
+        lab_log "  STOP: il cap degli utenti per worker non e' assente"
+        problems=1
       fi
     fi
   fi
@@ -234,7 +243,7 @@ PY
     sleep 20
   fi
 
-  certify_live "$profile" "$service" "$container" "$processes" || return 7
+  certify_live "$profile" "$service" "$container" "$processes" "$base" || return 7
 
   local extra=""
   if [ "$service" = "bridge" ]; then

@@ -43,6 +43,7 @@ sys.path.insert(0, SCENARIO)
 from admission_guard import AdmissionGuard                                        # noqa: E402
 from bench_common.container_probe import COLUMNS                                  # noqa: E402
 from bench_common.stop_guard import StopFlag                                      # noqa: E402
+from certify_dynamic_cap import CapCertificate                                     # noqa: E402
 from cycle_probe import (                                                          # noqa: E402
     CYCLE_COLUMNS, LOGIN_ATTEMPTS_MAX, LOGIN_RETRY_SECONDS, REQUIRED_SETTINGS,
     CycleEngine, CycleProbe, InvalidRun)                                # noqa: E402
@@ -682,6 +683,75 @@ try:
     check("zero bloccanti", record["withheld_after_ramp_blocking"], {})
     check("porta aperta", record["admission_open"], True)
     check("tutte e sei le fasi giocate", record["played"], every)
+
+    print("\n== il cap degli utenti per worker: conta il valore, non il nome ==")
+
+    # La policy viva di produzione, come la restituisce /_orchestration/status.
+    VIVA_SANA = {"cpu_grow_percent": 50.0, "cpu_grow_rearm_percent": 30.0,
+                 "occupancy_max_percent": 80.0, "reception_reserved_percent": 0.0,
+                 "cpu_retirement_quiet_seconds": 60.0, "user_idle_freeze_minutes": None,
+                 "worker_max_users": None, "worker_min_life_seconds": 60.0,
+                 "worker_max_number": 16}
+
+    def cap(env_value, live=None):
+        return CapCertificate(env_value, dict(VIVA_SANA, **(live or {})))
+
+    print("\n  -- 1. variabile assente: accettata --")
+    # Assente e' cio' che il runner passa quando sed non trova la riga: stringa vuota.
+    c = cap(None)
+    check("nessun problema", c.problems, [])
+    check("l'ambiente non dichiara un cap", c.env_declares_cap, False)
+
+    print("\n  -- 2. variabile presente e vuota: accettata --")
+    check("nessun problema", cap("").problems, [])
+    check("neanche con spazi", cap("   ").problems, [])
+    check("l'ambiente non dichiara un cap", cap("   ").env_declares_cap, False)
+
+    print("\n  -- 3. variabile valorizzata: rifiutata --")
+    c = cap("15")
+    check("un problema", len(c.problems), 1)
+    check("e nomina il valore", "'15'" in c.problems[0], True)
+    check("l'ambiente dichiara un cap", c.env_declares_cap, True)
+    check("anche un valore assurdo e' un cap", cap("999").env_declares_cap, True)
+
+    print("\n  -- 4. il valore zero e' un valore: rifiutata --")
+    c = cap("0")
+    check("un problema", len(c.problems), 1)
+    check("e nomina lo zero", "'0'" in c.problems[0], True)
+    check("zero dichiara un cap come qualunque altro valore",
+          c.env_declares_cap, True)
+
+    print("\n  -- 5. ambiente vuoto ma setpoint vivo numerico: rifiutata --")
+    c = cap("", live={"worker_max_users": 15})
+    check("un problema", len(c.problems), 1)
+    check("e nomina il setpoint vivo", "worker_max_users vale 15" in c.problems[0], True)
+    check("l'ambiente da' l'ok", c.env_declares_cap, False)
+    check("ma il vivo comanda", c.problems != [], True)
+    check("anche uno zero vivo e' un cap",
+          cap("", live={"worker_max_users": 0}).problems != [], True)
+
+    print("\n  -- 6. ambiente vuoto e setpoint vivo None: accettata --")
+    c = cap("")
+    check("nessun problema", c.problems, [])
+    check("il record porta il valore vivo", c.record["live_worker_max_users"], None)
+    check("e il tetto osservato, non asserito", c.record["live_worker_max_number"], 16)
+
+    print("\n  -- e la policy di produzione e' certificata nello stesso passo --")
+    for chiave, sbagliato, atteso in (
+            ("cpu_grow_percent", None, "50.0"),
+            ("cpu_grow_rearm_percent", 40.0, "30.0"),
+            ("occupancy_max_percent", 90.0, "80.0"),
+            ("reception_reserved_percent", 50.0, "0.0"),
+            ("cpu_retirement_quiet_seconds", 30.0, "60.0"),
+            ("user_idle_freeze_minutes", 10.0, "None")):
+        problemi = cap("", live={chiave: sbagliato}).problems
+        check(f"    {chiave} sbagliato solleva",
+              any(chiave in x and atteso in x for x in problemi), True)
+    check("il min_life sperimentale e' rifiutato",
+          any("controllo sperimentale" in x
+              for x in cap("", live={"worker_min_life_seconds": 3600.0}).problems), True)
+    check("mentre i sessanta secondi del core vanno bene",
+          cap("", live={"worker_min_life_seconds": 60.0}).problems, [])
 
     print("\n== le due topologie: forma dichiarata contro forma risultato ==")
 

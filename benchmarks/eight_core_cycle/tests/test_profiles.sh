@@ -11,6 +11,10 @@
 #   - il driver riceve la topologia giusta per ogni profilo, e i worker Gunicorn
 #     giusti: dodici e sedici.
 #
+# LA CERTIFICAZIONE DEL CAP del profilo dinamico NON e' coperta qui: interroga
+# /_orchestration/status su un bridge vivo, che in questo test non esiste. I suoi
+# sei casi si provano in tests/test_cycle_tools.py, sulla classe che decide.
+#
 # COSA NON COPRE, e perche': una sequenza di tre profili SANI fino in fondo. Il
 # controllo di prontezza del bridge interroga il census su una porta vera, e senza
 # un bridge vivo ritenta per cinque minuti. La sequenza sana la prova
@@ -97,6 +101,7 @@ if [ "\$1" = "exec" ]; then
       ;;
     *environ*)
       [ -n "\${GNR_ASGI_ORCH_LOG:-}" ] && echo "GNR_ASGI_ORCH_LOG=\$GNR_ASGI_ORCH_LOG"
+      echo "GNR_ASGI_WORKER_MAX_USERS="
       echo "LEGACY_WORKERS=\${LEGACY_WORKERS:-}"
       ;;
   esac
