@@ -24,6 +24,7 @@ scenario uses them unchanged.
     python3 tests/test_cycle_tools.py
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -41,12 +42,11 @@ sys.path.insert(0, SCENARIO)
 from admission_guard import AdmissionGuard                                        # noqa: E402
 from bench_common.container_probe import COLUMNS                                  # noqa: E402
 from bench_common.stop_guard import StopFlag                                      # noqa: E402
-from cycle_probe import CYCLE_COLUMNS, CycleEngine                                # noqa: E402
+from cycle_probe import CYCLE_COLUMNS, CycleEngine, CycleProbe, InvalidRun                                # noqa: E402
 
 failures = []
 
-SETTINGS = {"p95_limit_ms": 1500.0, "consecutive_evaluations": 15,
-            "window_seconds": 10.0, "minimum_samples": 30}
+SETTINGS = {"p95_limit_ms": 1500.0, "consecutive_buckets": 15, "minimum_samples": 5}
 
 
 def check(label, got, want):
@@ -99,12 +99,12 @@ try:
     check("e sono tutti utenti del piano",
           all(name in {f"user_{i + 1}" for i in range(users)} for name in paused), True)
 
-    print("\n  -- full_stabilize: tutti attivi, un utente una richiesta al secondo --")
-    stabilize = per_second(rows, "full_stabilize")
+    print("\n  -- full_warmup: tutti attivi, un utente una richiesta al secondo --")
+    stabilize = per_second(rows, "full_warmup")
     check("sessanta secondi", len(stabilize), 60)
     check("ogni secondo porta 120 richieste", sorted(set(stabilize.values())), [120])
     check("ogni utente ha una riga per secondo",
-          {len(rows_of_user(rows, "full_stabilize", f"user_{i + 1}")) for i in range(users)},
+          {len(rows_of_user(rows, "full_warmup", f"user_{i + 1}")) for i in range(users)},
           {60})
 
     print("\n  -- pause_50: i fermi non hanno NESSUNA riga, e il ritmo scende di 50 --")
@@ -140,7 +140,7 @@ try:
           [ret[s + 1] - ret[s] for s in range(paused_count)], [1] * paused_count)
 
     print("\n  -- nessuna collisione di istanti, in nessuna fase --")
-    for phase in ("login_ramp", "full_stabilize", "full_measure_1", "pause_50",
+    for phase in ("login_ramp", "full_warmup", "full_measure_1", "pause_50",
                   "return_ramp", "full_measure_2"):
         instants = [row["t_rel"] for row in rows if row["phase"] == phase]
         check(f"{phase}: istanti tutti distinti", len(instants), len(set(instants)))
@@ -166,135 +166,116 @@ try:
           other_plan["paused_order"] == plan["paused_order"], False)
     check("ma sempre cinquanta", len(set(other_plan["paused_order"])), 50)
 
-    print("\n== la guardia di ammissione: quindici valutazioni, non quattordici ==")
+    print("\n== la guardia di ammissione: bucket di un secondo, non sovrapposti ==")
 
-    def guard_for(path_name, context=None):
+    def guard_for(path_name):
         return AdmissionGuard(SETTINGS, os.path.join(SANDBOX, path_name),
-                              lambda: context or {"phase": "full_measure_1",
-                                                  "population_authenticated": 120,
-                                                  "population_active": 120,
-                                                  "completed": 9000, "pending": 3})
+                              lambda: {"phase": "full_measure_1",
+                                       "population_authenticated": 120,
+                                       "population_active": 120,
+                                       "completed": 9000, "pending": 3})
 
-    def feed(guard, latency_ms, now, count=40):
-        """One second of calls, all stamped inside that second."""
-        for index in range(count):
-            guard.record_latency(now - 0.001 * index, latency_ms)
+    def play(guard, latencies, first=1000.0, per_second=20):
+        """One second per element, judged when that second has closed.
 
-    def play(guard, latencies, first=1000.0):
-        """A timeline, one latency per second, evaluated once each second.
-
-        The window is mobile, so a second's calls stay in it for ten
-        evaluations: this is the only faithful way to drive the guard, and it is
-        why a short burst of slowness produces more than one breach.
+        The guard files a call under the whole second it completed in, and judges
+        a second only once nothing can still land in it. Driving it means filling
+        second N and then letting the clock reach N+1 — which is what a real run
+        does, one pass a second.
         """
+        guard.judge_closed_buckets(first)
         for step, latency in enumerate(latencies):
-            feed(guard, latency, first + step)
-            guard.evaluate(first + step)
+            second = first + step
+            for slot in range(per_second):
+                guard.record_latency(second + slot / float(per_second + 1), latency)
+            guard.judge_closed_buckets(second + 1.0)
 
-    guard = guard_for("g1.json")
-    for step in range(14):
-        feed(guard, 2000.0, 1000.0 + step)
-        guard.evaluate(1000.0 + step)
-    check("dopo quattordici valutazioni oltre soglia la porta e' aperta",
-          guard.admission_open, True)
-    check("il conteggio consecutivo e' quattordici", guard.consecutive, 14)
-    feed(guard, 2000.0, 1014.0)
-    guard.evaluate(1014.0)
-    check("alla quindicesima la porta si chiude", guard.admission_open, False)
+    print("\n  -- cinque secondi cattivi: nessuno stop --")
+    guard = guard_for("g_5.json")
+    play(guard, [3000.0] * 5 + [100.0] * 3)
+    check("porta aperta", guard.admission_open, True)
+    check("cinque bucket oltre soglia", guard.bad, 5)
+    check("sequenza massima cinque", guard.peak_consecutive, 5)
+
+    print("\n  -- quattordici secondi cattivi: nessuno stop --")
+    guard = guard_for("g_14.json")
+    play(guard, [3000.0] * 14)
+    check("porta aperta", guard.admission_open, True)
+    check("sequenza massima quattordici", guard.peak_consecutive, 14)
+    check("nessun evento", guard.event, None)
+
+    print("\n  -- quindici secondi cattivi: STOP --")
+    guard = guard_for("g_15.json")
+    play(guard, [3000.0] * 15)
+    check("porta chiusa", guard.admission_open, False)
+    check("scattata al quindicesimo", guard.event["consecutive_buckets"], 15)
     check("l'evento e' ADMISSION_STOP", guard.event["event"], "ADMISSION_STOP")
-
-    print("\n  -- l'evento porta tutto quello che deve portare --")
-    for field in ("event", "ts", "epoch", "reason", "p50_ms", "p95_ms", "p99_ms",
-                  "phase", "population_authenticated", "population_active",
-                  "completed", "pending", "consecutive_evaluations",
-                  "samples_in_window", "p95_limit_ms"):
-        check(f"    campo {field}", field in guard.event, True)
-    check("    e il file e' stato scritto quando e' scattato",
-          json.load(open(os.path.join(SANDBOX, "g1.json")))["event"]["event"],
+    check("scritto su disco appena scattato",
+          json.load(open(os.path.join(SANDBOX, "g_15.json")))["event"]["event"],
           "ADMISSION_STOP")
+    for field in ("event", "ts", "bucket", "reason", "p50_ms", "p95_ms", "p99_ms",
+                  "phase", "population_authenticated", "population_active",
+                  "completed", "pending", "consecutive_buckets",
+                  "samples_in_bucket", "p95_limit_ms"):
+        check(f"    campo {field}", field in guard.event, True)
 
-    print("\n  -- la porta non si riapre mai piu' --")
-    for step in range(30):
-        feed(guard, 50.0, 1100.0 + step)
-        guard.evaluate(1100.0 + step)
-    check("trenta valutazioni ottime non riaprono la porta", guard.admission_open, False)
-    check("e l'evento resta quello di prima", guard.event["consecutive_evaluations"], 15)
+    print("\n  -- dieci cattivi, uno buono, quattordici cattivi: nessuno stop --")
+    guard = guard_for("g_10_1_14.json")
+    play(guard, [3000.0] * 10 + [100.0] + [3000.0] * 14)
+    check("porta aperta", guard.admission_open, True)
+    check("la sequenza piu' lunga e' quattordici", guard.peak_consecutive, 14)
+    check("ventiquattro bucket oltre soglia in totale", guard.bad, 24)
 
-    print("\n  -- un singolo secondo lento non chiude niente --")
-    # Un secondo solo oltre soglia resta nella finestra per dieci valutazioni,
-    # quindi produce dieci violazioni, non una. Dieci e' sotto le quindici, e la
-    # porta resta aperta. E' la protezione che serve.
-    guard = guard_for("g2.json")
-    play(guard, [100.0] * 5 + [3000.0] + [100.0] * 30, first=2000.0)
-    check("trentasei valutazioni con un secondo lento: porta aperta",
-          guard.admission_open, True)
-    check("le violazioni prodotte dal secondo lento sono dieci",
-          guard.peak_consecutive, 10)
-    check("e alla fine il conteggio e' tornato a zero", guard.consecutive, 0)
+    print("\n  -- un bucket con pochi campioni azzera la sequenza --")
+    guard = guard_for("g_thin.json")
+    play(guard, [3000.0] * 10)
+    check("dieci consecutivi", guard.consecutive, 10)
+    # Un secondo con soli tre campioni: sotto il minimo di cinque.
+    guard.record_latency(1010.1, 9000.0)
+    guard.record_latency(1010.2, 9000.0)
+    guard.record_latency(1010.3, 9000.0)
+    record = guard.judge_closed_buckets(1011.0)[0]
+    check("il verdetto e' pochi campioni", record["verdict"], "pochi campioni")
+    check("e azzera la sequenza", guard.consecutive, 0)
+    play(guard, [3000.0] * 14, first=1011.0)
+    check("altri quattordici non bastano", guard.admission_open, True)
 
-    print("\n  -- una sequenza breve non chiude, e il conteggio si azzera --")
-    # Tre secondi lenti: dodici violazioni consecutive mentre la finestra li
-    # smaltisce, sotto le quindici. Poi il conteggio torna a zero da se'.
-    # Cinque secondi lenti ne farebbero quindici: e' la soglia effettiva.
-    guard = guard_for("g3.json")
-    play(guard, [3000.0] * 3 + [100.0] * 20, first=3000.0)
-    check("tre secondi lenti: porta aperta", guard.admission_open, True)
-    check("dodici violazioni consecutive, non quindici", guard.peak_consecutive, 12)
-    check("il conteggio si azzera quando la finestra si e' svuotata",
-          guard.consecutive, 0)
+    print("\n  -- un secondo senza traffico azzera la sequenza --")
+    guard = guard_for("g_gap.json")
+    play(guard, [3000.0] * 12)
+    check("dodici consecutivi", guard.consecutive, 12)
+    guard.judge_closed_buckets(1014.0)
+    check("il buco ha azzerato", guard.consecutive, 0)
+    check("contato fra i bucket magri", guard.thin > 0, True)
 
-    print("\n  -- una lentezza sostenuta chiude: e' il caso che deve chiudere --")
-    guard = guard_for("g3b.json")
-    play(guard, [3000.0] * 30, first=3500.0)
-    check("trenta secondi lenti: porta chiusa", guard.admission_open, False)
-    check("scattata alla quindicesima valutazione",
-          guard.event["consecutive_evaluations"], 15)
+    print("\n  -- uno spike isolato: nessuno stop, e una sola violazione --")
+    guard = guard_for("g_spike.json")
+    play(guard, [100.0] * 5 + [3000.0] + [100.0] * 20)
+    check("porta aperta", guard.admission_open, True)
+    check("una sola violazione", guard.bad, 1)
+    check("sequenza massima uno", guard.peak_consecutive, 1)
 
     print("\n  -- esattamente sulla soglia non e' una violazione --")
-    guard = guard_for("g4.json")
-    for step in range(20):
-        feed(guard, 1500.0, 4000.0 + step)
-        guard.evaluate(4000.0 + step)
-    check("venti valutazioni a 1500 ms esatti: porta aperta", guard.admission_open, True)
-    check("nessuna violazione contata", guard.breaches, 0)
+    guard = guard_for("g_edge.json")
+    play(guard, [1500.0] * 20)
+    check("porta aperta", guard.admission_open, True)
+    check("nessuna violazione", guard.bad, 0)
 
-    print("\n  -- una finestra illeggibile non chiude e non azzera --")
-    guard = guard_for("g5.json")
-    for step in range(10):
-        feed(guard, 2000.0, 5000.0 + step)
-        guard.evaluate(5000.0 + step)
-    check("dieci oltre soglia", guard.consecutive, 10)
-    guard.samples = []
-    feed(guard, 2000.0, 5010.0, count=5)
-    record = guard.evaluate(5010.0)
-    check("cinque campioni sono troppo pochi", record["verdict"], "illeggibile")
-    check("il conteggio non e' azzerato", guard.consecutive, 10)
-    check("e non e' incrementato", record["consecutive"], 10)
-    for step in range(5):
-        feed(guard, 2000.0, 5020.0 + step)
-        guard.evaluate(5020.0 + step)
-    check("altre cinque oltre soglia chiudono la porta alla quindicesima",
-          guard.admission_open, False)
-
-    print("\n  -- la finestra e' mobile: le latenze vecchie escono --")
-    guard = guard_for("g6.json")
-    feed(guard, 5000.0, 6000.0, count=100)
-    record = guard.evaluate(6005.0)
-    check("a cinque secondi le vecchie sono ancora dentro", record["samples"], 100)
-    record = guard.evaluate(6011.0)
-    check("a undici secondi sono uscite tutte", record["samples"], 0)
-    check("e la finestra vuota e' illeggibile, non una violazione",
-          record["verdict"], "illeggibile")
+    print("\n  -- la porta non si riapre mai piu' --")
+    guard = guard_for("g_latch.json")
+    play(guard, [3000.0] * 15)
+    check("chiusa", guard.admission_open, False)
+    play(guard, [40.0] * 40, first=1100.0)
+    check("quaranta secondi ottimi non la riaprono", guard.admission_open, False)
+    check("l'evento resta quello di prima", guard.event["consecutive_buckets"], 15)
 
     print("\n  -- la guardia non tocca la bandiera di stop del memory guard --")
     flag = StopFlag()
-    guard = guard_for("g7.json")
-    for step in range(20):
-        feed(guard, 9000.0, 7000.0 + step)
-        guard.evaluate(7000.0 + step)
+    guard = guard_for("g_flag.json")
+    play(guard, [9000.0] * 20)
     check("la porta e' chiusa", guard.admission_open, False)
     check("ma la corsa non e' fermata", flag.stopped, False)
-    check("e nessuna ragione di stop e' registrata", flag.reason_list, [])
+    check("nessuna ragione di stop registrata", flag.reason_list, [])
     check("il verdetto dichiara admission_stop, non memory_stop",
           sorted(key for key in guard.verdict if "stop" in key), ["admission_stop"])
 
@@ -354,6 +335,113 @@ try:
     check("con la sua latenza", engine.return_calls[0]["latency_ms"], 812.5)
     check("e la sua posizione nel rientro", engine.return_calls[0]["return_position"], 3)
     check("il worker che l'ha servita", engine.return_calls[0]["worker"], "pool_0002")
+
+    print("\n== la mappa utente -> worker traduce le etichette ==")
+    probe = CycleProbe.__new__(CycleProbe)
+    probe.engine = CycleEngine([], lambda *a: b"", ["x"], StopFlag())
+    probe.engine.username_of = {"user_1": "alexander.king", "user_2": "amelia.martin",
+                                "user_3": "ava.brown"}
+    placement = {"alexander.king": "pool_0001", "amelia.martin": "pool_0002",
+                 "sconosciuto": "pool_0008"}
+    mapped = probe.get_worker_of_labels(placement)
+    check("l'etichetta prende il worker del suo username",
+          mapped, {"user_1": "pool_0001", "user_2": "pool_0002"})
+    check("un utente non collocato resta assente, non vuoto", "user_3" in mapped, False)
+    check("un username che il runner non conosce non entra",
+          "pool_0008" in mapped.values(), False)
+    check("senza la traduzione la ricerca per etichetta fallirebbe",
+          placement.get("user_1"), None)
+
+    print("\n== i worker attesi: regola diversa per i due stack ==")
+
+    class FakeEyes:
+        def __init__(self, placed):
+            self.placed = placed
+
+        def population(self):
+            return {"placed": self.placed}
+
+    def expected_for(stack, placed, per_worker=15, maximum=8):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.eyes = None if stack == "legacy" else FakeEyes(placed)
+        probe.arguments = argparse.Namespace(
+            expect_workers=maximum, expect_per_worker=per_worker)
+        return probe.expected_workers_now
+
+    check("legacy: gli otto worker ci sono anche a popolazione zero",
+          expected_for("legacy", 0), 8)
+    check("legacy: e anche a popolazione piena", expected_for("legacy", 120), 8)
+    check("bridge: a pool vuoto se ne attende uno, quello di partenza",
+          expected_for("bridge", 0), 1)
+    check("bridge: quindici utenti collocati, un worker",
+          expected_for("bridge", 15), 1)
+    check("bridge: sedici utenti collocati, due worker",
+          expected_for("bridge", 16), 2)
+    check("bridge: centoventi utenti collocati, otto worker",
+          expected_for("bridge", 120), 8)
+    check("bridge: mai oltre il massimo configurato",
+          expected_for("bridge", 500), 8)
+    check("bridge nello smoke: sedici utenti a due per worker, otto",
+          expected_for("bridge", 16, per_worker=2), 8)
+    check("le due regole NON coincidono a popolazione zero",
+          expected_for("legacy", 0) == expected_for("bridge", 0), False)
+
+    print("\n== il verdetto delle fasi: una mancante ferma tutto ==")
+
+    def verdict_probe(played, reached, withheld=None, admission_open=True):
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.protocol = {"phases": [{"phase": name} for name in
+                                     ("login_ramp", "full_warmup", "full_measure_1",
+                                      "pause_50", "return_ramp", "full_measure_2")]}
+        probe.phases_played = list(played)
+        probe.reached_full = reached
+        probe.plan = {"users": 120}
+        probe.checkpoints = []
+        probe.engine = CycleEngine([], lambda *a: b"", ["x"], StopFlag())
+        probe.engine.withheld = withheld or {}
+        for index in range(120 if reached else 13):
+            probe.engine.runners[f"user_{index + 1}"] = None
+        probe.admission = AdmissionGuard(SETTINGS, os.path.join(SANDBOX, "v.json"),
+                                         lambda: {})
+        if not admission_open:
+            probe.admission.closed.set()
+        return probe
+
+    every = ["login_ramp", "full_warmup", "full_measure_1", "pause_50",
+             "return_ramp", "full_measure_2"]
+    probe = verdict_probe(every, True)
+    check("tutte le fasi e popolazione piena: nessun problema",
+          probe.require_every_phase()["problemi"], [])
+
+    probe = verdict_probe(["login_ramp", "full_measure_1"], False)
+    try:
+        probe.require_every_phase()
+        check("due fasi su sei devono fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("due fasi su sei sollevano", "fasi non eseguite" in str(failure), True)
+        check("e nomina anche la popolazione incompleta",
+              "popolazione incompleta" in str(failure), True)
+
+    probe = verdict_probe(every, False)
+    try:
+        probe.require_every_phase()
+        check("popolazione incompleta deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("popolazione incompleta sola solleva",
+              "popolazione incompleta" in str(failure), True)
+
+    probe = verdict_probe(every, True, withheld={"pause_50": 7})
+    try:
+        probe.require_every_phase()
+        check("richieste trattenute senza stop devono fallire",
+              "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("trattenute senza ADMISSION_STOP sollevano",
+              "trattenute" in str(failure), True)
+
+    probe = verdict_probe(every, True, withheld={"return_ramp": 7}, admission_open=False)
+    check("ma con ADMISSION_STOP le trattenute sono legittime",
+          probe.require_every_phase()["problemi"], [])
 
     print("\n== le colonne condivise non cambiano ==")
     check("CYCLE_COLUMNS aggiunge esattamente tre colonne",

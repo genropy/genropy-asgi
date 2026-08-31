@@ -25,7 +25,7 @@ esattamente quando il suo utente deve chiamare.
 | # | fase | durata | ritmo | cosa accade |
 |---|---|---|---|---|
 | 1 | `login_ramp` | 120 s | 0 → 119/s | un utente entra ogni secondo e chiama un secondo dopo |
-| 2 | `full_stabilize` | 60 s | 120/s | tutti attivi. **Solo se i 120 sono stati raggiunti** |
+| 2 | `full_warmup` | 60 s | 120/s | tutti attivi, **fuori dalla misura**: scalda ogni processo |
 | 3 | `full_measure_1` | 120 s | 120/s | la prima misura |
 | 4 | `pause_50` | 60 s | 70/s | cinquanta smettono di chiamare, restano residenti |
 | 5 | `return_ramp` | 51 s | 70 → 120/s | rientrano uno al secondo |
@@ -38,10 +38,42 @@ che rientra a t=0 chiama a t=1, quindi il ritmo pieno arriva un periodo dopo
 l'ultimo rientro. Senza quel secondo la finestra chiuderebbe a 119/s e i 120/s
 cadrebbero esattamente sul confine con la misura successiva.
 
-Le fasi 4, 5 e 6 si giocano **solo se i centoventi utenti sono stati raggiunti**.
-Con una popolazione fermata prima, la pausa artificiale di cinquanta misurerebbe
-una forma che la corsa non ha mai avuto. Le fasi saltate sono registrate in
-`phases_played`, mai silenziose.
+**Tutte le fasi sono obbligatorie.** Il driver le gioca tutte e sei, e
+`require_every_phase` fa fallire l'esecuzione se una manca o se la popolazione non
+si è riempita: una corsa che riporta un sottoinsieme *sembra* un risultato e non
+lo è, perché i due stack verrebbero confrontati su lavori diversi. Una popolazione
+incompleta fallisce prima, al login.
+
+`full_warmup` sta fra la rampa e la prima misura, a popolazione piena e **fuori da
+ogni finestra misurata**: il primo caricamento del sito costa secondi a ogni
+processo di servizio, e quel costo non deve stare dentro una misura. Le sue
+richieste, i suoi errori, la sua CPU e la sua memoria restano registrati.
+Sostituisce `full_stabilize`, che erano gli stessi sessanta secondi di traffico
+pieno sotto un nome che non diceva a cosa servissero.
+
+## Il login si ritenta, e i 500 a freddo sono contati a parte
+
+La prova misura il regime operativo, non il primo caricamento del sito. Un
+processo di servizio a cui si chiede di costruire il sito **mentre risponde a un
+login** risponde 500: succede sul legacy, dove Gunicorn consegna la connessione a
+un worker ancora freddo, e non sul bridge, dove il placement attende che il worker
+sia pronto.
+
+Politica identica sui due stack:
+
+| voce | valore |
+|---|---|
+| tentativi per login | **3** al massimo |
+| connessione | **nuova a ogni tentativo** |
+| attesa fra i tentativi | 2 s |
+| se non entra dopo tre | l'esecuzione **fallisce** |
+
+Ogni tentativo è registrato in `*_login_attempts.json` con timestamp, utente,
+numero del tentativo, status HTTP, corpo della risposta, eccezione ed esito. I
+tentativi falliti **prima** di un successo sono riclassificati `cold_start`:
+contati nel loro contatore, riportati, e **mai** sommati agli errori di una
+finestra misurata, che precedono. Nessun `GET /` anonimo, nessun guest, nessun
+account o permesso toccato, nessun retry illimitato.
 
 ## Le due guardie, che non vanno confuse
 
@@ -66,19 +98,28 @@ completate del motore di carico. Login, logout, census, letture
 dell'orchestrazione e certificazione della page-class cache non passano da lì. Una
 guardia che guardasse il census guarderebbe lo strumento.
 
-Condizione: p95 delle chiamate completate negli **ultimi dieci secondi**,
-ricalcolato **una volta al secondo**, **strettamente maggiore** di 1500 ms, per
-**quindici valutazioni consecutive**. Servono almeno trenta campioni nella
-finestra; sotto quella soglia la valutazione è *illeggibile* e non è né una
-violazione né un azzeramento.
+**Un secondo, un bucket, e i bucket non si sovrappongono.** Ogni chiamata
+completata è archiviata sotto il secondo intero in cui è finita. Un bucket è
+giudicato una volta sola, quando non può più ricevere chiamate, e poi buttato.
 
-**Quanti secondi di lentezza sono davvero, misurato sulla guardia stessa**: la
-finestra è mobile, quindi un secondo lento continua a violare per le dieci
-valutazioni in cui resta dentro. Quindici violazioni consecutive richiedono
-perciò **circa cinque secondi consecutivi** di lentezza, non quindici. Tre secondi
-lenti producono dodici violazioni e la porta resta aperta; uno solo ne produce
-dieci. Leggere "quindici valutazioni" come "quindici secondi" sovrastimerebbe
-quanto la guardia tollera.
+| voce | valore |
+|---|---|
+| grandezza | p95 delle chiamate completate in **un secondo intero** |
+| soglia | **strettamente** maggiore di 1500 ms |
+| quanti servono | **15 bucket cattivi consecutivi** |
+| un bucket dentro soglia | **azzera** la sequenza |
+| un bucket con meno di 5 campioni | **azzera** la sequenza |
+| un secondo senza traffico | è un bucket magro: **azzera** |
+
+Quindici bucket cattivi consecutivi sono quindi **quindici secondi consecutivi di
+lentezza**, né più né meno. Cinque secondi non fermano la crescita; quattordici
+non la fermano; al quindicesimo la porta si chiude.
+
+Sostituisce una finestra mobile di dieci secondi, che era sbagliata per questa
+decisione e in modo misurabile: un secondo lento restava dentro la finestra per
+dieci valutazioni, quindi **circa cinque** secondi di lentezza reale producevano
+già quindici violazioni consecutive. "Quindici valutazioni" e "quindici secondi"
+non erano la stessa cosa. Con i bucket non sovrapposti lo sono.
 
 ### Cosa fa quando scatta
 
@@ -137,12 +178,34 @@ Nuovo, e solo questo:
 | `cycle_recipe.py` | la recipe del bridge: otto worker, freeze assente |
 | `overrides/` | i due override del compose |
 | `run_cycle.sh`, `run_smoke.sh` | il runner comparativo e lo smoke |
-| `tests/test_cycle_tools.py` | i test mirati |
+| `tests/test_cycle_tools.py` | i test mirati: piano, guardia, verdetto, mappa, ruoli |
+| `tests/test_cycle_runner.sh` | il verdetto del runner, con un `docker` finto |
 
-`CycleEngine` aggiunge tre cose al motore condiviso e non ne toglie nessuna: la
-riga si offre solo a un utente ammesso; ogni chiamata completata va alla guardia;
-la **prima** chiamata di un utente che rientra è cronometrata a parte, perché il
-costo del ritorno non si vede in una media.
+`CycleEngine` aggiunge quattro cose al motore condiviso e non ne toglie nessuna:
+la riga si offre solo a un utente ammesso; ogni chiamata completata va alla
+guardia; la **prima** chiamata di un utente che rientra è cronometrata a parte,
+perché il costo del ritorno non si vede in una media; e tiene la mappa
+etichetta → username.
+
+Quella mappa serve alla colonna `worker` delle chiamate. Il census indicizza
+`user_worker_map` sul **vero username di GenroPy**, mentre il motore conosce gli
+utenti per l'etichetta `user_N`: senza la traduzione la ricerca non trovava mai
+nulla e la colonna restava sempre vuota — in questo scenario e in quelli
+precedenti. Un utente che il census non colloca resta assente dalla mappa: la
+casella vuota è una **mancata osservazione**, non un worker inventato.
+
+## I worker attesi: due regole, non una
+
+Il numero di processi di servizio che uno stack deve mostrare non si calcola allo
+stesso modo sui due, e usare una condizione sola era sbagliato:
+
+- il **legacy** non ha un pool. Gunicorn forka i suoi worker all'avvio e li tiene
+  qualunque cosa faccia la popolazione, quindi il numero atteso è **sempre** quello
+  dichiarato — anche a popolazione zero.
+- il **bridge** fa crescere il pool solo dalla domanda di placement. Il numero
+  atteso si deriva dagli utenti effettivamente **collocati**, a `worker_max_users`
+  ciascuno, mai meno dell'unico worker che il gruppo avvia da sé, mai più del
+  massimo configurato.
 
 Le colonne del CSV di questo scenario sono quelle condivise più tre —
 `users_active`, `users_paused`, `admission_stop` — e il formato dei CSV degli
@@ -157,10 +220,10 @@ Non sono versionati: il piano pieno pesa 6,6 MB. Si rigenerano identici da
 ../bench_common/make_plans.sh .
 ```
 
-| piano | utenti | in pausa | richieste | sha256 |
-|---|---|---|---|---|
-| `cycle_plan.json` | 120 | 50 | 52 185 | `562d45743547a2b0…` |
-| `cycle_smoke_plan.json` | 16 | 8 | 1 148 | `157f7d42cbe40d4c…` |
+| piano | utenti | in pausa | riscaldamento | richieste | sha256 |
+|---|---|---|---|---|---|
+| `cycle_plan.json` | 120 | 50 | 60 s | 52 185 | `376ea43df7141f77…` |
+| `cycle_smoke_plan.json` | 16 | 8 | 15 s | 1 228 | `283eb1e12dfbd89e…` |
 
 Il seed pesca soltanto **quali** cinquanta utenti si fermano, in quale ordine
 rientrano, e quale username cerca ogni richiesta. Tutto il resto è aritmetica.
@@ -189,8 +252,17 @@ stessa soglia e le stesse quindici valutazioni, i due stack in sequenza, le due
 certificazioni.
 
 Ridotto: sedici utenti invece di centoventi e **due per worker invece di
-quindici** (`GNR_ASGI_WORKER_MAX_USERS=2`, così i sedici occupano gli stessi otto worker),
-otto in pausa invece di cinquanta, finestre e osservazione accorciate.
+quindici** (`GNR_ASGI_WORKER_MAX_USERS=2`, così i sedici occupano gli stessi otto
+worker), otto in pausa invece di cinquanta, riscaldamento di quindici secondi
+invece di sessanta, finestre e osservazione accorciate.
+
+**Lo smoke esce non-zero se non esercita tutte le fasi.** È PASS solo se, su
+entrambi gli stack: tutti gli utenti previsti entrano, `reached_full` è vero, tutte
+e sei le fasi vengono eseguite, pausa e rientro avvengono, nessun `MEMORY_STOP`,
+nessun OOM, topologia corretta, output completi e sigillati. Se una popolazione
+incompleta facesse saltare le fasi, il driver scrive il motivo, esce non-zero, e
+`lab_run_legs` ferma la sequenza prima che l'altro stack parta — con cleanup e
+manifest eseguiti comunque.
 
 Il carico ridotto non dice nulla sulla capacità: serve a dimostrare che gli
 strumenti girano, che il journal si scrive, che il classificatore legacy nomina
@@ -212,15 +284,19 @@ sequenza. `./run_cycle.sh bridge,legacy` inverte l'ordine senza toccare una riga
 bash -n run_cycle.sh run_smoke.sh
 python3 -m py_compile make_cycle_trace.py cycle_probe.py admission_guard.py
 python3 tests/test_cycle_tools.py
+bash tests/test_cycle_runner.sh
 ```
 
-Nessuno usa Docker. La sequenzialità dei due stack e l'arresto di quello
-precedente sono provati da `../bench_common/tests/test_lab_lifecycle.sh`, che
-mette un `docker` finto davanti al `PATH` e registra ogni invocazione: è lo stesso
-codice condiviso che questo runner usa senza modifiche. Il cablaggio degli
-override di questo scenario si verifica invece con un render vero
-(`docker compose config`), che mostra core, memoria, `GNR_ASGI_WORKER_MAX_USERS` e il path
-del journal dentro il container.
+Nessuno dei due avvia un container. `test_cycle_runner.sh` mette un `docker`
+finto davanti al `PATH`, sostituisce il driver con uno che esce col codice che
+vuoi, e legge dal registro del finto che cosa è stato invocato: così "il secondo
+stack non è partito dopo il primo fallito" e "il cleanup è girato comunque" sono
+fatti letti, non affermazioni. **Gira solo su Linux**, perché il runner esige
+`/proc/loadavg` prima di toccare il laboratorio; su macOS si dichiara saltato.
+
+Il cablaggio degli override si verifica con un render vero
+(`docker compose config`), che mostra core, memoria,
+`GNR_ASGI_WORKER_MAX_USERS` e il path del journal dentro il container.
 
 ## Cosa raccoglie, per fase e per stack
 
@@ -231,4 +307,6 @@ aggregata e per worker, del master Gunicorn, dei worker Gunicorn, del daemon · 
 per ruolo · `memory.current` e `memory.peak` · numero di processi · distribuzione
 degli utenti · errori applicativi e di trasporto · OOM, restart, fallback e
 `process_quitted` dal journal · **la latenza della prima chiamata di ogni utente
-che rientra** (`*_return_calls.json`).
+che rientra** (`*_return_calls.json`) · **ogni tentativo di login con il suo
+status, il suo corpo e il suo esito** (`*_login_attempts.json`) e il conteggio
+separato degli errori `cold_start`.

@@ -32,13 +32,20 @@ TWO GUARDS THAT MUST NEVER BE CONFUSED:
   execution, even if the latency recovers. The run then measures the population it
   reached. It is a fact about capacity, not a failure of the leg.
 
-WHICH PHASES ARE PLAYED depends on the run's own history, and the choice is
-recorded, never silent:
+EVERY PHASE IS MANDATORY. The driver plays all six, and ``require_every_phase``
+fails the leg if one is missing or if the population never filled: a run that
+reports a subset looks like a result and is not one, because the two stacks would
+then be compared on different work. An incomplete population fails at the login
+instead, so the phases are never reached in a shape nobody asked for.
 
-- ``full_stabilize`` only if the hundred and twenty users were reached;
-- ``pause_50``, ``return_ramp`` and ``full_measure_2`` only if they were reached.
-  With a population stopped short, the artificial pause of fifty would measure a
-  shape the run never had.
+``full_warmup`` sits between the ramp and the first measure, at full population
+and outside every measured window: the first construction of the site costs a
+service process seconds, and that cost belongs nowhere near a measure.
+
+THE LOGIN IS RETRIED, up to the plan's limit, with a fresh connection each time.
+A service process asked to build the site while answering a login answers 500;
+those 500s are classified ``cold_start``, counted on their own, and never folded
+into the errors of a measured window. A user that never gets in fails the run.
 
     python3 cycle_probe.py --stack bridge --run e8c_bridge \\
         --base http://127.0.0.1:8098 --container genro-bench-lab-bridge-1 \\
@@ -56,6 +63,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 
 BENCHMARKS_DIR = os.path.abspath(
@@ -122,6 +130,7 @@ class CycleEngine(LoadEngine):
         super().__init__(*args, **kwargs)
         self.admission = admission
         self.calling = set()
+        self.username_of = {}
         self.awaiting_return = {}
         self.return_calls = []
         self.withheld = {}
@@ -220,6 +229,9 @@ class CycleProbe:
         self.checkpoints = []
         self.population_log = []
         self.logouts = []
+        self.login_attempts = []
+        self.cold_start_errors = 0
+        self.login_failure = None
         self.phases_played = []
         self.reached_full = False
         self.sampler_rows = 0
@@ -250,6 +262,28 @@ class CycleProbe:
         self.plan_sha256 = digest
         return json.loads(raw)
 
+    @property
+    def expected_workers_now(self):
+        """How many worker processes the stack should be showing right now.
+
+        The two stacks do not answer this the same way, and using one condition
+        for both was wrong:
+
+        - the LEGACY has no pool. Gunicorn forks its workers at boot and keeps
+          them whatever the population does, so the expected count is always the
+          declared one.
+        - the BRIDGE grows its pool from placement demand only. The expected count
+          is therefore derived from the users actually PLACED, at
+          ``worker_max_users`` each, never fewer than the one worker the group
+          starts with, and never more than the configured maximum.
+        """
+        if self.eyes is None:
+            return self.arguments.expect_workers
+        placed = (self.eyes.population() or {}).get("placed") or 0
+        per_worker = max(1, self.arguments.expect_per_worker)
+        needed = -(-placed // per_worker)
+        return max(1, min(self.arguments.expect_workers, needed))
+
     # ------------------------------------------------------------------ contesto
     def admission_context(self):
         """What the ADMISSION_STOP event records about the run, at the instant."""
@@ -275,14 +309,62 @@ class CycleProbe:
         return urllib.parse.urlencode(user.get_call_form(lookup, counter))
 
     def build_user(self, index, login_calls, pages):
-        """One account logged in, with its runner started and admitted."""
+        """One account logged in, with its runner started and admitted.
+
+        Up to ``login_attempts_max`` attempts, a FRESH connection every time —
+        ``LoggedUser`` builds its own opener and its own ``HTTPConnection``, so
+        re-constructing it is a new TCP connection by construction. Every attempt
+        is recorded with its status, its body and its exception.
+
+        The first construction of the site costs a service process seconds, and a
+        process asked to do it while answering a login answers 500. Those 500s are
+        classified as ``cold_start`` — kept, counted, reported, and NEVER folded
+        into the errors of a measured window, which they precede. A user that does
+        not get in after every attempt fails the whole run: this measures the
+        operating regime, so an incomplete population is not a result.
+        """
         label = f"user_{index + 1}"
-        logged = LoggedUser(self.arguments.base, login_calls, pages,
-                            self.accounts[index], self.arguments.password,
-                            self.lookups, 0.0)
+        username = self.accounts[index]
+        attempts_max = int(self.protocol["login_attempts_max"])
+        wait = float(self.protocol["login_retry_seconds"])
+        attempts, logged = [], None
+        for attempt in range(1, attempts_max + 1):
+            record = {"ts": time.strftime("%H:%M:%S"), "user": label, "username": username,
+                      "attempt": attempt, "status": "", "response": "", "exception": ""}
+            try:
+                logged = LoggedUser(self.arguments.base, login_calls, pages,
+                                    username, self.arguments.password, self.lookups, 0.0)
+                record.update(status=200, outcome="ok")
+                attempts.append(record)
+                break
+            except urllib.error.HTTPError as failure:
+                body = ""
+                try:
+                    body = failure.read().decode("utf-8", "replace")[:300]
+                except Exception:                                 # noqa: BLE001, S110
+                    pass
+                record.update(status=failure.code, response=body,
+                              exception=repr(failure)[:200], outcome="failed")
+            except Exception as failure:                          # noqa: BLE001
+                record.update(exception=repr(failure)[:200], outcome="failed")
+            attempts.append(record)
+            if attempt < attempts_max and self.stop_flag.wait(wait, "attesa fra i tentativi"):
+                break
+        if logged is None:
+            self.login_attempts.extend(attempts)
+            raise InvalidRun(f"{label} ({username}) non e' entrato dopo {attempts_max} "
+                             f"tentativi: {[a.get('status') or a.get('exception') for a in attempts]}")
+        # Chi ha fallito PRIMA di un successo e' costo a freddo, non un errore
+        # della prova: il nome lo dice, e il conteggio resta separato.
+        for record in attempts:
+            if record["outcome"] == "failed":
+                record["outcome"] = "cold_start"
+                self.cold_start_errors += 1
+        self.login_attempts.extend(attempts)
         runner = UserRunner(self.engine, label, logged)
         runner.start()
         self.engine.runners[label] = runner
+        self.engine.username_of[label] = username
         self.engine.admit(label)
         return label
 
@@ -311,12 +393,19 @@ class CycleProbe:
                       "username": self.accounts[index], "ts": time.strftime("%H:%M:%S"),
                       "planned_at": round(index * period, 3),
                       "actual_at": round(time.time() - started, 3)}
+            before = len(self.login_attempts)
             try:
                 self.build_user(index, login_calls, pages)
                 record["outcome"] = "ok"
+            except InvalidRun as failure:
+                record["outcome"] = "error"
+                record["error"] = str(failure)[:300]
+                self.login_failure = str(failure)
             except Exception as failure:                          # noqa: BLE001
                 record["outcome"] = "error"
                 record["error"] = repr(failure)[:200]
+                self.login_failure = repr(failure)[:200]
+            record["attempts"] = len(self.login_attempts) - before
             record["active"] = self.engine.active_count
             if self.eyes is not None:
                 record.update(self.eyes.population())
@@ -467,6 +556,22 @@ class CycleProbe:
             raise InvalidRun("page-class cache: " + "; ".join(certificate["blocking"]))
         return certificate
 
+    def get_worker_of_labels(self, placement):
+        """The census placement, re-keyed from GenroPy usernames to ``user_N``.
+
+        The census indexes ``user_worker_map`` by the SITE's own user id — the
+        GenroPy username — while the load engine knows each user by the label it
+        gave it. Without this translation the lookup never matched and the
+        ``worker`` column of every call stayed empty, in this scenario and in the
+        ones before it.
+
+        A user the census does not place is simply absent from the result: an
+        empty cell is a missing observation, never an invented worker.
+        """
+        return {label: placement[username]
+                for label, username in self.engine.username_of.items()
+                if placement.get(username)}
+
     # ------------------------------------------------------------------ campioni
     def sample_once(self, writer, handle):
         """One row: the engine's counters plus the container's own numbers."""
@@ -501,9 +606,9 @@ class CycleProbe:
         }
         if self.eyes is not None:
             population = self.eyes.population()
-            self.engine.worker_of = dict(
-                (self.eyes.read_census() or {}).get("groups", {}).get("pool", {})
-                .get("user_worker_map", {}))
+            placement = ((self.eyes.read_census() or {}).get("groups", {})
+                         .get("pool", {}).get("user_worker_map", {}))
+            self.engine.worker_of = self.get_worker_of_labels(placement)
             row.update({
                 "users_authenticated": population.get("authenticated", ""),
                 "users_placed": population.get("placed", ""),
@@ -565,8 +670,12 @@ class CycleProbe:
         self.phases_played.append("login_ramp")
         self.reached_full = len(self.engine.runners) == self.plan["users"]
         print(f"  login ramp finita: {len(self.engine.runners)} autenticati, "
-              f"{self.engine.active_count} attivi, popolazione piena: "
-              f"{self.reached_full}", flush=True)
+              f"{self.engine.active_count} attivi, tentativi "
+              f"{len(self.login_attempts)}, errori a freddo "
+              f"{self.cold_start_errors}, popolazione piena: {self.reached_full}",
+              flush=True)
+        if self.login_failure:
+            raise InvalidRun(f"un login non e' riuscito: {self.login_failure}")
 
     def play_return_ramp(self):
         """The return: the pacer readmits the paused users one per period."""
@@ -585,6 +694,32 @@ class CycleProbe:
         self.engine.play_cycle_window(phase)
         self.check_sampler(phase)
         self.phases_played.append(phase)
+
+    def require_every_phase(self):
+        """Every phase the plan declares was played, or this is not a comparison.
+
+        A run that reports a subset of the phases looks like a result and is not
+        one: the two stacks would be compared on different work. So the leg fails
+        here, with the missing phases named, and the sequence stops before the
+        other stack is even started.
+        """
+        declared = [window["phase"] for window in self.protocol["phases"]]
+        missing = [phase for phase in declared if phase not in self.phases_played]
+        problems = []
+        if missing:
+            problems.append(f"fasi non eseguite: {missing}")
+        if not self.reached_full:
+            problems.append(f"popolazione incompleta: {len(self.engine.runners)} utenti "
+                            f"invece di {self.plan['users']}")
+        withheld = sum(self.engine.withheld.values())
+        if withheld and self.admission.admission_open:
+            problems.append(f"{withheld} richieste trattenute senza ADMISSION_STOP")
+        record = {"stage": "fasi", "declared": declared, "played": self.phases_played,
+                  "problemi": problems}
+        self.checkpoints.append(record)
+        if problems:
+            raise InvalidRun("verdetto delle fasi: " + "; ".join(problems))
+        return record
 
     # ------------------------------------------------------------------ la corsa
     def run(self):
@@ -624,36 +759,27 @@ class CycleProbe:
             # perche' un worker nasce solo da un placement. Serve come baseline,
             # non come forma attesa.
             outcome["role_certification_baseline"] = self.probe.certify(
-                self.probe.read()[0], 0 if self.eyes is not None else
-                self.arguments.expect_workers)
+                self.probe.read()[0], self.expected_workers_now)
             self.stop_flag.wait(self.protocol["baseline_seconds"], "baseline")
             self.play_login_ramp()
             self.stop_flag.wait(self.protocol["settle_seconds"], "quiete dopo i login")
             # ORA la forma e' quella della corsa, e la certificazione ha senso:
             # la precedente e' presa a pool vuoto.
             outcome["role_certification"] = self.probe.certify(
-                self.probe.read()[0],
-                self.arguments.expect_workers if self.reached_full else 0)
+                self.probe.read()[0], self.expected_workers_now)
             self.certify_settings()
             self.check_distribution("dopo i login")
             outcome["page_class_cache"] = self.certify_page_class_cache()
             self.check_sampler("prima delle finestre")
-            if self.reached_full:
-                self.play_steady("full_stabilize")
-            else:
-                print("--- full_stabilize saltata: la popolazione piena non e' "
-                      "stata raggiunta ---", flush=True)
+            self.play_steady("full_warmup")
             self.play_steady("full_measure_1")
-            if self.reached_full:
-                self.pause_users()
-                self.play_steady("pause_50")
-                self.play_return_ramp()
-                self.check_sampler("return_ramp")
-                self.play_steady("full_measure_2")
-            else:
-                print("--- pausa, rientro e seconda misura saltate: la crescita "
-                      "si e' fermata prima dei 120 utenti ---", flush=True)
+            self.pause_users()
+            self.play_steady("pause_50")
+            self.play_return_ramp()
+            self.check_sampler("return_ramp")
+            self.play_steady("full_measure_2")
             self.check_distribution("alla fine delle finestre")
+            self.require_every_phase()
             outcome["result"] = "completa"
         except StopRequested as stop_asked:
             outcome["result"] = "interrotta"
@@ -699,6 +825,9 @@ class CycleProbe:
         outcome["memory"] = verdict
         outcome["admission"] = self.admission.verdict
         outcome["reached_full_population"] = self.reached_full
+        outcome["login_attempts_total"] = len(self.login_attempts)
+        outcome["cold_start_errors"] = self.cold_start_errors
+        outcome["login_failure"] = self.login_failure
         outcome["phases_played"] = self.phases_played
         outcome["withheld_by_phase"] = self.engine.withheld
         outcome["stop_reasons"] = self.stop_flag.reason_list
@@ -707,6 +836,7 @@ class CycleProbe:
         calls_handle.close()
         self.engine.write_windows(f"{self.arguments.out}_windows.json")
         for name, payload in (("checkpoints", self.checkpoints),
+                              ("login_attempts", self.login_attempts),
                               ("population_log", self.population_log),
                               ("logouts", self.logouts),
                               ("return_calls", self.engine.return_calls),
@@ -725,7 +855,9 @@ class CycleProbe:
               f"app {self.engine.state['errors_app']} "
               f"trasporto {self.engine.state['errors_transport']} | "
               f"memory stop {verdict['memory_stop']} "
-              f"admission stop {self.admission.verdict['admission_stop']}", flush=True)
+              f"admission stop {self.admission.verdict['admission_stop']} | "
+              f"tentativi di login {len(self.login_attempts)} "
+              f"a freddo {self.cold_start_errors}", flush=True)
 
 
 def main(argv=None):

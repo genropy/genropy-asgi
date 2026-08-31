@@ -28,11 +28,17 @@ share an instant, because each carries a sub-second offset of ``(k-1)/users``:
 that is also what one request per second per user really looks like on the wire,
 rather than 120 requests landing together on the second.
 
-THE PHASES, and which of them the driver may skip. The plan declares all six
-call-bearing phases; the driver plays the ones the run's own history allows —
-``full_stabilize`` only if 120 users were reached, ``pause_50`` and
-``return_ramp`` only if the growth was never stopped by the admission guard.
-Skipping is recorded, never silent.
+THE PHASES ARE ALL MANDATORY. The plan declares six call-bearing phases and the
+driver plays every one of them: a run that could not play them all is not a
+comparison, so it fails instead of reporting a subset. The one thing that may
+shrink a phase is the admission guard, which stops the growth of the population
+and leaves the phases in place at the population reached.
+
+``full_warmup`` sits between the ramp and the first measure, at full population,
+OUTSIDE every measured window: it exists so that the first construction of the
+site — paid once by each service process — is not inside a measure. It replaced
+``full_stabilize``, which was the same sixty seconds of full traffic under a name
+that did not say what the seconds were for.
 
     python3 make_cycle_trace.py --out traces/cycle_plan.json --seed 20260831
 """
@@ -120,9 +126,13 @@ class CyclePlan:
             {"phase": "login_ramp", "rate": float(users),
              "seconds": float(users) * self.arguments.login_period,
              "role": "gli utenti entrano uno ogni periodo di login e chiamano subito dopo"},
-            {"phase": "full_stabilize", "rate": float(users),
-             "seconds": self.arguments.stabilize_seconds,
-             "role": "tutti attivi, solo se i 120 sono stati raggiunti"},
+            # Il riscaldamento: tutti attivi, FUORI dalle finestre di misura. Serve
+            # a togliere dalla misura il costo del primo caricamento del sito, che
+            # ogni processo di servizio paga una volta sola. Le sue richieste, i suoi
+            # errori, la sua CPU e la sua memoria restano registrati.
+            {"phase": "full_warmup", "rate": float(users),
+             "seconds": self.arguments.warmup_seconds,
+             "role": "tutti attivi, fuori dalla misura: scalda ogni processo"},
             {"phase": "full_measure_1", "rate": float(users),
              "seconds": self.arguments.measure_seconds,
              "role": "la prima misura alla popolazione piena"},
@@ -191,7 +201,7 @@ class CyclePlan:
         """
         builders = {
             "login_ramp": self.rows_of_login_ramp,
-            "full_stabilize": self.rows_of_all_active,
+            "full_warmup": self.rows_of_all_active,
             "full_measure_1": self.rows_of_all_active,
             "pause_50": self.rows_of_pause,
             "return_ramp": self.rows_of_return_ramp,
@@ -228,6 +238,8 @@ class CyclePlan:
             "protocol": {
                 "baseline_seconds": self.arguments.baseline_seconds,
                 "login_period_seconds": self.arguments.login_period,
+                "login_attempts_max": self.arguments.login_attempts_max,
+                "login_retry_seconds": self.arguments.login_retry_seconds,
                 "return_period_seconds": self.arguments.return_period,
                 "logout_period_seconds": self.arguments.logout_period,
                 "population_timeout_seconds": self.arguments.population_timeout,
@@ -236,8 +248,7 @@ class CyclePlan:
                 "observe_seconds": self.arguments.observe_seconds,
                 "admission": {
                     "p95_limit_ms": self.arguments.admission_p95_ms,
-                    "consecutive_evaluations": self.arguments.admission_consecutive,
-                    "window_seconds": self.arguments.admission_window,
+                    "consecutive_buckets": self.arguments.admission_consecutive,
                     "minimum_samples": self.arguments.admission_min_samples,
                 },
                 "phases": self.phases,
@@ -287,7 +298,11 @@ def main(argv=None):
     parser.add_argument("--login-period", type=float, default=1.0)
     parser.add_argument("--return-period", type=float, default=1.0)
     parser.add_argument("--logout-period", type=float, default=1.0)
-    parser.add_argument("--stabilize-seconds", type=float, default=60.0)
+    parser.add_argument("--warmup-seconds", type=float, default=60.0,
+                        help="il riscaldamento a popolazione piena, fuori dalla misura")
+    parser.add_argument("--login-attempts-max", type=int, default=3,
+                        help="quanti tentativi per ogni login, connessione nuova ogni volta")
+    parser.add_argument("--login-retry-seconds", type=float, default=2.0)
     parser.add_argument("--measure-seconds", type=float, default=120.0)
     parser.add_argument("--pause-seconds", type=float, default=60.0)
     parser.add_argument("--baseline-seconds", type=float, default=60.0)
@@ -297,9 +312,10 @@ def main(argv=None):
     parser.add_argument("--drain-timeout", type=float, default=120.0)
     parser.add_argument("--observe-seconds", type=float, default=120.0)
     parser.add_argument("--admission-p95-ms", type=float, default=1500.0)
-    parser.add_argument("--admission-consecutive", type=int, default=15)
-    parser.add_argument("--admission-window", type=float, default=10.0)
-    parser.add_argument("--admission-min-samples", type=int, default=30)
+    parser.add_argument("--admission-consecutive", type=int, default=15,
+                        help="quanti secondi consecutivi oltre soglia chiudono la porta")
+    parser.add_argument("--admission-min-samples", type=int, default=5,
+                        help="sotto questo numero di chiamate il secondo non porta verdetto")
     arguments = parser.parse_args(argv)
     CyclePlan(arguments).write()
     return 0

@@ -18,33 +18,32 @@ from a stack that ran out of memory, so the two never share a counter, a file or
 a flag.
 
 WHAT IS OBSERVED, and what is excluded on purpose. Only real application calls
-enter the window: the guard is fed by the load engine's completed calls, and the
+enter a bucket: the guard is fed by the load engine's completed calls, and the
 driver's own traffic — logins, logouts, the census, the page-class-cache
 certification, the orchestration reads — never passes through there. A guard that
 watched the census would be watching the instrument.
 
-THE CONDITION, and why each part of it exists:
+ONE SECOND, ONE BUCKET, AND THE BUCKETS DO NOT OVERLAP. Each completed call is
+filed under the whole second in which it completed. A bucket is judged once, when
+it can no longer receive calls, and then thrown away. Fifteen consecutive bad
+buckets are therefore fifteen consecutive BAD SECONDS — no more and no less.
 
-- the p95 of the calls COMPLETED in the last ten seconds, recomputed once a
-  second. A rolling window, not a cumulative one: a cumulative p95 keeps a memory
-  of the whole run and would take minutes to react.
-- strictly above the limit. Equal is not a breach.
-- for fifteen consecutive evaluations. One spike does not close the door, and
-  neither does a shorter sequence: the counter resets on the first evaluation that
-  comes back inside the limit.
-- with at least a minimum number of samples in the window. Under the planned load
-  ten seconds hold hundreds of calls, so the minimum only matters at the very
-  beginning of a ramp, where a p95 over three requests would be noise. An
-  evaluation without enough samples is neither a breach nor a reset: the counter
-  is left where it was, because the window simply was not readable.
+This replaced a rolling ten-second window, which was wrong for this decision and
+measurably so: one slow second stayed inside a rolling window for ten
+evaluations, so about five seconds of real slowness already produced fifteen
+consecutive breaches. "Fifteen evaluations" and "fifteen seconds" were not the
+same thing. With non-overlapping buckets they are.
 
-HOW MANY SECONDS OF SLOWNESS THAT REALLY IS, measured on the guard itself and not
-inferred: the window is mobile, so one slow second keeps breaching for the ten
-evaluations it stays inside it. Fifteen consecutive breaches therefore need about
-FIVE consecutive slow seconds, not fifteen. Three slow seconds produce twelve
-breaches and the door stays open; one slow second produces ten. Reading "fifteen
-evaluations" as "fifteen seconds of bad latency" would overstate what the guard
-tolerates, so the figure is written here rather than left to be derived.
+THE CONDITION, part by part:
+
+- the p95 of the calls filed in ONE whole second;
+- strictly above the limit. Equal is not a breach;
+- a bucket that is not strictly above the limit RESETS the count to zero;
+- a bucket holding fewer than the minimum number of samples also resets it: a p95
+  over three requests is noise, and a second with no traffic at all — the
+  observation phase, the gap between windows — must not carry a verdict forward;
+- every whole second is judged, including the ones with no calls, so a gap breaks
+  a sequence instead of being skipped over.
 
 The event is written the moment it fires, before anything else is done with it: a
 run killed one second later must still leave the fact on disk.
@@ -56,23 +55,23 @@ import time
 
 
 class AdmissionGuard(threading.Thread):
-    """The rolling p95 of application calls, and the door it closes once."""
+    """One bucket per second, and the door it closes once."""
 
     def __init__(self, settings, event_path, context_source, clock=time.time):
         super().__init__(daemon=True, name="admission_guard")
         self.limit_ms = float(settings["p95_limit_ms"])
-        self.needed = int(settings["consecutive_evaluations"])
-        self.window_seconds = float(settings["window_seconds"])
+        self.needed = int(settings["consecutive_buckets"])
         self.minimum_samples = int(settings["minimum_samples"])
         self.event_path = event_path
         self.context_source = context_source
         self.clock = clock
         self.lock = threading.Lock()
-        self.samples = []
+        self.buckets = {}
+        self.next_bucket = None
         self.consecutive = 0
-        self.evaluations = 0
-        self.breaches = 0
-        self.unreadable = 0
+        self.judged = 0
+        self.bad = 0
+        self.thin = 0
         self.peak_consecutive = 0
         self.closed = threading.Event()
         self.finished = threading.Event()
@@ -81,9 +80,10 @@ class AdmissionGuard(threading.Thread):
 
     # ------------------------------------------------------------------ ingresso
     def record_latency(self, completed_at, latency_ms):
-        """One completed application call. Called from every user thread."""
+        """One completed application call, filed under its whole second."""
+        index = int(completed_at)
         with self.lock:
-            self.samples.append((completed_at, latency_ms))
+            self.buckets.setdefault(index, []).append(latency_ms)
 
     @property
     def admission_open(self):
@@ -91,41 +91,33 @@ class AdmissionGuard(threading.Thread):
         return not self.closed.is_set()
 
     # ------------------------------------------------------------------ giudizio
-    def window_latencies(self, now):
-        """The latencies completed inside the window, sorted. Older ones dropped."""
-        floor = now - self.window_seconds
-        with self.lock:
-            self.samples = [pair for pair in self.samples if pair[0] >= floor]
-            return sorted(latency for _, latency in self.samples)
-
     def percentile(self, values, which):
         """The same index rule the load engine uses, so the two agree."""
         if not values:
             return None
-        index = max(0, min(len(values) - 1, int(len(values) * which / 100.0) - 1))
-        return round(values[index], 4)
+        ordered = sorted(values)
+        index = max(0, min(len(ordered) - 1, int(len(ordered) * which / 100.0) - 1))
+        return round(ordered[index], 4)
 
-    def evaluate(self, now=None):
-        """One evaluation. Returns the record of what was decided.
+    def take_bucket(self, index):
+        """The latencies of one whole second, removed from the store."""
+        with self.lock:
+            return self.buckets.pop(index, [])
 
-        The door is closed here and nowhere else, so a test can drive the guard
-        one evaluation at a time without a thread and without a clock.
-        """
-        now = self.clock() if now is None else now
-        latencies = self.window_latencies(now)
-        self.evaluations += 1
-        record = {"at": round(now, 3), "samples": len(latencies),
+    def judge_bucket(self, index):
+        """One second judged. Returns its record; closes the door if it is time."""
+        latencies = self.take_bucket(index)
+        self.judged += 1
+        record = {"bucket": index, "samples": len(latencies),
                   "p95_ms": self.percentile(latencies, 95)}
         if len(latencies) < self.minimum_samples:
-            # Finestra non leggibile: non e' una violazione e non azzera il
-            # conteggio. Lasciarlo dov'e' e' l'unica lettura onesta.
-            self.unreadable += 1
-            record.update(verdict="illeggibile", consecutive=self.consecutive)
-            self.history.append(record)
-            return record
-        if record["p95_ms"] > self.limit_ms:
+            # Un secondo con pochi campioni non porta un verdetto: azzera.
+            self.thin += 1
+            self.consecutive = 0
+            record.update(verdict="pochi campioni", consecutive=0)
+        elif record["p95_ms"] > self.limit_ms:
+            self.bad += 1
             self.consecutive += 1
-            self.breaches += 1
             self.peak_consecutive = max(self.peak_consecutive, self.consecutive)
             record.update(verdict="oltre", consecutive=self.consecutive)
             if self.consecutive >= self.needed and not self.closed.is_set():
@@ -137,19 +129,36 @@ class AdmissionGuard(threading.Thread):
         self.history.append(record)
         return record
 
+    def judge_closed_buckets(self, now):
+        """Judge every whole second that can no longer receive a call.
+
+        A call completing at 12.9 is filed under 12, so at 13.0 the bucket 12 is
+        closed: nothing can still land in it. Every index is judged in order,
+        including the ones nobody wrote to, because a second without traffic has
+        to break a sequence rather than be stepped over.
+        """
+        last_closed = int(now) - 1
+        if self.next_bucket is None:
+            self.next_bucket = last_closed + 1
+            return []
+        judged = []
+        while self.next_bucket <= last_closed:
+            judged.append(self.judge_bucket(self.next_bucket))
+            self.next_bucket += 1
+        return judged
+
     def close_admission(self, record, latencies):
         """The door closes once, the event is written at once, and it never reopens."""
         context = self.context_source() or {}
         self.event = {
             "event": "ADMISSION_STOP",
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "epoch": record["at"],
-            "reason": (f"p95 mobile > {self.limit_ms:.0f} ms per "
-                       f"{self.needed} valutazioni consecutive"),
-            "window_seconds": self.window_seconds,
+            "bucket": record["bucket"],
+            "reason": (f"p95 > {self.limit_ms:.0f} ms per {self.needed} secondi "
+                       f"consecutivi, bucket non sovrapposti di un secondo"),
             "p95_limit_ms": self.limit_ms,
-            "consecutive_evaluations": self.consecutive,
-            "samples_in_window": len(latencies),
+            "consecutive_buckets": self.consecutive,
+            "samples_in_bucket": len(latencies),
             "p50_ms": self.percentile(latencies, 50),
             "p95_ms": self.percentile(latencies, 95),
             "p99_ms": self.percentile(latencies, 99),
@@ -167,10 +176,10 @@ class AdmissionGuard(threading.Thread):
 
     # ------------------------------------------------------------------ il ciclo
     def run(self):
-        """One evaluation a second, until the driver says it is done."""
+        """One pass a second: judge whatever seconds have closed since the last."""
         while not self.finished.is_set():
             started = self.clock()
-            self.evaluate(started)
+            self.judge_closed_buckets(started)
             self.finished.wait(max(0.0, 1.0 - (self.clock() - started)))
 
     def write(self):
@@ -185,12 +194,12 @@ class AdmissionGuard(threading.Thread):
             "admission_stop": self.closed.is_set(),
             "event": self.event,
             "p95_limit_ms": self.limit_ms,
-            "consecutive_needed": self.needed,
-            "window_seconds": self.window_seconds,
+            "consecutive_buckets_needed": self.needed,
+            "bucket_seconds": 1.0,
             "minimum_samples": self.minimum_samples,
-            "evaluations": self.evaluations,
-            "evaluations_over_limit": self.breaches,
-            "evaluations_unreadable": self.unreadable,
+            "buckets_judged": self.judged,
+            "buckets_over_limit": self.bad,
+            "buckets_too_thin": self.thin,
             "longest_consecutive_run": self.peak_consecutive,
-            "history": self.history[-600:],
+            "history": self.history[-900:],
         }

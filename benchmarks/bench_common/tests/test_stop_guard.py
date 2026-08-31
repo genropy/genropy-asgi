@@ -41,6 +41,22 @@ def check(label, got, want):
         failures.append(label)
 
 
+def wait_until(predicate, label, timeout=15.0, step=0.02):
+    """Poll a condition up to a deadline. Never waits forever, never sleeps blind.
+
+    Returns True when the condition held. On a timeout it returns False and the
+    caller reports what was still not true, so a failure names the condition
+    instead of a number of milliseconds that happened not to be enough.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(step)
+    print(f"  [ATTESA SCADUTA dopo {timeout:.0f}s] {label}")
+    return False
+
+
 def check_raises(label, exception, call):
     try:
         call()
@@ -81,16 +97,33 @@ def write_gauges(pid=4242, current=100 * 1048576, limit=2 * 1073741824,
     os.makedirs(root, exist_ok=True)
     counters = {"low": 0, "high": 0, "max": 0, "oom": 0, "oom_kill": 0, "oom_group_kill": 0}
     counters.update(events or {})
-    pairs = (("memory.current", str(current)),
+    pairs = [("memory.current", str(current)),
              ("memory.max", "max" if limit is None else str(limit)),
-             ("memory.peak", str(peak if peak is not None else current)))
+             ("memory.peak", str(peak if peak is not None else current)),
+             ("memory.events", "".join(f"{n} {v}\n" for n, v in counters.items()))]
     for name, value in pairs:
-        with open(os.path.join(root, name), "w") as handle:
-            handle.write(value + "\n")
-    with open(os.path.join(root, "memory.events"), "w") as handle:
-        for name, value in counters.items():
-            handle.write(f"{name} {value}\n")
+        write_atomically(os.path.join(root, name), value)
     return root
+
+
+def write_atomically(path, value):
+    """Replace a gauge file in one step, never leaving it empty.
+
+    The kernel never shows a half-written gauge, so a fixture must not either.
+    ``open(path, "w")`` truncates first: a reader arriving between the truncate
+    and the write sees an empty file, and the guard — correctly — raises
+    ``Unreadable`` rather than inventing a zero. That killed the guard thread in
+    six runs out of eight on Linux, where the guard samples twenty times a second
+    while this function rewrites the files. The temporary file plus ``os.replace``
+    makes the swap atomic, so the race cannot happen and the test measures the
+    guard instead of the fixture.
+    """
+    if not value.endswith("\n"):
+        value += "\n"
+    temporary = path + ".nuovo"
+    with open(temporary, "w") as handle:
+        handle.write(value)
+    os.replace(temporary, path)
 
 
 def cgroup_for(pid=4242):
@@ -202,19 +235,20 @@ try:
                         threshold_percent=80.0, sample_seconds=0.05)
     guard.read_baseline()
     guard.start()
-    time.sleep(0.2)
+    wait_until(lambda: len(guard.samples) >= 1, "il guardiano ha preso un campione")
+    check("il guardiano campiona appena parte", len(guard.samples) >= 1, True)
     write_gauges(current=900 * 1048576, limit=1000 * 1048576)
-    for _ in range(60):
-        if flag.stopped:
-            break
-        time.sleep(0.05)
+    wait_until(lambda: flag.stopped, "la bandiera si e' alzata")
     check("il ciclo chiede lo stop da se'", flag.stopped, True)
+    check("e il thread e' vivo, non morto su una lettura", guard.error, None)
     asked_rows = len(guard.samples)
-    time.sleep(0.3)
+    wait_until(lambda: len(guard.samples) > asked_rows,
+               f"i campioni sono cresciuti oltre {asked_rows}")
     check("dopo aver chiesto CONTINUA a campionare", len(guard.samples) > asked_rows, True)
     guard.driver_finished.set()
-    guard.join(timeout=5)
+    guard.join(timeout=15)
     check("si ferma quando il driver dichiara di aver finito", guard.is_alive(), False)
+    check("e non e' morto per un errore", guard.error, None)
 
     print("\n== il controllo finale, sempre, contro la baseline ==")
     write_gauges(current=100 * 1048576, limit=1000 * 1048576, events={"oom": 3})
