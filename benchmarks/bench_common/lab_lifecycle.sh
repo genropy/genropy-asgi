@@ -135,19 +135,35 @@ lab_wait_for_load() {
 
 # ------------------------------------------------------------------ orders log
 
+# La runtime del laboratorio vista da dentro il container. Il compose la monta
+# li' con un bind: la stessa directory ha due nomi, uno per lato.
+LAB_RUNTIME_IN_CONTAINER=/lab/runtime
+
 lab_orders_paths() {
-  # Decide i due path del journal PRIMA che il bridge nasca, e li esporta.
-  # Il file umano e il JSONL delle decisioni nascono col nome finale: nessun mv.
+  # Decide i path del journal PRIMA che il bridge nasca, in DUE namespace.
+  #
+  # Lo stesso file ha due nomi, e confonderli e' un errore che si paga a caro
+  # prezzo: il commander apre il path che riceve, e se quel path e' quello
+  # dell'host il file non esiste dentro il container. L'apertura fallisce dentro
+  # ``on_startup``, il pool non nasce, e il census risponde 500 per tutta la
+  # corsa — che e' esattamente come e' morto lo smoke del 2026-08-31.
+  #
+  # - GNR_ASGI_ORCH_LOG e' il path del CONTAINER: lo legge il commander, che gira
+  #   dentro. Nasce col nome finale, e nessun mv lo tocca mai.
+  # - LAB_ORDERS_LOG e LAB_ORDERS_DECISIONS sono i path dell'HOST: li usano il
+  #   runner per leggere e archiviare, e il driver come argomento --journal,
+  #   perche' il driver gira sull'host.
   local runtime="$1" prefix="$2"
-  export GNR_ASGI_ORCH_LOG="$runtime/${prefix}_orders.log"
-  LAB_ORDERS_LOG="$GNR_ASGI_ORCH_LOG"
-  LAB_ORDERS_DECISIONS="${GNR_ASGI_ORCH_LOG%.log}.decisions.jsonl"
+  export GNR_ASGI_ORCH_LOG="$LAB_RUNTIME_IN_CONTAINER/${prefix}_orders.log"
+  LAB_ORDERS_LOG="$runtime/${prefix}_orders.log"
+  LAB_ORDERS_DECISIONS="$runtime/${prefix}_orders.decisions.jsonl"
   if [ -e "$LAB_ORDERS_LOG" ] || [ -e "$LAB_ORDERS_DECISIONS" ]; then
     lab_log "STOP: un journal con questo prefisso esiste gia': $LAB_ORDERS_LOG"
     return 9
   fi
-  lab_log "journal della corsa: $LAB_ORDERS_LOG"
-  lab_log "decisioni della corsa: $LAB_ORDERS_DECISIONS"
+  lab_log "journal, nel container: $GNR_ASGI_ORCH_LOG"
+  lab_log "journal, sull'host:    $LAB_ORDERS_LOG"
+  lab_log "decisioni, sull'host:  $LAB_ORDERS_DECISIONS"
   return 0
 }
 

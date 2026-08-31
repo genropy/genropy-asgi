@@ -44,16 +44,48 @@ calls () { wc -l < "$FAKE_DOCKER_LOG" | tr -d ' '; }
 
 . "$HERE/../lab_lifecycle.sh"
 
-echo "== il journal nasce col nome finale: nessun rinomina =="
+echo "== il journal: due namespace dello stesso file, host e container =="
+# Lo smoke del 2026-08-31 e' morto perche' al container era passato il path
+# dell'host: il commander non trovava il file, on_startup sollevava, e il pool
+# non nasceva. Questi controlli tengono separati i due nomi.
 if lab_orders_paths "$SANDBOX/runtime" "prova" >/dev/null; then
-  report 0 "i due path sono decisi prima del container"
+  report 0 "i path sono decisi prima del container"
 else
-  report 1 "i due path sono decisi prima del container"
+  report 1 "i path sono decisi prima del container"
 fi
-[ "$GNR_ASGI_ORCH_LOG" = "$SANDBOX/runtime/prova_orders.log" ]
-report $? "GNR_ASGI_ORCH_LOG porta il prefisso della corsa" "$GNR_ASGI_ORCH_LOG"
+[ "$GNR_ASGI_ORCH_LOG" = "/lab/runtime/prova_orders.log" ]
+report $? "GNR_ASGI_ORCH_LOG e' il path DEL CONTAINER" "$GNR_ASGI_ORCH_LOG"
+case "$GNR_ASGI_ORCH_LOG" in
+  "$SANDBOX"*) report 1 "e non contiene la directory dell'host" "$GNR_ASGI_ORCH_LOG" ;;
+  *) report 0 "e non contiene la directory dell'host" ;;
+esac
+[ "$LAB_ORDERS_LOG" = "$SANDBOX/runtime/prova_orders.log" ]
+report $? "LAB_ORDERS_LOG e' il path DELL'HOST" "$LAB_ORDERS_LOG"
 [ "$LAB_ORDERS_DECISIONS" = "$SANDBOX/runtime/prova_orders.decisions.jsonl" ]
-report $? "il JSONL delle decisioni e' il fratello del log umano" "$LAB_ORDERS_DECISIONS"
+report $? "LAB_ORDERS_DECISIONS e' il path DELL'HOST" "$LAB_ORDERS_DECISIONS"
+[ "$(basename "$GNR_ASGI_ORCH_LOG")" = "$(basename "$LAB_ORDERS_LOG")" ]
+report $? "i due nomi indicano lo stesso file attraverso il bind mount" \
+  "$(basename "$GNR_ASGI_ORCH_LOG")"
+[ "$(basename "${GNR_ASGI_ORCH_LOG%.log}.decisions.jsonl")" = "$(basename "$LAB_ORDERS_DECISIONS")" ]
+report $? "e cosi' il JSONL delle decisioni"
+# Il driver gira sull'host, quindi --journal deve portargli il path dell'host.
+for runner in "$HERE/../../l120_comparison/run_compare.sh" \
+              "$HERE/../../population_freeze/run_population.sh"; do
+  grep -q -- '--journal \$LAB_ORDERS_DECISIONS' "$runner"
+  report $? "$(basename "$runner") passa al driver il path host del journal"
+  grep -q -- '--journal \$GNR_ASGI_ORCH_LOG' "$runner" && \
+    report 1 "  e non quello del container" "lo passa" || \
+    report 0 "  e non quello del container"
+done
+# L'override consegna al container la variabile: sostituendola, il render non
+# deve contenere una sola volta la directory dell'host.
+OVERRIDE="$HERE/../../l120_comparison/overrides/override_bridge_w4.yaml"
+RESO="$(sed "s|\${GNR_ASGI_ORCH_LOG:?}|$GNR_ASGI_ORCH_LOG|" "$OVERRIDE")"
+printf '%s' "$RESO" | grep -q "GNR_ASGI_ORCH_LOG: /lab/runtime/prova_orders.log"
+report $? "il render dell'override porta il path del container"
+printf '%s' "$RESO" | grep -q "GNR_ASGI_ORCH_LOG: $SANDBOX" && \
+  report 1 "e mai quello dell'host" "lo porta" || \
+  report 0 "e mai quello dell'host"
 # Il grep guarda le righe ESEGUIBILI, non i commenti: il vecchio schema
 # `mv orders.log` e' citato nell'intestazione proprio per dire che non si usa.
 grep -vE "^\s*#" "$HERE/../lab_lifecycle.sh" | grep -qE "(^|[^a-z])mv " && \
