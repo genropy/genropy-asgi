@@ -1,0 +1,26 @@
+# La gamba bridge del confronto L120: quattro worker, dodici utenti ciascuno.
+#
+# Le variabili le esporta il runner, non il file .env:
+#   L120_DIR                 la directory di questo scenario, per montare la recipe
+#   L120_RUNTIME_DIR         la runtime del laboratorio, montata su /lab/runtime
+#   GNR_ASGI_ORCH_LOG        il path del journal, deciso PRIMA che il container nasca
+#   L120_MEM_LIMIT           il limite di memoria, uguale alle due gambe
+#
+# cpus e mem_limit sono ridichiarati qui, anche se l'anchor del compose porta
+# gia' gli stessi valori: una corsa deve dire da se' con quali limiti e' stata
+# misurata, senza che si debba andare a leggere un altro file.
+services:
+  bridge:
+    cpus: 4
+    mem_limit: ${L120_MEM_LIMIT:-2g}
+    environment:
+      GNR_ASGI_POOL_RECIPE: "/lab/configs/bridge_w4_recipe.py"
+      GNR_ASGI_ORCH_LOG: ${GNR_ASGI_ORCH_LOG:?}
+      # La porta di lettura della certificazione della page-class cache. Montare
+      # la console non aggiunge nulla al percorso misurato: il demux devia
+      # _console sul primo segmento, prima del sito.
+      GNR_ASGI_CONSOLE: ${GNR_ASGI_CONSOLE:-1}
+      PYTHONPATH: "/src/genro-asgi/src:/src/genropy-asgi/src"
+    volumes:
+      - ${L120_DIR:?}/bridge_w4_recipe.py:/lab/configs/bridge_w4_recipe.py:ro
+      - ${L120_RUNTIME_DIR:?}:/lab/runtime

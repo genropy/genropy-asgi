@@ -1,0 +1,60 @@
+{
+  "kind": "population_freeze_plans_spec",
+  "generator": "make_population_trace.py",
+  "note": "I piani NON sono versionati: si rigenerano identici da questa specifica. Qui stanno il seed, gli argomenti esatti e l'hash atteso. make_plans.sh genera ogni piano UNA VOLTA per campagna e confronta l'hash: un hash diverso ferma la campagna.",
+  "depends_on": [
+    "accounts/load_users.txt",
+    "../session_capture.jsonl"
+  ],
+  "plans": [
+    {
+      "name": "population_full.json",
+      "role": "la prova completa: 2000 utenti, working set 80, freeze a 5 minuti",
+      "seed": 20260831,
+      "args": [],
+      "users": 2000,
+      "working_set": 80,
+      "sha256": "310a1b672a7d6d8b54fc599732f3485a6dd180512bec49028f7cdeec8fe9cbb2"
+    },
+    {
+      "name": "population_pilot.json",
+      "role": "il pilot: 200 utenti, working set 80, gate umano prima della piena",
+      "seed": 20260831,
+      "args": [
+        "--users", "200",
+        "--working-set", "80",
+        "--work-seconds", "300",
+        "--rotate-seconds", "300",
+        "--rest2-seconds", "420",
+        "--observe-seconds", "180"
+      ],
+      "users": 200,
+      "working_set": 80,
+      "sha256": "ff475b4e5fb0082a1affb6df5680a96367115ad62fce94b43ac2d299cb131a69"
+    },
+    {
+      "name": "population_smoke.json",
+      "role": "lo smoke: 20 utenti, working set 5, freeze a 1 minuto con riposo di 150s",
+      "seed": 20260831,
+      "args": [
+        "--users", "20",
+        "--working-set", "5",
+        "--freeze-minutes", "1",
+        "--rest-seconds", "150",
+        "--wake-spread", "30",
+        "--work-seconds", "60",
+        "--rotate-seconds", "60",
+        "--swap-every", "30",
+        "--swap-count", "1",
+        "--rest2-seconds", "150",
+        "--observe-seconds", "60",
+        "--batch", "10",
+        "--batch-settle", "5",
+        "--bursts", "20"
+      ],
+      "users": 20,
+      "working_set": 5,
+      "sha256": "c29c52ea77e1475cc31488f687fcab950e9ad4f2ba05e8fb1ff51a05818597d5"
+    }
+  ]
+}

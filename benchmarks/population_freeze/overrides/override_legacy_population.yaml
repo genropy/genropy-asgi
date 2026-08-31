@@ -1,0 +1,16 @@
+# La gamba legacy della prova di popolazione: nessun freeze, per costruzione.
+#
+# Il legacy non ha la capability e non la si simula: duemila utenti autenticati
+# restano tutti in memoria, e quello e' il numero che la prova vuole leggere.
+#
+# Stessa popolazione, stesso working set, stessa rotazione, stessi tempi — li
+# decide il piano, non questo file. Qui ci sono solo i limiti di risorsa, che
+# devono essere gli stessi della gamba bridge, e i worker di Gunicorn.
+services:
+  legacy:
+    cpus: 4
+    mem_limit: ${POP_MEM_LIMIT:?}
+    environment:
+      LEGACY_WORKERS: ${LEGACY_WORKERS:?}
+    volumes:
+      - ${POP_RUNTIME_DIR:?}:/lab/runtime

@@ -1,0 +1,25 @@
+# La gamba bridge della prova di popolazione: il freeze acceso.
+#
+# Variabili esportate dal runner, tutte OBBLIGATORIE tranne dove indicato:
+#   POP_DIR                          la directory dello scenario
+#   POP_RUNTIME_DIR                  la runtime del laboratorio, su /lab/runtime
+#   GNR_ASGI_ORCH_LOG                il journal, deciso prima che il container nasca
+#   GNR_ASGI_IDLE_FREEZE_MINUTES     il freeze. SENZA, il core non congela NESSUNO
+#   GNR_ASGI_FROZEN_USERS_PATH       dove il deposito scrive, per misurarne la taglia
+#   POP_MEM_LIMIT                    il limite di memoria, uguale alle due gambe
+#
+# POP_MEM_LIMIT non ha default: il titolare deve dichiararlo. Una prova da
+# duemila utenti con un limite scelto in silenzio non e' una misura, e' un caso.
+services:
+  bridge:
+    cpus: 4
+    mem_limit: ${POP_MEM_LIMIT:?}
+    environment:
+      GNR_ASGI_POOL_RECIPE: "/lab/configs/freeze_recipe.py"
+      GNR_ASGI_ORCH_LOG: ${GNR_ASGI_ORCH_LOG:?}
+      GNR_ASGI_IDLE_FREEZE_MINUTES: ${GNR_ASGI_IDLE_FREEZE_MINUTES:?}
+      GNR_ASGI_FROZEN_USERS_PATH: ${GNR_ASGI_FROZEN_USERS_PATH:?}
+      PYTHONPATH: "/src/genro-asgi/src:/src/genropy-asgi/src"
+    volumes:
+      - ${POP_DIR:?}/freeze_recipe.py:/lab/configs/freeze_recipe.py:ro
+      - ${POP_RUNTIME_DIR:?}:/lab/runtime

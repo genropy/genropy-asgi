@@ -1,0 +1,5 @@
+# I piani si rigenerano da plans.spec.json: pesano megabyte e non si versionano.
+traces/*.json
+traces/*.sha256
+# I risultati di una corsa non entrano mai in un commit.
+runs/

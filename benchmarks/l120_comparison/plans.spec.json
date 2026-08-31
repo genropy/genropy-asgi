@@ -1,0 +1,37 @@
+{
+  "kind": "l120_comparison_plans_spec",
+  "generator": "make_trace.py",
+  "note": "I piani NON sono versionati: pesano megabyte e si rigenerano identici da questa specifica. Qui stanno il seed, gli argomenti esatti e l'hash atteso. make_plans.sh genera ogni piano UNA VOLTA per campagna e confronta l'hash con quello dichiarato: un hash diverso significa che il generatore o le sue dipendenze sono cambiati, e la campagna si ferma.",
+  "depends_on": [
+    "../session_capture.jsonl",
+    "../usernames_all.txt"
+  ],
+  "plans": [
+    {
+      "name": "l120_plan.json",
+      "role": "il confronto: 48 utenti, warmup 30s a 40/s, stabilizzazione 30s a 120/s, misura 120s a 120/s",
+      "seed": 20260831,
+      "args": [],
+      "calls_total": 19200,
+      "sha256": "acf55a5eb91c4766086259b846b177b69d0d3186bd6dd2d485910fc7061d2350"
+    },
+    {
+      "name": "l120_smoke_plan.json",
+      "role": "lo smoke: la stessa popolazione di 48 utenti e la stessa distribuzione attesa, finestre corte",
+      "seed": 20260831,
+      "args": [
+        "--users", "48",
+        "--warmup-rate", "10",
+        "--warmup-seconds", "10",
+        "--stabilize-seconds", "10",
+        "--measure-seconds", "20",
+        "--level-rate", "20",
+        "--baseline-seconds", "10",
+        "--login-period", "2",
+        "--observe-seconds", "20"
+      ],
+      "calls_total": 700,
+      "sha256": "6bc4a532aba60c68cb101fc351100a1c020a62849e9ad6b9a72aa10971907c28"
+    }
+  ]
+}

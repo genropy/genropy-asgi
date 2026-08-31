@@ -1,0 +1,20 @@
+# La gamba legacy del confronto L120: gnrdaemon piu' Gunicorn a quattro worker.
+#
+# La riga di Gunicorn e' quella dell'entrypoint tracciato, che non viene toccato:
+#   python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 \
+#       -w "${LEGACY_WORKERS:-1}" -k gthread --threads 16
+# La worker class gthread e i 16 thread sono cablati LI'. Questo override decide
+# soltanto quanti worker, e i limiti di risorsa.
+#
+# TRAPPOLA PAGATA: fuori dal .env il default di LEGACY_WORKERS e' 1. Una corsa
+# comparativa che non lo imposta misura un Gunicorn con un worker solo. Qui e'
+# obbligatorio, cosi' un valore mancante ferma il compose invece di falsare la
+# misura.
+services:
+  legacy:
+    cpus: 4
+    mem_limit: ${L120_MEM_LIMIT:-2g}
+    environment:
+      LEGACY_WORKERS: ${LEGACY_WORKERS:?}
+    volumes:
+      - ${L120_RUNTIME_DIR:?}:/lab/runtime
