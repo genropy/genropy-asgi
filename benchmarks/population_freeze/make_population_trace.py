@@ -301,7 +301,12 @@ def main(argv=None):
     parser.add_argument("--admission-min-ratio", type=float, default=0.25,
                         help="frazione degli utenti attivi che deve comparire in un "
                              "bucket da un secondo perche' porti un verdetto")
-    parser.add_argument("--generator-started-min", type=float, default=0.99)
+    parser.add_argument("--generator-started-min", type=float, default=0.80,
+                        help="PAVIMENTO largo, non una soglia: il rapporto delle "
+                             "avviate ha un errore di bordo di qualche punto, e un "
+                             "valore vicino a 1 ci cadrebbe dentro. Serve solo a "
+                             "cogliere residenti morti, non un driver in ritardo — "
+                             "quello lo coglie la lateness")
     parser.add_argument("--generator-drift-limit", type=float, default=5.0)
     parser.add_argument("--generator-server-fast-ms", type=float, default=500.0)
     parser.add_argument("--min-think", type=float, default=10.0)

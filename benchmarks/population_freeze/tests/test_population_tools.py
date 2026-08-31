@@ -454,33 +454,51 @@ with tempfile.TemporaryDirectory() as sandbox:
                    "generator", "login_attempts_max", "login_retry_seconds"):
         check(f"    protocol.{chiave}", chiave in plan["protocol"], True)
 
-print("\n== il verdetto sul generatore: e' il driver o lo stack? ==")
-RULES = {"started_ratio_min": 0.99, "lateness_drift_limit_s": 5.0,
+print("\n== il verdetto sul generatore: la lateness, non il conteggio ==")
+RULES = {"started_ratio_min": 0.80, "lateness_drift_limit_s": 5.0,
          "server_fast_p95_ms": 500.0}
 
 
-def verdict(started_ratio, drift, p95):
+def verdict(ratio, drift, p95, late_p50=0.0):
     probe = population_probe.PopulationProbe.__new__(population_probe.PopulationProbe)
     probe.protocol = {"generator": RULES}
-    return probe.generator_verdict({"started_ratio": started_ratio,
-                                    "late_drift_s": drift, "p95_ms": p95})
+    return probe.generator_verdict({"started_ratio": ratio, "late_drift_s": drift,
+                                    "p95_ms": p95, "late_p50_s": late_p50})
 
 
-check("tutto avviato, nessuna deriva, server lento: NON e' il generatore",
-      verdict(1.0, 0.1, 1400.0)["limit"], False)
-check("avviato il 95%: e' il generatore",
-      verdict(0.95, 0.0, 100.0)["limit"], True)
-check("e lo dice nel motivo",
-      "sotto il 99%" in verdict(0.95, 0.0, 100.0)["reason"], True)
-check("deriva grande MA server lento: NON e' il generatore",
-      verdict(1.0, 12.0, 1400.0)["limit"], False)
-check("deriva grande e server veloce: E' il generatore",
+print("\n  -- il rumore di bordo NON e' un limite del generatore --")
+# Sono i due numeri veri dello smoke del 2026-08-31, che la regola precedente
+# scambiava per un limite.
+check("98,7% avviate con lateness zero: nessun limite",
+      verdict(0.987, 0.0, 195.0)["limit"], False)
+check("102,0% avviate: nessun limite", verdict(1.020, 0.0, 43.6)["limit"], False)
+check("e nemmeno il 90%", verdict(0.90, 0.0, 100.0)["limit"], False)
+
+print("\n  -- la deriva della lateness con server veloce SI --")
+check("deriva 12s e server a 120ms: e' il generatore",
       verdict(1.0, 12.0, 120.0)["limit"], True)
 check("e lo dice in chiaro",
       "e' il driver, non lo stack" in verdict(1.0, 12.0, 120.0)["reason"], True)
-check("deriva sotto il limite e server veloce: nessun verdetto",
+check("deriva 12s ma server a 1400ms: NON e' il generatore",
+      verdict(1.0, 12.0, 1400.0)["limit"], False)
+check("deriva 2s e server veloce: sotto il limite, nessun verdetto",
       verdict(1.0, 2.0, 120.0)["limit"], False)
-check("esattamente al 99% non e' un limite", verdict(0.99, 0.0, 100.0)["limit"], False)
+check("esattamente al limite non e' oltre", verdict(1.0, 5.0, 120.0)["limit"], False)
+
+print("\n  -- una lateness p50 oltre il limite SI, qualunque cosa faccia il server --")
+check("lateness p50 8s con server lento: e' il generatore",
+      verdict(1.0, 0.0, 1400.0, late_p50=8.0)["limit"], True)
+check("e lo dice", "non tiene il proprio orario" in
+      verdict(1.0, 0.0, 1400.0, late_p50=8.0)["reason"], True)
+check("lateness p50 sotto il limite: no",
+      verdict(1.0, 0.0, 1400.0, late_p50=3.0)["limit"], False)
+
+print("\n  -- il pavimento coglie i residenti morti, non i ritardi --")
+check("60% avviate: sono residenti morti", verdict(0.60, 0.0, 100.0)["limit"], True)
+check("e lo dice", "residenti morti" in verdict(0.60, 0.0, 100.0)["reason"], True)
+check("79% e' sotto il pavimento", verdict(0.79, 0.0, 100.0)["limit"], True)
+check("81% e' sopra", verdict(0.81, 0.0, 100.0)["limit"], False)
+check("un rapporto assente non e' un limite", verdict(None, 0.0, 100.0)["limit"], False)
 
 print("\n== la classificazione: una parola, con una gerarchia dichiarata ==")
 

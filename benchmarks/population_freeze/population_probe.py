@@ -561,26 +561,51 @@ class PopulationProbe:
         return reading
 
     def generator_verdict(self, reading):
-        """Is the limit the stack's or the driver's own? Never guessed.
+        """Is the limit the stack's or the driver's own? Judged on the LATENESS.
 
-        The driver is the suspect when it fails to START the work it planned, or
-        when its own start lateness grows WHILE the server keeps answering fast.
-        A slow server produces slow answers; a driver out of threads produces late
-        starts with fast answers. The two look nothing alike in these numbers.
+        THE RATIO OF STARTED REQUESTS CANNOT CARRY THIS VERDICT, and the smoke of
+        2026-08-31 proved it: a window read 98,7% with a lateness of 0,000 and no
+        drift, and another read 102,0%. Both are boundary noise. ``planned`` is
+        ``active users x wall clock / period`` — an estimate that cannot land exactly
+        on a window edge, and whose error is a couple of per cent either way. A
+        threshold of ninety-nine per cent sits inside that noise, so it fires on
+        arithmetic instead of on the driver.
+        And it cannot be made faithful with this resident: a resident NEVER drops a
+        request. It advances its own due time by exactly one period per call, so a
+        driver in trouble does not start fewer calls — it starts them LATE. The
+        count of started calls is therefore blind to the very thing it was meant to
+        detect.
+        SO THE VERDICT IS THE LATENESS, which measures the thing directly: how far
+        behind its own schedule the driver has fallen. Two ways in:
+        - the lateness has DRIFTED beyond the limit while the server keeps
+          answering fast. A slow server makes slow answers; a driver out of threads
+          makes late starts with fast answers.
+        - the lateness p50 is already beyond the limit at all, whatever the server
+          is doing: a driver a whole limit behind schedule is not measuring a stack.
+        The started ratio stays REPORTED, and keeps one loose floor that noise
+        cannot reach, for the case where residents die outright rather than fall
+        behind.
         """
         rules = self.protocol["generator"]
-        started_short = ((reading["started_ratio"] or 1.0) < rules["started_ratio_min"])
-        drifting = reading["late_drift_s"] > rules["lateness_drift_limit_s"]
+        limit = rules["lateness_drift_limit_s"]
+        drift = reading["late_drift_s"] or 0.0
+        late_p50 = reading["late_p50_s"] or 0.0
         server_fast = ((reading["p95_ms"] or 0) < rules["server_fast_p95_ms"])
-        if started_short:
+        floor = rules["started_ratio_min"]
+        ratio = reading["started_ratio"]
+        if drift > limit and server_fast:
             return {"limit": True, "reason": (
-                f"avviato {(reading['started_ratio'] or 0) * 100:.1f}% delle richieste "
-                f"pianificate, sotto il {rules['started_ratio_min'] * 100:.0f}%")}
-        if drifting and server_fast:
-            return {"limit": True, "reason": (
-                f"la lateness del generatore deriva di {reading['late_drift_s']:+.1f}s "
-                f"mentre il server risponde in p95 {reading['p95_ms']} ms, sotto "
+                f"la lateness del generatore deriva di {drift:+.1f}s mentre il server "
+                f"risponde in p95 {reading['p95_ms']} ms, sotto "
                 f"{rules['server_fast_p95_ms']:.0f}: e' il driver, non lo stack")}
+        if late_p50 > limit:
+            return {"limit": True, "reason": (
+                f"la lateness p50 del generatore e' {late_p50:.1f}s, oltre il limite "
+                f"di {limit:.1f}s: il driver non tiene il proprio orario")}
+        if ratio is not None and ratio < floor:
+            return {"limit": True, "reason": (
+                f"avviato {ratio * 100:.1f}% delle richieste stimate, sotto il "
+                f"{floor * 100:.0f}%: non e' un errore di bordo, sono residenti morti")}
         return {"limit": False, "reason": None}
 
     def baseline(self):

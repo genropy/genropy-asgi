@@ -14,7 +14,7 @@
       "args": [],
       "users": 2000,
       "steps_declared": 42,
-      "sha256": "f4570e42e10c782b355b201c5ff4885bc0e8460eb340f5645ba3ce1a3a815470"
+      "sha256": "b45aa925481972fd10c248ff79e1557a267d644791a4437da9dd6021d912294f"
     },
     {
       "name": "population_pilot.json",
@@ -32,7 +32,7 @@
       ],
       "users": 200,
       "steps_declared": 12,
-      "sha256": "032f1abf8574e6d533e4afc3a352217b48b6998514b3889a1892c353465e6349"
+      "sha256": "fb4d5570eac5fdca54b3d4cce86832527466fbd01995ba0c81123ff56acbf382"
     },
     {
       "name": "population_smoke.json",
@@ -64,7 +64,7 @@
       ],
       "users": 20,
       "steps_declared": 1,
-      "sha256": "19ecbca1147a7d9b168db57e2fb226566590c4d4362a4edafe77086f0eacac26"
+      "sha256": "6f8dcb6fc3add0ec4d9bbe4205e5ccb6cc00addd8d035bd8997dd754ac805863"
     }
   ]
 }
