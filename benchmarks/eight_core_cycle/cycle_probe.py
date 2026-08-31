@@ -348,12 +348,18 @@ class CycleProbe:
             except Exception as failure:                          # noqa: BLE001
                 record.update(exception=repr(failure)[:200], outcome="failed")
             attempts.append(record)
-            if attempt < attempts_max and self.stop_flag.wait(wait, "attesa fra i tentativi"):
+            # ``StopFlag.wait`` torna True quando l'attesa si e' COMPLETATA, e
+            # False quando uno stop l'ha interrotta. Si esce dal ciclo solo nel
+            # secondo caso: un'attesa andata a buon fine e' il permesso di fare
+            # il tentativo successivo, non la ragione per rinunciare.
+            if attempt < attempts_max and not self.stop_flag.wait(
+                    wait, "attesa fra i tentativi"):
                 break
         if logged is None:
             self.login_attempts.extend(attempts)
-            raise InvalidRun(f"{label} ({username}) non e' entrato dopo {attempts_max} "
-                             f"tentativi: {[a.get('status') or a.get('exception') for a in attempts]}")
+            raise InvalidRun(
+                f"{label} ({username}) non e' entrato dopo {len(attempts)} "
+                f"tentativi: {[a.get('status') or a.get('exception') for a in attempts]}")
         # Chi ha fallito PRIMA di un successo e' costo a freddo, non un errore
         # della prova: il nome lo dice, e il conteggio resta separato.
         for record in attempts:

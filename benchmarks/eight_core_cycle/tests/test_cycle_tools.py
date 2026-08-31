@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCENARIO = os.path.abspath(os.path.join(HERE, os.pardir))
@@ -335,6 +336,153 @@ try:
     check("con la sua latenza", engine.return_calls[0]["latency_ms"], 812.5)
     check("e la sua posizione nel rientro", engine.return_calls[0]["return_position"], 3)
     check("il worker che l'ha servita", engine.return_calls[0]["worker"], "pool_0002")
+
+    print("\n== il login si ritenta: l'attesa completata non e' una rinuncia ==")
+
+    class ContaAttese(StopFlag):
+        """A real StopFlag that also counts how many times it was waited on.
+
+        The bug this guards against was a misread return value, so the test must
+        exercise the REAL wait — not a stand-in that returns whatever the test
+        expects. Only the counting is added.
+        """
+
+        def __init__(self):
+            super().__init__()
+            self.waits = 0
+
+        def wait(self, seconds, where):
+            self.waits += 1
+            return super().wait(seconds, where)
+
+    class FintoLogin:
+        """A LoggedUser stand-in that fails the first ``failures`` constructions.
+
+        Each construction is one new connection: the real ``LoggedUser`` builds
+        its own opener and its own ``HTTPConnection``, so counting constructions
+        counts connections.
+        """
+
+        costruzioni = 0
+        falliranno = 0
+
+        def __init__(self, *args, **kwargs):
+            type(self).costruzioni += 1
+            if type(self).costruzioni <= type(self).falliranno:
+                raise urllib.error.HTTPError(
+                    "http://finto/", 500, "INTERNAL SERVER ERROR", {}, None)
+            self.username = args[3] if len(args) > 3 else "ignoto"
+
+        def get_call_form(self, lookup, counter):
+            return {}
+
+    class FintoRunner:
+        avviati = 0
+
+        def __init__(self, engine, label, logged):
+            self.label = label
+            self.user = logged
+            self.pending = 0
+
+        def start(self):
+            type(self).avviati += 1
+
+    def login_probe(flag, failures, retry_seconds=0.05, attempts_max=3):
+        FintoLogin.costruzioni = 0
+        FintoLogin.falliranno = failures
+        FintoRunner.avviati = 0
+        probe = CycleProbe.__new__(CycleProbe)
+        probe.arguments = argparse.Namespace(base="http://finto", password="a")
+        probe.protocol = {"login_attempts_max": attempts_max,
+                          "login_retry_seconds": retry_seconds}
+        probe.accounts = [f"conto.{i}" for i in range(20)]
+        probe.lookups = ["conto.0"]
+        probe.stop_flag = flag
+        probe.login_attempts = []
+        probe.cold_start_errors = 0
+        probe.engine = CycleEngine([], lambda *a: b"", ["x"], flag)
+        return probe
+
+    import cycle_probe as modulo
+    vero_logged, vero_runner = modulo.LoggedUser, modulo.UserRunner
+    modulo.LoggedUser, modulo.UserRunner = FintoLogin, FintoRunner
+    try:
+        print("\n  -- 1. il primo tentativo fallisce, il secondo riesce --")
+        flag = ContaAttese()
+        probe = login_probe(flag, failures=1)
+        label = probe.build_user(0, [], [])
+        check("l'utente e' entrato", label, "user_1")
+        check("due tentativi registrati", len(probe.login_attempts), 2)
+        check("due connessioni, una per tentativo", FintoLogin.costruzioni, 2)
+        check("il primo e' classificato cold_start",
+              probe.login_attempts[0]["outcome"], "cold_start")
+        check("con il suo status 500", probe.login_attempts[0]["status"], 500)
+        check("il secondo e' ok", probe.login_attempts[1]["outcome"], "ok")
+        check("un errore a freddo contato", probe.cold_start_errors, 1)
+        check("una sola attesa fra i due tentativi", flag.waits, 1)
+        check("il runner e' partito", FintoRunner.avviati, 1)
+        check("ed e' nel motore, ammesso", "user_1" in probe.engine.calling, True)
+        check("con il suo username per la mappa del census",
+              probe.engine.username_of["user_1"], "conto.0")
+
+        print("\n  -- 2. due tentativi falliscono, il terzo riesce --")
+        flag = ContaAttese()
+        probe = login_probe(flag, failures=2)
+        label = probe.build_user(3, [], [])
+        check("l'utente e' entrato", label, "user_4")
+        check("tre tentativi registrati", len(probe.login_attempts), 3)
+        check("tre connessioni", FintoLogin.costruzioni, 3)
+        check("due eventi cold_start",
+              [a["outcome"] for a in probe.login_attempts],
+              ["cold_start", "cold_start", "ok"])
+        check("due errori a freddo contati", probe.cold_start_errors, 2)
+        check("due attese, una fra ogni coppia", flag.waits, 2)
+
+        print("\n  -- 3. tre tentativi falliscono: l'esecuzione fallisce --")
+        flag = ContaAttese()
+        probe = login_probe(flag, failures=3)
+        try:
+            probe.build_user(5, [], [])
+            check("tre fallimenti devono sollevare", "non ha sollevato", "InvalidRun")
+        except InvalidRun as failure:
+            check("solleva InvalidRun", "non e' entrato" in str(failure), True)
+            check("e dichiara il numero REALE di tentativi",
+                  "dopo 3 tentativi" in str(failure), True)
+        check("tre tentativi registrati comunque", len(probe.login_attempts), 3)
+        check("tre connessioni", FintoLogin.costruzioni, 3)
+        check("nessuno riclassificato cold_start: non c'e' stato un successo",
+              [a["outcome"] for a in probe.login_attempts],
+              ["failed", "failed", "failed"])
+        check("nessun errore a freddo contato", probe.cold_start_errors, 0)
+        check("non e' stato aggiunto al motore", probe.engine.runners, {})
+
+        print("\n  -- 4. il primo fallisce e uno stop interrompe l'attesa --")
+        flag = ContaAttese()
+        flag.ask_stop("prova", "stop chiesto durante l'attesa")
+        probe = login_probe(flag, failures=3)
+        try:
+            probe.build_user(7, [], [])
+            check("deve sollevare", "non ha sollevato", "InvalidRun")
+        except InvalidRun as failure:
+            check("solleva dopo UN solo tentativo",
+                  "dopo 1 tentativi" in str(failure), True)
+        check("un solo tentativo registrato", len(probe.login_attempts), 1)
+        check("una sola connessione: nessun tentativo successivo",
+              FintoLogin.costruzioni, 1)
+        check("l'attesa e' stata chiamata una volta e interrotta", flag.waits, 1)
+
+        print("\n  -- 5. il primo tentativo riesce --")
+        flag = ContaAttese()
+        probe = login_probe(flag, failures=0)
+        label = probe.build_user(9, [], [])
+        check("l'utente e' entrato", label, "user_10")
+        check("un solo tentativo", len(probe.login_attempts), 1)
+        check("una sola connessione", FintoLogin.costruzioni, 1)
+        check("NESSUNA attesa: il successo esce prima", flag.waits, 0)
+        check("nessun evento cold_start", probe.cold_start_errors, 0)
+        check("l'unico tentativo e' ok", probe.login_attempts[0]["outcome"], "ok")
+    finally:
+        modulo.LoggedUser, modulo.UserRunner = vero_logged, vero_runner
 
     print("\n== la mappa utente -> worker traduce le etichette ==")
     probe = CycleProbe.__new__(CycleProbe)
