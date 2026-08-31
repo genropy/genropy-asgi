@@ -8,7 +8,7 @@
 # devono essere gli stessi della gamba bridge, e i worker di Gunicorn.
 services:
   legacy:
-    cpus: 4
+    cpus: 8
     mem_limit: ${POP_MEM_LIMIT:?}
     environment:
       LEGACY_WORKERS: ${LEGACY_WORKERS:?}

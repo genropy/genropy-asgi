@@ -10,16 +10,25 @@ seeded call at run time — exactly WHICH users leave the working set and which
 enter it, at which instant. Legacy and bridge then replay the same file, and the
 two rotations are the same rotation.
 
-The eight phases the plan describes, in order:
+The phases the plan describes, in order:
 
-1. ``populate``  — the users enter, gradually
-2. ``rest``      — silence longer than the freeze window
-3. ``wake``      — the working set is activated, one user at a time
-4. ``work``      — the working set works, with long pauses
-5. ``rotate``    — a few users leave the working set and as many enter
-6. ``rest2``     — silence again
-7. ``logout``    — everybody leaves
-8. ``observe``   — silence, to watch the memory come back
+1. ``populate``    — the users enter, one a second
+2. ``rest``        — silence longer than the freeze window
+3. ``baseline_80`` — the initial working set measured on its own
+4. one STEP per population: ``thaw_N`` (ten users come back, one a second),
+   ``settle_N`` (twenty seconds of quiet), ``measure_N`` (sixty seconds measured)
+5. ``logout``      — everybody leaves
+6. ``observe``     — silence, to watch the memory come back
+
+THE RAMP IS MONOTONIC. A woken user stays awake: the population climbs 80, 90,
+100, … and never comes back down. That is what makes each step a capacity reading
+rather than a rotation — the previous protocol swapped users in and out and kept
+the working set the same size, which measures churn, not capacity.
+
+THE STEPS ARE DRAWN ONCE. Which ten users each group holds, and in which order
+they come back, is written here: legacy and bridge then wake the same identities
+in the same order, and a difference between the two legs cannot be a difference of
+draw.
 
 WHY THE REST IS LONGER THAN THE FREEZE WINDOW, and by that much: the bridge
 checks user activity every twelve beats of five seconds — sixty seconds — and
@@ -124,45 +133,54 @@ class PopulationPlan:
 
     @property
     def working_set(self):
-        """The users woken after the first rest, in the order they are woken."""
+        """The users active from the baseline on, in the order they are woken."""
         labels = [f"user_{number + 1}" for number in range(self.arguments.users)]
         return self.rng.sample(labels, self.arguments.working_set)
 
-    def rotation(self, working_set):
-        """The swaps: who leaves, who enters, at which instant.
+    def ramp(self, working_set):
+        """The steps: which ten users wake at each one, and when.
 
-        Written out rather than drawn at run time, so that the legacy leg and the
-        bridge leg rotate the same identities in the same order. Every swap keeps
-        the working set the same SIZE: as many enter as leave.
+        Drawn once and written out, so the two legs wake the same identities in
+        the same order. The population climbs by ``--group-size`` per step and
+        never falls: a woken user stays awake for every later step.
+
+        The last step is the one that would exceed ``--max-active``, or the one
+        that runs out of idle users — whichever comes first. Nothing here decides
+        where the run actually stops: the guards do that, at run time, and the
+        plan only says how far the steps are allowed to go.
         """
-        active = list(working_set)
         idle = [f"user_{number + 1}" for number in range(self.arguments.users)
                 if f"user_{number + 1}" not in set(working_set)]
         self.rng.shuffle(idle)
-        swaps = []
-        moment = 0.0
-        while moment + self.arguments.swap_every <= self.arguments.rotate_seconds:
-            moment += self.arguments.swap_every
-            count = min(self.arguments.swap_count, len(active), len(idle))
-            if not count:
-                break
-            leaving = [active.pop(self.rng.randrange(len(active))) for _ in range(count)]
-            entering = [idle.pop(0) for _ in range(count)]
-            active.extend(entering)
-            idle.extend(leaving)
-            swaps.append({"at_s": round(moment, 3), "out": leaving, "in": entering})
-        return swaps
+        size = self.arguments.group_size
+        steps, active = [], len(working_set)
+        while active + size <= self.arguments.max_active and len(idle) >= size:
+            group = [idle.pop(0) for _ in range(size)]
+            active += size
+            steps.append({
+                "step": len(steps) + 1,
+                "target_active": active,
+                "wake": group,
+                "wake_gap_s": self.arguments.wake_gap,
+                "thaw_seconds": round(size * self.arguments.wake_gap, 3),
+                "settle_seconds": self.arguments.settle_seconds,
+                "measure_seconds": self.arguments.measure_seconds,
+            })
+        return steps
 
     @property
     def plan(self):
         entries = self.entries
         working_set = self.working_set
-        swaps = self.rotation(working_set)
+        steps = self.ramp(working_set)
         return {
-            "kind": "population_freeze_plan",
+            "kind": "population_ramp_plan",
             "seed": self.arguments.seed,
             "users": self.arguments.users,
             "working_set_size": self.arguments.working_set,
+            "max_active": self.arguments.max_active,
+            "group_size": self.arguments.group_size,
+            "steps_declared": len(steps),
             "protocol": {
                 "arrival_gap_s": self.arguments.arrival_gap,
                 "batch": self.arguments.batch,
@@ -170,13 +188,26 @@ class PopulationPlan:
                 "populate_timeout_s": self.arguments.populate_timeout,
                 "freeze_minutes": self.arguments.freeze_minutes,
                 "rest_seconds": self.arguments.rest_seconds,
-                "wake_spread_s": self.arguments.wake_spread,
-                "work_seconds": self.arguments.work_seconds,
-                "rotate_seconds": self.arguments.rotate_seconds,
-                "swap_every_s": self.arguments.swap_every,
-                "swap_count": self.arguments.swap_count,
-                "rest2_seconds": self.arguments.rest2_seconds,
+                "freeze_deadline_s": self.arguments.freeze_deadline,
+                "baseline_seconds": self.arguments.baseline_seconds,
+                "wake_gap_s": self.arguments.wake_gap,
+                "settle_seconds": self.arguments.settle_seconds,
+                "measure_seconds": self.arguments.measure_seconds,
+                "hold_after_stop_seconds": self.arguments.hold_after_stop,
+                "logout_gap_s": self.arguments.logout_gap,
                 "observe_seconds": self.arguments.observe_seconds,
+                "login_attempts_max": self.arguments.login_attempts_max,
+                "login_retry_seconds": self.arguments.login_retry_seconds,
+                "admission": {
+                    "p95_limit_ms": self.arguments.admission_p95_ms,
+                    "consecutive_buckets": self.arguments.admission_consecutive,
+                    "minimum_samples_ratio": self.arguments.admission_min_ratio,
+                },
+                "generator": {
+                    "started_ratio_min": self.arguments.generator_started_min,
+                    "lateness_drift_limit_s": self.arguments.generator_drift_limit,
+                    "server_fast_p95_ms": self.arguments.generator_server_fast_ms,
+                },
                 "freeze_granularity_note": (
                     "il vertice giudica l'inattivita' ogni 12 battiti da 5s = 60s, "
                     "e la foto del worker e' vecchia fino a 5s: un freeze a N minuti "
@@ -189,7 +220,7 @@ class PopulationPlan:
             },
             "entries": entries,
             "working_set": working_set,
-            "rotation": swaps,
+            "steps": steps,
         }
 
     def write(self):
@@ -215,8 +246,19 @@ class PopulationPlan:
               f"{self.arguments.bursts} per utente")
         print(f"  freeze a {freeze:.0f}s, primo riposo {rest:.0f}s "
               f"(margine {rest - freeze - 65:.0f}s oltre la banda di incertezza)")
-        print(f"  rotazione: {len(plan['rotation'])} scambi da "
-              f"{self.arguments.swap_count} utenti ogni {self.arguments.swap_every:.0f}s")
+        steps = plan["steps"]
+        print(f"  rampa: {len(steps)} gradini da {plan['group_size']} utenti, "
+              f"da {plan['working_set_size']} a "
+              f"{steps[-1]['target_active'] if steps else plan['working_set_size']} attivi "
+              f"(tetto {plan['max_active']})")
+        if steps:
+            durata = sum(s["thaw_seconds"] + s["settle_seconds"] + s["measure_seconds"]
+                         for s in steps)
+            print(f"  ogni gradino: {steps[0]['thaw_seconds']:.0f}s di risveglio + "
+                  f"{steps[0]['settle_seconds']:.0f}s di assestamento + "
+                  f"{steps[0]['measure_seconds']:.0f}s misurati")
+            print(f"  durata della sola rampa: {durata / 60:.0f} minuti")
+            print(f"  primi tre risvegli del gradino 1: {steps[0]['wake'][:3]}")
         print(f"  account: {plan['accounts']['rows']} righe, "
               f"{plan['accounts']['unique']} distinte, sha256 "
               f"{plan['accounts']['sha256'][:16]}...")
@@ -238,13 +280,30 @@ def main(argv=None):
     parser.add_argument("--populate-timeout", type=float, default=5400.0)
     parser.add_argument("--freeze-minutes", type=float, default=5.0)
     parser.add_argument("--rest-seconds", type=float, default=420.0)
-    parser.add_argument("--wake-spread", type=float, default=180.0)
-    parser.add_argument("--work-seconds", type=float, default=1200.0)
-    parser.add_argument("--rotate-seconds", type=float, default=1500.0)
-    parser.add_argument("--swap-every", type=float, default=60.0)
-    parser.add_argument("--swap-count", type=int, default=4)
-    parser.add_argument("--rest2-seconds", type=float, default=420.0)
+    parser.add_argument("--freeze-deadline", type=float, default=600.0,
+                        help="oltre questo, la stabilizzazione del freeze e' fallita")
+    parser.add_argument("--baseline-seconds", type=float, default=120.0)
+    parser.add_argument("--group-size", type=int, default=10)
+    parser.add_argument("--max-active", type=int, default=500,
+                        help="tetto di sicurezza: la rampa non lo supera")
+    parser.add_argument("--wake-gap", type=float, default=1.0,
+                        help="un utente al secondo dentro un gradino")
+    parser.add_argument("--settle-seconds", type=float, default=20.0)
+    parser.add_argument("--measure-seconds", type=float, default=60.0)
+    parser.add_argument("--hold-after-stop", type=float, default=30.0,
+                        help="quanto si tiene la popolazione dopo un ADMISSION_STOP")
+    parser.add_argument("--logout-gap-s", dest="logout_gap", type=float, default=0.2)
     parser.add_argument("--observe-seconds", type=float, default=300.0)
+    parser.add_argument("--login-attempts-max", type=int, default=5)
+    parser.add_argument("--login-retry-seconds", type=float, default=5.0)
+    parser.add_argument("--admission-p95-ms", type=float, default=1500.0)
+    parser.add_argument("--admission-consecutive", type=int, default=15)
+    parser.add_argument("--admission-min-ratio", type=float, default=0.25,
+                        help="frazione degli utenti attivi che deve comparire in un "
+                             "bucket da un secondo perche' porti un verdetto")
+    parser.add_argument("--generator-started-min", type=float, default=0.99)
+    parser.add_argument("--generator-drift-limit", type=float, default=5.0)
+    parser.add_argument("--generator-server-fast-ms", type=float, default=500.0)
     parser.add_argument("--min-think", type=float, default=10.0)
     parser.add_argument("--max-think", type=float, default=120.0)
     parser.add_argument("--bursts", type=int, default=200,

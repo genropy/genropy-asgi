@@ -13,10 +13,14 @@
 # controllo automatico che pretendesse di farlo al suo posto sarebbe un GO
 # implicito.
 #
-# Durata attesa, per gamba: 33 minuti di ingressi, 7 di riposo, 3 di risveglio,
-# 20 di lavoro, 25 di rotazione, 7 di secondo riposo, il logout di 2000 sessioni
-# e 5 minuti di osservazione — circa 1h45 per gamba, circa 3h30 per entrambe.
-# Va annunciata prima di lanciarla.
+# Durata attesa, per stack: 33 minuti di ingressi (uno al secondo), 7 di riposo
+# oltre il freeze, 2 di baseline, 63 di rampa (42 gradini da 10s di risveglio, 20
+# di assestamento e 60 misurati), il logout di 2000 sessioni e 5 di osservazione —
+# circa 1h55 per stack, circa 3h50 per entrambi. Va annunciata prima di lanciarla.
+#
+# L ORDINE e' legacy prima, bridge dopo: il bridge e' quello che congela e che fa
+# crescere il pool, quindi va misurato quando la macchina e' gia' stata scaldata
+# dall altro e non il contrario.
 set -u
 
 SCENARIO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,8 +28,9 @@ BENCH_DIR="$(cd "$SCENARIO_DIR/.." && pwd)"
 . "$BENCH_DIR/bench_common/lab_lifecycle.sh"
 
 PLAN="${PLAN:-$SCENARIO_DIR/traces/population_full.json}"
-ORDER="${1:-bridge,legacy}"
+ORDER="${1:-legacy,bridge}"
 export POP_MEM_LIMIT="${POP_MEM_LIMIT:-24g}"
+export LEGACY_WORKERS="${LEGACY_WORKERS:-12}"
 PILOT_DIR="${PILOT_DIR:-$SCENARIO_DIR/runs/pop_pilot}"
 
 # I tre file che il pilot lascia sempre, se e' arrivato in fondo.

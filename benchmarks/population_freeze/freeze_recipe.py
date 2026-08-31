@@ -15,7 +15,7 @@ the point of this scenario:
   pool sizes itself for two thousand users, and how it sizes itself is one of the
   things the run reports.
 
-``worker_max_number`` is pinned at eight, the same ceiling the worker sensitivity
+``worker_max_number`` is a CEILING read from the environment, not a target: the
 used, so the per-worker memory quota (the quota divided by the ceiling) is the
 same in both campaigns and their figures can be put side by side.
 
@@ -47,7 +47,16 @@ from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 DEBUG_OFF_WORDS = frozenset({"", "0", "false", "no", "off"})
 
 # Lo stesso tetto della sensitivity, cosi' la quota per worker e' la stessa.
-WORKER_MAX_NUMBER = 8
+# Il tetto di default. Il runner lo alza per la prova a duemila utenti, dove la
+# rampa arriva a cinquecento attivi: a sedici utenti per worker per occupazione
+# servirebbero circa trentadue worker, quindi un tetto di otto sarebbe il vincolo
+# invece della capacita'. La corsa riporta il massimo raggiunto.
+#
+# Il tetto ha un secondo effetto, dichiarato perche' non e' ovvio: il core deriva
+# `worker_memory_max_percent` come 100 / worker_max_number. A trentadue sono il
+# 3,1% del limite del container — 768 MB su ventiquattro gibibyte, contro i 50-60
+# MB che un worker teneva davvero. Il margine resta ampio.
+DEFAULT_WORKER_MAX_NUMBER = 8
 
 
 class ServerConfiguration(AsgiConfigBuilder):
@@ -81,6 +90,8 @@ class ServerConfiguration(AsgiConfigBuilder):
             instance_dir=instance_dir,
             orchestration_log_path=os.environ["GNR_ASGI_ORCH_LOG"],
         )
+        worker_max_number = int(os.environ.get("GNR_ASGI_WORKER_MAX_NUMBER")
+                                or DEFAULT_WORKER_MAX_NUMBER)
         group_kwargs: dict[str, Any] = {
             "name": "pool",
             "entry_module": "genro_asgi.spa.orchestration.worker_entry",
@@ -88,10 +99,19 @@ class ServerConfiguration(AsgiConfigBuilder):
             "engine_factory": "genropy_asgi.spa.site_engine_factory:GenropySiteEngineFactory",
             "worker_kwargs": {"source": source, "debug": debug, "debugger": debugger},
             "engine_kwargs": {"source": source, "debug": debug},
-            "worker_max_number": WORKER_MAX_NUMBER,
-            # La policy CPU resta spenta: il popolamento non deve chiudere
-            # l'ammissione mentre duemila utenti entrano.
-            "cpu_grow_percent": None,
+            # IL TETTO, non un obiettivo. Il default del core e' sei: lasciarlo
+            # limiterebbe la crescita sotto la forma gia' misurata a otto. Il
+            # runner lo alza per la prova a duemila utenti, e la corsa riporta il
+            # massimo raggiunto: un risultato che tocca il tetto e' un risultato
+            # limitato, e va letto come tale.
+            "worker_max_number": worker_max_number,
+            # LA POLICY REALE, accesa: e' la stessa del ciclo a otto core, dove il
+            # pool ha scelto da se' otto worker senza che una sola nascita venisse
+            # dalla scansione CPU. worker_max_users e worker_min_life_seconds NON
+            # si dichiarano: l'infinito e i sessanta secondi del core sono cio' che
+            # la produzione usa, e il numero dei worker deve restare un risultato.
+            "cpu_grow_percent": 50.0,
+            "cpu_grow_rearm_percent": 30.0,
             "occupancy_max_percent": 80.0,
             "reception_reserved_percent": 0.0,
             "cpu_retirement_quiet_seconds": 60.0,

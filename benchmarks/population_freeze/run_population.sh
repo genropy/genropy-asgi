@@ -15,7 +15,8 @@
 #   FREEZE_MINUTES    il freeze del bridge. Default 5.
 #   WORK_DIR          dove finiscono output e log. Default <scenario>/runs/<prefisso>
 #   LAB_DIR           il laboratorio Docker.       Default <scenario>/../docker
-#   LEGACY_WORKERS    i worker di Gunicorn.        Default 4
+#   LEGACY_WORKERS    i worker di Gunicorn.        Default 12
+#   GNR_ASGI_WORKER_MAX_NUMBER  il TETTO ai worker del pool. Default 40
 #   MEMORY_THRESHOLD  la soglia del guardiano.     Default 80
 #
 # Il freeze viene SEMPRE ripristinato all'uscita, anche se la corsa muore a
@@ -39,7 +40,12 @@ if [ -z "${POP_MEM_LIMIT:-}" ]; then
 fi
 export POP_MEM_LIMIT
 export FREEZE_MINUTES="${FREEZE_MINUTES:-5}"
-export LEGACY_WORKERS="${LEGACY_WORKERS:-4}"
+export LEGACY_WORKERS="${LEGACY_WORKERS:-12}"
+# Il tetto al numero di worker del pool. Quaranta e' un tetto, non un obiettivo:
+# la rampa arriva a cinquecento utenti attivi e a sedici per worker per
+# occupazione ne servirebbero circa trentadue. La corsa riporta il massimo
+# raggiunto, e un risultato che tocca il tetto va letto come limitato dal tetto.
+export GNR_ASGI_WORKER_MAX_NUMBER="${GNR_ASGI_WORKER_MAX_NUMBER:-40}"
 MEMORY_THRESHOLD="${MEMORY_THRESHOLD:-80}"
 LAB_DIR="${LAB_DIR:-$SCENARIO_DIR/../docker}"
 WORK_DIR="${WORK_DIR:-$SCENARIO_DIR/runs/$PREFIX}"

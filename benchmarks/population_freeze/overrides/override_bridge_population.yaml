@@ -12,13 +12,21 @@
 # duemila utenti con un limite scelto in silenzio non e' una misura, e' un caso.
 services:
   bridge:
-    cpus: 4
+    cpus: 8
     mem_limit: ${POP_MEM_LIMIT:?}
     environment:
       GNR_ASGI_POOL_RECIPE: "/lab/configs/freeze_recipe.py"
       GNR_ASGI_ORCH_LOG: ${GNR_ASGI_ORCH_LOG:?}
       GNR_ASGI_IDLE_FREEZE_MINUTES: ${GNR_ASGI_IDLE_FREEZE_MINUTES:?}
       GNR_ASGI_FROZEN_USERS_PATH: ${GNR_ASGI_FROZEN_USERS_PATH:?}
+      # Il TETTO al numero di worker, non un obiettivo. Obbligatorio: il default
+      # della recipe e' otto, e la rampa arriva a cinquecento utenti attivi — a
+      # sedici per worker per occupazione ne servirebbero circa trentadue, quindi
+      # un tetto di otto sarebbe il vincolo invece della capacita'. La corsa
+      # riporta il massimo raggiunto: se tocca il tetto, il risultato e' limitato
+      # dal tetto e va letto come tale. La recipe spiega l'effetto sulla quota di
+      # memoria per worker, che a quaranta resta quattro volte l'impronta vera.
+      GNR_ASGI_WORKER_MAX_NUMBER: ${GNR_ASGI_WORKER_MAX_NUMBER:?}
       PYTHONPATH: "/src/genro-asgi/src:/src/genropy-asgi/src"
     volumes:
       - ${POP_DIR:?}/freeze_recipe.py:/lab/configs/freeze_recipe.py:ro

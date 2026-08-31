@@ -56,6 +56,7 @@ import statistics
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 
 BENCHMARKS_DIR = os.path.abspath(
@@ -69,6 +70,14 @@ from bench_common.container_probe import (                                      
 from bench_common.stop_guard import (                                            # noqa: E402
     ContainerCgroup, MemoryGuard, StopFlag, StopRequested)
 from churn_driver import LoggedUser, build_plan, load_capture                    # noqa: E402
+
+# La guardia di latenza a bucket vive nello scenario del ciclo a otto core, dove
+# e' stata scritta e provata con i suoi sei casi. Si importa invece di copiarla:
+# duplicare duecento righe di giudizio sarebbe il modo piu' sicuro di far divergere
+# due verdetti che devono restare lo stesso verdetto. Lo scenario di provenienza
+# non viene toccato.
+sys.path.insert(0, os.path.join(BENCHMARKS_DIR, "eight_core_cycle"))
+from admission_guard import AdmissionGuard                                        # noqa: E402
 
 SESSION_CAPTURE = os.path.join(BENCHMARKS_DIR, "session_capture.jsonl")
 USERNAMES_ALL = os.path.join(BENCHMARKS_DIR, "usernames_all.txt")
@@ -95,7 +104,7 @@ SAMPLE_COLUMNS = ["ts", "epoch", "run", "stack", "phase", "active_users",
                   "authenticated", "placed", "frozen", "unplaced", "guest",
                   "connections", "pages", "per_worker"]
 
-CALL_COLUMNS = ["phase", "user", "started_at", "completed_at", "latency_ms",
+CALL_COLUMNS = ["phase", "user", "started_at", "completed_at", "latency_ms", "lateness_s",
                 "status", "app_error", "transport_error", "kind"]
 
 
@@ -113,19 +122,26 @@ class Resident:
     A resident outside the working set holds its session and its connection and
     does nothing at all: no thread, no timer, no request. That is the whole point
     of the run — nineteen hundred and twenty of them must be genuinely silent.
+
+    An ACTIVE resident calls once a second, and keeps its own clock: it remembers
+    the instant each call was DUE and records how late it actually started. That
+    lateness is the only thing that can tell a slow stack from a driver that has
+    run out of threads — see ``StepReading.generator_verdict``. A resident that
+    cannot keep its second does not speed up to catch up: it moves its own due
+    time forward, so the lateness is a debt that shows, not one that hides.
     """
 
-    def __init__(self, probe, label, logged_user, think_times):
+    def __init__(self, probe, label, logged_user):
         self.probe = probe
         self.label = label
         self.user = logged_user
-        self.think_times = list(think_times) or [60.0]
         self.thread = None
         self.leave = threading.Event()
         self.bursts = 0
         self.first_call_ms = None
         self.reentry_ms = None
         self.failed = 0
+        self.due = None
 
     @property
     def active(self):
@@ -148,19 +164,29 @@ class Resident:
         return not alive
 
     def work_loop(self, measure_reentry):
-        """Burst, pause, burst — until the resident is told to leave."""
+        """One call a second, until the resident is told to leave.
+
+        The period is the protocol's, not a draw. The due time advances by exactly
+        one period per call, so a resident that arrives late stays late instead of
+        firing a burst to catch up — a catch-up burst would offer more than one
+        request per second and the measured rate would stop meaning anything.
+        """
+        period = self.probe.request_period
+        self.due = time.time()
         first = True
         while not (self.leave.is_set() or self.probe.stop_flag.stopped):
+            now = time.time()
+            if self.due > now and self.leave.wait(self.due - now):
+                return
             started = time.time()
-            self.burst(measure_reentry and first)
+            self.burst(measure_reentry and first, lateness=started - self.due)
             if measure_reentry and first:
                 self.reentry_ms = round((time.time() - started) * 1000, 3)
                 first = False
-            pause = self.think_times[self.bursts % len(self.think_times)]
-            self.leave.wait(pause)
+            self.due += period
 
-    def burst(self, measure_first):
-        """One recorded burst: for now one indexed call, as everywhere else."""
+    def burst(self, measure_first, lateness=0.0):
+        """One recorded call: the indexed getSelection, as everywhere else."""
         lookup = self.probe.lookups[self.bursts % len(self.probe.lookups)]
         body = urllib.parse.urlencode(self.user.get_call_form(lookup, self.bursts + 100))
         started = time.time()
@@ -175,9 +201,10 @@ class Resident:
         self.probe.record_call({
             "phase": self.probe.phase, "user": self.label,
             "started_at": round(started, 6), "completed_at": round(completed, 6),
-            "latency_ms": latency, "status": status if status is not None else "",
+            "latency_ms": latency, "lateness_s": round(lateness, 6),
+            "status": status if status is not None else "",
             "app_error": app_error or "", "transport_error": transport_error or "",
-            "kind": "first_after_thaw" if measure_first else "burst",
+            "kind": "first_after_thaw" if measure_first else "call",
         })
 
 
@@ -203,8 +230,24 @@ class PopulationProbe:
         self.phase_log = []
         self.logouts = []
         self.thaw = []
-        self.rotation_log = []
         self.lock = threading.Lock()
+        self.request_period = self.protocol.get("request_period_s", 1.0)
+        self.calls_seen = []
+        self.feed_guard = False
+        self.steps = []
+        self.stop_reason = None
+        self.structural_failure = None
+        self.memory_verdict = None
+        self.last_stable = None
+        self.first_unsustainable = None
+        self.login_attempts = []
+        self.cold_start_errors = 0
+        self.initial_working_set = set(self.plan["working_set"])
+        self.guard = AdmissionGuard(
+            {"p95_limit_ms": self.protocol["admission"]["p95_limit_ms"],
+             "consecutive_buckets": self.protocol["admission"]["consecutive_buckets"],
+             "minimum_samples": 2},
+            f"{arguments.out}_admission.json", self.admission_context)
         self.latencies = []
         self.calls_done = 0
         self.calls_failed = 0
@@ -272,12 +315,32 @@ class PopulationProbe:
                     return None, None, repr(failure)[:120]
         return None, None, "unreachable"
 
+    def admission_context(self):
+        """What the ADMISSION_STOP event records about the run, at the instant."""
+        context = {"phase": self.phase, "completed": self.calls_done,
+                   "population_active": len(self.active_users),
+                   "population_authenticated": len(self.residents),
+                   "pending": 0,
+                   "last_stable_step": (self.last_stable or {}).get("phase")}
+        if self.eyes is not None:
+            population = self.eyes.population()
+            context["census_authenticated"] = population.get("authenticated")
+            context["census_placed"] = population.get("placed")
+            context["census_frozen"] = population.get("frozen")
+            context["census_workers"] = population.get("worker_count")
+        return context
+
     def record_call(self, row):
         with self.lock:
             self.calls_done += 1
             self.latencies.append(row["latency_ms"])
             if row["transport_error"] or row["app_error"] or row["status"] != 200:
                 self.calls_failed += 1
+            self.calls_seen.append(row)
+        # La guardia vede SOLO le finestre misurate: il thaw e l'assestamento non
+        # sono capacita', e giudicarli chiamerebbe limite un transitorio.
+        if self.feed_guard:
+            self.guard.record_latency(row["completed_at"], row["latency_ms"])
         if self.calls_writer is not None:
             self.calls_writer.writerow(row)
             self.calls_handle.flush()
@@ -352,11 +415,15 @@ class PopulationProbe:
                 if time.time() - started > timeout:
                     raise InvalidRun(f"populate oltre {timeout:.0f}s con "
                                      f"{len(self.residents)} utenti")
-                logged = LoggedUser(self.arguments.base, login_calls, pages,
-                                    entry["username"], self.arguments.password,
-                                    self.lookups, 0.0)
-                resident = Resident(self, entry["label"], logged, entry["think_times"])
+                logged = self.log_in_with_retries(entry, login_calls, pages)
+                resident = Resident(self, entry["label"], logged)
                 self.residents[entry["label"]] = resident
+                # Gli utenti del working set iniziale lavorano APPENA sono entrati:
+                # e' cio' che rende il freeze misurabile sotto carico, ed e' il caso
+                # reale — un sito non e' mai silenzioso mentre la popolazione entra.
+                # Non si misura un reentry: questi non sono mai stati congelati.
+                if entry["label"] in self.initial_working_set:
+                    resident.activate(measure_reentry=False)
                 if not self.stop_flag.wait(gap, "populate"):
                     break
             done = len(self.residents)
@@ -366,6 +433,49 @@ class PopulationProbe:
         if len(self.residents) != len(entries):
             raise InvalidRun(f"popolamento incompleto: {len(self.residents)} "
                              f"su {len(entries)}")
+
+    def log_in_with_retries(self, entry, login_calls, pages):
+        """The login policy validated on the eight-core cycle: five tries, five apart.
+
+        A service process asked to build the site while answering a login answers
+        500, and the cold window of the legacy stack was measured at about fourteen
+        seconds. Five attempts five seconds apart cover twenty. Every attempt is
+        recorded; the ones that precede a success are ``cold_start`` and are never
+        folded into the errors of a measured window.
+        """
+        attempts_max = int(self.protocol["login_attempts_max"])
+        wait = float(self.protocol["login_retry_seconds"])
+        attempts, logged = [], None
+        for attempt in range(1, attempts_max + 1):
+            record = {"ts": time.strftime("%H:%M:%S"), "user": entry["label"],
+                      "username": entry["username"], "attempt": attempt,
+                      "status": "", "exception": ""}
+            try:
+                logged = LoggedUser(self.arguments.base, login_calls, pages,
+                                    entry["username"], self.arguments.password,
+                                    self.lookups, 0.0)
+                record.update(status=200, outcome="ok")
+                attempts.append(record)
+                break
+            except urllib.error.HTTPError as failure:
+                record.update(status=failure.code, exception=repr(failure)[:200],
+                              outcome="failed")
+            except Exception as failure:                          # noqa: BLE001
+                record.update(exception=repr(failure)[:200], outcome="failed")
+            attempts.append(record)
+            if attempt < attempts_max and not self.stop_flag.wait(wait, "attesa login"):
+                break
+        if logged is None:
+            self.login_attempts.extend(attempts)
+            raise InvalidRun(f"{entry['label']} ({entry['username']}) non e' entrato "
+                             f"dopo {len(attempts)} tentativi: "
+                             f"{[a.get('status') or a.get('exception') for a in attempts]}")
+        for record in attempts:
+            if record["outcome"] == "failed":
+                record["outcome"] = "cold_start"
+                self.cold_start_errors += 1
+        self.login_attempts.extend(attempts)
+        return logged
 
     def rest(self, seconds, phase, note=""):
         """Silence. Nobody sends anything: this is where the freeze happens."""
@@ -378,76 +488,184 @@ class PopulationProbe:
             self.record_phase(phase, note="in corso")
         self.record_phase(phase, note="fine")
 
-    def wake(self):
-        """The working set comes back, one user at a time.
+    def measure_window(self, phase, seconds, active_target):
+        """One measured window: the calls inside it are the step's reading.
 
-        One at a time and spread out on purpose: a burst of returns would measure
-        the freezer's queue instead of one thaw.
+        The latency guard is fed ONLY from here. During a thaw the returning users
+        pay the cost of coming back, and during the settle the stack is still
+        absorbing them: judging capacity on those seconds would call a transient a
+        limit. The guard's minimum samples per bucket is set from the load level,
+        because a bucket at eighty active users and one at five hundred cannot
+        share a threshold.
         """
-        working_set = self.plan["working_set"]
-        spread = self.protocol["wake_spread_s"]
-        step = spread / max(len(working_set), 1)
-        print(f"--- wake: {len(working_set)} utenti, uno ogni {step:.1f}s ---", flush=True)
-        self.record_phase("wake", note="inizio")
-        clocks_before = self.eyes.user_clocks() if self.eyes is not None else {}
-        for label in working_set:
-            self.stop_flag.raise_if_stopped("wake")
-            resident = self.residents[label]
-            was = clocks_before.get(resident.user.username, {})
-            resident.activate(measure_reentry=True)
-            if not self.stop_flag.wait(step, "wake"):
+        self.guard.minimum_samples = max(
+            2, int(active_target * self.protocol["admission"]["minimum_samples_ratio"]))
+        self.guard.next_bucket = None
+        self.feed_guard = True
+        opened = time.time()
+        first_call = len(self.calls_seen)
+        self.record_phase(phase, note=f"inizio, {active_target} attivi attesi")
+        deadline = opened + seconds
+        while time.time() < deadline:
+            if not self.stop_flag.wait(min(5.0, max(0.0, deadline - time.time())), phase):
                 break
+            self.guard.judge_closed_buckets(time.time())
+            self.record_phase(phase, note="in corso")
+        self.guard.judge_closed_buckets(time.time() + 1.0)
+        self.feed_guard = False
+        closed = time.time()
+        self.record_phase(phase, note="fine")
+        return self.read_step(phase, active_target, opened, closed, first_call)
+
+    def read_step(self, phase, active_target, opened, closed, first_call):
+        """The numbers of one measured window, and the two verdicts on them."""
+        with self.lock:
+            rows = self.calls_seen[first_call:]
+        latencies = sorted(r["latency_ms"] for r in rows)
+        late = sorted(r["lateness_s"] for r in rows)
+        wall = max(closed - opened, 1e-9)
+        half = len(late) // 2
+        drift = ((statistics.median(late[half:]) - statistics.median(late[:half]))
+                 if half else 0.0)
+        planned = int(round(active_target * wall / self.request_period))
+        errors = sum(1 for r in rows if r["transport_error"] or r["app_error"]
+                     or r["status"] != 200)
+        reading = {
+            "phase": phase, "active_target": active_target,
+            "active_observed": len(self.active_users),
+            "seconds": round(wall, 2),
+            "planned": planned, "started": len(rows), "completed": len(rows),
+            "started_ratio": round(len(rows) / planned, 4) if planned else None,
+            "per_second": round(len(rows) / wall, 2),
+            "p50_ms": self.percentile(latencies, 50),
+            "p95_ms": self.percentile(latencies, 95),
+            "p99_ms": self.percentile(latencies, 99),
+            "late_p50_s": self.percentile(late, 50),
+            "late_max_s": round(late[-1], 4) if late else None,
+            "late_drift_s": round(drift, 4),
+            "errors": errors,
+            "guard_buckets": self.guard.judged,
+            "guard_over_limit": self.guard.bad,
+            "guard_thin": self.guard.thin,
+            "guard_longest_run": self.guard.peak_consecutive,
+            "admission_stop": not self.guard.admission_open,
+        }
+        reading["generator_verdict"] = self.generator_verdict(reading)
+        self.steps.append(reading)
+        print(f"  [{phase}] attivi {reading['active_observed']} | "
+              f"{reading['completed']}/{planned} completate "
+              f"({(reading['started_ratio'] or 0) * 100:.1f}%) {reading['per_second']:.1f}/s | "
+              f"p50 {reading['p50_ms']} p95 {reading['p95_ms']} p99 {reading['p99_ms']} | "
+              f"lateness p50 {reading['late_p50_s']} deriva {reading['late_drift_s']:+.3f} | "
+              f"errori {errors}", flush=True)
+        return reading
+
+    def generator_verdict(self, reading):
+        """Is the limit the stack's or the driver's own? Never guessed.
+
+        The driver is the suspect when it fails to START the work it planned, or
+        when its own start lateness grows WHILE the server keeps answering fast.
+        A slow server produces slow answers; a driver out of threads produces late
+        starts with fast answers. The two look nothing alike in these numbers.
+        """
+        rules = self.protocol["generator"]
+        started_short = ((reading["started_ratio"] or 1.0) < rules["started_ratio_min"])
+        drifting = reading["late_drift_s"] > rules["lateness_drift_limit_s"]
+        server_fast = ((reading["p95_ms"] or 0) < rules["server_fast_p95_ms"])
+        if started_short:
+            return {"limit": True, "reason": (
+                f"avviato {(reading['started_ratio'] or 0) * 100:.1f}% delle richieste "
+                f"pianificate, sotto il {rules['started_ratio_min'] * 100:.0f}%")}
+        if drifting and server_fast:
+            return {"limit": True, "reason": (
+                f"la lateness del generatore deriva di {reading['late_drift_s']:+.1f}s "
+                f"mentre il server risponde in p95 {reading['p95_ms']} ms, sotto "
+                f"{rules['server_fast_p95_ms']:.0f}: e' il driver, non lo stack")}
+        return {"limit": False, "reason": None}
+
+    def baseline(self):
+        """The initial working set, measured on its own.
+
+        Nobody is woken here: these eighty have been working since they entered,
+        all through the populate and all through the rest. They are the reference
+        the ramp climbs from, and they were never frozen — so there is no thaw cost
+        in this reading, which is exactly what makes it a baseline.
+        """
+        active = len(self.active_users)
+        print(f"--- baseline: {active} utenti attivi, "
+              f"{self.protocol['baseline_seconds']:.0f}s misurati ---", flush=True)
+        return self.measure_window(f"baseline_{active}",
+                                   self.protocol["baseline_seconds"], active)
+
+    def wake_group(self, labels, gap, phase):
+        """A group comes back, one user a second. The first call is timed apart."""
+        clocks = self.eyes.user_clocks() if self.eyes is not None else {}
+        self.record_phase(phase, note=f"risveglio di {len(labels)}")
+        for label in labels:
+            self.stop_flag.raise_if_stopped(phase)
+            resident = self.residents[label]
+            was = clocks.get(resident.user.username, {})
+            resident.activate(measure_reentry=True)
             self.thaw.append({
                 "user": label, "username": resident.user.username,
-                "state_before": was.get("state"),
-                "first_call_ms": resident.first_call_ms,
-                "reentry_ms": resident.reentry_ms,
+                "state_before": was.get("state"), "phase": phase,
+                "at": round(time.time(), 3),
             })
-        self.record_phase("wake", note="fine")
+            if not self.stop_flag.wait(gap, phase):
+                break
 
-    def work(self):
-        """The working set works, with the pauses the plan drew."""
-        seconds = self.protocol["work_seconds"]
-        print(f"--- work: {seconds:.0f}s con {len(self.active_users)} utenti attivi ---",
+    def collect_thaw_latencies(self):
+        """Fill in the first-call cost of every user woken so far."""
+        for record in self.thaw:
+            if record.get("first_call_ms") is None:
+                resident = self.residents[record["user"]]
+                record["first_call_ms"] = resident.first_call_ms
+                record["reentry_ms"] = resident.reentry_ms
+
+    def run_step(self, step):
+        """One rung of the ramp: ten users back, twenty quiet seconds, sixty measured."""
+        target = step["target_active"]
+        print(f"--- gradino {step['step']}: verso {target} utenti attivi ---", flush=True)
+        self.wake_group(step["wake"], step["wake_gap_s"], f"thaw_{target}")
+        self.collect_thaw_latencies()
+        self.record_phase(f"settle_{target}", note="assestamento")
+        self.stop_flag.wait(step["settle_seconds"], f"settle_{target}")
+        reading = self.measure_window(f"measure_{target}", step["measure_seconds"], target)
+        reading["step"] = step["step"]
+        reading["woken"] = step["wake"]
+        return reading
+
+    def ramp(self):
+        """Climb until a guard says stop, or until the plan's ceiling is reached."""
+        for step in self.plan["steps"]:
+            self.stop_flag.raise_if_stopped("rampa")
+            reading = self.run_step(step)
+            if reading["admission_stop"]:
+                self.stop_reason = "CAPACITY_LIMIT"
+                self.first_unsustainable = reading
+                print(f"!!! CAPACITY_LIMIT al gradino {step['step']}, "
+                      f"{reading['active_observed']} utenti attivi", flush=True)
+                self.hold_after_stop()
+                return
+            if reading["generator_verdict"]["limit"]:
+                self.stop_reason = "GENERATOR_LIMIT"
+                self.first_unsustainable = reading
+                print(f"!!! GENERATOR_LIMIT al gradino {step['step']}: "
+                      f"{reading['generator_verdict']['reason']}", flush=True)
+                self.hold_after_stop()
+                return
+            self.last_stable = reading
+        self.stop_reason = "MAX_500_REACHED"
+        print(f"--- tetto del piano raggiunto: {len(self.active_users)} utenti attivi ---",
               flush=True)
-        self.record_phase("work", note="inizio")
-        deadline = time.time() + seconds
-        while time.time() < deadline:
-            if not self.stop_flag.wait(min(30.0, max(0.0, deadline - time.time())), "work"):
-                break
-            self.record_phase("work", note="in corso")
-        self.record_phase("work", note="fine")
 
-    def rotate(self):
-        """The swaps the plan wrote: as many enter as leave, at fixed instants."""
-        swaps = self.plan["rotation"]
-        print(f"--- rotate: {len(swaps)} scambi ---", flush=True)
-        self.record_phase("rotate", note="inizio")
-        started = time.time()
-        for swap in swaps:
-            self.stop_flag.raise_if_stopped("rotate")
-            wait = swap["at_s"] - (time.time() - started)
-            if wait > 0 and not self.stop_flag.wait(wait, "rotate"):
-                break
-            record = {"at_s": swap["at_s"], "out": [], "in": []}
-            for label in swap["out"]:
-                resident = self.residents[label]
-                record["out"].append({"user": label,
-                                      "stopped": resident.deactivate()})
-            for label in swap["in"]:
-                resident = self.residents[label]
-                resident.activate(measure_reentry=True)
-                record["in"].append({"user": label})
-            self.rotation_log.append(record)
-            self.record_phase("rotate", note=f"scambio a {swap['at_s']:.0f}s")
-        for label in {entry["user"] for swap in self.rotation_log for entry in swap["in"]}:
-            resident = self.residents[label]
-            self.thaw.append({"user": label, "username": resident.user.username,
-                              "state_before": None,
-                              "first_call_ms": resident.first_call_ms,
-                              "reentry_ms": resident.reentry_ms,
-                              "during": "rotate"})
-        self.record_phase("rotate", note="fine")
+    def hold_after_stop(self):
+        """The population is held, not grown, and not rescued with more resources."""
+        seconds = self.protocol["hold_after_stop_seconds"]
+        print(f"--- tenuta di {seconds:.0f}s alla popolazione raggiunta ---", flush=True)
+        self.record_phase("hold_after_stop", note="inizio")
+        self.stop_flag.wait(seconds, "hold_after_stop")
+        self.record_phase("hold_after_stop", note="fine")
 
     def log_out_all(self):
         """Everybody leaves. Errors are recorded, never swallowed."""
@@ -469,6 +687,87 @@ class PopulationProbe:
         self.record_phase("logout", note="fine")
 
     # ------------------------------------------------------------------ freeze
+    def certify_population_after_rest(self):
+        """The counts the freeze must have produced, or the run is not a measure.
+
+        On the BRIDGE: the eighty that never stopped are active and placed, and
+        everybody else is frozen. The two sets must not overlap and must not leave
+        anyone out — a user counted twice would hide a user missing. The frozen
+        store must be readable, because a freeze nobody can read is not a freeze.
+
+        On the LEGACY there is no freezer: two thousand sessions stay resident,
+        eighty of them working, and the count of frozen users must be zero.
+        """
+        expected_active = len(self.initial_working_set)
+        active = len(self.active_users)
+        record = {"stage": "popolazione dopo il riposo", "stack": self.arguments.stack,
+                  "active_threads": active, "expected_active": expected_active,
+                  "residents": len(self.residents)}
+        problems = []
+        if active != expected_active:
+            problems.append(f"{active} utenti attivi invece di {expected_active}")
+        if len(self.residents) != self.plan["users"]:
+            problems.append(f"{len(self.residents)} residenti invece di {self.plan['users']}")
+        if self.eyes is None:
+            record["verdict"] = "legacy: nessun freezer per costruzione"
+            record["frozen"] = 0
+        else:
+            population = self.eyes.population()
+            record.update(population)
+            deposit = self.eyes.frozen_deposit()
+            record["frozen_store"] = deposit
+            expected_frozen = self.plan["users"] - expected_active
+            record["expected_frozen"] = expected_frozen
+            counted = (population.get("placed", 0) + population.get("frozen", 0)
+                       + population.get("unplaced", 0))
+            if population.get("authenticated") != self.plan["users"]:
+                problems.append(f"census: {population.get('authenticated')} autenticati "
+                                f"invece di {self.plan['users']}")
+            if counted != population.get("authenticated"):
+                problems.append(f"conteggi incoerenti: collocati+congelati+non collocati "
+                                f"= {counted}, autenticati {population.get('authenticated')}")
+            if population.get("guest"):
+                problems.append(f"{population['guest']} guest presenti")
+            # La banda di incertezza del freeze e' dichiarata nel piano: si accetta
+            # uno scostamento, non un ordine di grandezza.
+            tolleranza = max(10, int(expected_frozen * 0.05))
+            if abs(population.get("frozen", 0) - expected_frozen) > tolleranza:
+                problems.append(f"{population.get('frozen')} congelati invece di circa "
+                                f"{expected_frozen} (tolleranza {tolleranza})")
+            if population.get("placed", 0) < expected_active:
+                problems.append(f"{population.get('placed')} collocati, ne servono almeno "
+                                f"{expected_active} per gli attivi")
+            if not deposit.get("available"):
+                problems.append(f"deposito congelato non leggibile: {deposit.get('reason')}")
+            record["verdict"] = "certificato" if not problems else "non conforme"
+        record["problemi"] = problems
+        self.phase_log.append({"ts": time.strftime("%H:%M:%S"), "phase": "certify_counts",
+                               "note": record["verdict"]})
+        print(f"  conteggi dopo il riposo [{self.arguments.stack}]: attivi {active}, "
+              f"residenti {len(self.residents)}, congelati "
+              f"{record.get('frozen', 0)} (attesi ~{record.get('expected_frozen', 0)}), "
+              f"worker {record.get('worker_count', '-')}", flush=True)
+        if problems:
+            raise InvalidRun("conteggi dopo il riposo: " + "; ".join(problems))
+        return record
+
+    @property
+    def classification(self):
+        """One word for how the run ended. The order below is the priority.
+
+        A memory stop outranks everything: it is a fact about the machine, not a
+        capacity reading, and a run that ran out of memory has not measured a
+        limit. A structural failure outranks the capacity verdicts for the same
+        reason — an incomplete population or a broken count is not a result.
+        """
+        memory = getattr(self, "memory_verdict", None) or {}
+        if memory.get("memory_stop") or any(v > 0 for v in
+                                           (memory.get("pressure_delta") or {}).values()):
+            return "MEMORY_STOP"
+        if self.structural_failure:
+            return "STRUCTURAL_FAIL"
+        return self.stop_reason or "STRUCTURAL_FAIL"
+
     def certify_freeze(self):
         """The live setpoint, read from the server and not from the plan.
 
@@ -592,10 +891,11 @@ class PopulationProbe:
             self.populate()
             self.rest(self.protocol["rest_seconds"], "rest",
                       note=f"freeze atteso a {self.protocol['freeze_minutes'] * 60:.0f}s")
-            self.wake()
-            self.work()
-            self.rotate()
-            self.rest(self.protocol["rest2_seconds"], "rest2")
+            outcome["freeze_after_rest"] = self.certify_freeze()
+            outcome["counts_after_rest"] = self.certify_population_after_rest()
+            self.baseline()
+            self.ramp()
+            self.collect_thaw_latencies()
             outcome["result"] = "completa"
         except StopRequested as stop_asked:
             outcome["result"] = "interrotta"
@@ -604,6 +904,7 @@ class PopulationProbe:
         except InvalidRun as failure:
             outcome["result"] = "non valida"
             outcome["invalid"] = str(failure)
+            self.structural_failure = str(failure)
             print(f"!!! CORSA NON VALIDA: {failure}", flush=True)
         except SamplerDown as failure:
             outcome["result"] = "senza misura"
@@ -633,14 +934,27 @@ class PopulationProbe:
         guard.join(timeout=20)
         verdict = guard.final_check()
         guard.write(verdict)
+        self.memory_verdict = verdict
         outcome["memory"] = verdict
+        outcome["classification"] = self.classification
+        outcome["stop_reason"] = self.stop_reason
+        outcome["steps"] = self.steps
+        outcome["last_stable"] = self.last_stable
+        outcome["first_unsustainable"] = self.first_unsustainable
+        outcome["admission"] = self.guard.verdict
+        outcome["login_attempts_total"] = len(self.login_attempts)
+        outcome["cold_start_errors"] = self.cold_start_errors
+        outcome["request_period_s"] = self.request_period
         outcome["stop_reasons"] = self.stop_flag.reason_list
         outcome["sampler_rows"] = self.sampler_rows
         outcome["thaw_summary"] = self.thaw_summary()
         samples_handle.close()
         self.calls_handle.close()
         self.phase_handle.close()
-        for name, payload in (("thaw", self.thaw), ("rotation", self.rotation_log),
+        self.guard.write()
+        for name, payload in (("thaw", self.thaw), ("steps", self.steps),
+                              ("login_attempts", self.login_attempts),
+                              ("phases", self.phase_log),
                               ("logouts", self.logouts), ("outcome", outcome)):
             with open(f"{self.arguments.out}_{name}.json", "w") as handle:
                 json.dump(payload, handle, indent=2)
