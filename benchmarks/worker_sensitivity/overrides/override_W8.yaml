@@ -1,0 +1,16 @@
+# Corsa W8 della sensitivity. L'unica leva che cambia fra le quattro corse e'
+# GNR_ASGI_WORKER_MAX_USERS. worker_max_number=8 e worker_min_life_seconds=3600
+# stanno nella recipe, uguali ovunque.
+#
+# SENSITIVITY_DIR e SENSITIVITY_RUNTIME_DIR sono esportate dai runner: la
+# directory dello scenario e la runtime del laboratorio.
+# PYTHONPATH forza l'import dai sorgenti montati, non da site-packages.
+services:
+  bridge:
+    environment:
+      GNR_ASGI_POOL_RECIPE: "/lab/configs/prep_config.py"
+      GNR_ASGI_WORKER_MAX_USERS: "6"
+      PYTHONPATH: "/src/genro-asgi/src:/src/genropy-asgi/src"
+    volumes:
+      - ${SENSITIVITY_DIR:?}/prep_config.py:/lab/configs/prep_config.py:ro
+      - ${SENSITIVITY_RUNTIME_DIR:?}:/lab/runtime
