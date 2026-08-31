@@ -63,13 +63,44 @@ REGISTRO="$SANDBOX/docker.log"
 # lab_stop_others ha qualcosa da fermare, ed e' quella che il test deve provare.
 # Con un `docker ps` vuoto non ci sarebbe niente da fermare e l'assenza dello stop
 # non direbbe nulla.
+# Il finto risponde anche alle letture che certify_live fa dentro il container:
+# i limiti del cgroup, i contatori di pressione, la tabella dei processi e
+# l'ambiente del pid 1. Senza quelle risposte la certificazione blocca — cosa che
+# fa correttamente, ma il test vuole arrivare al driver.
+#
+# La tabella dei processi si costruisce da LEGACY_WORKERS, che il runner esporta:
+# cosi' l'asserzione "dodici worker" e "sedici worker" resta esercitata invece di
+# leggere un numero fisso.
 cat > "$SANDBOX/bin/docker" <<EOF
 #!/bin/bash
 echo "docker \$*" >> "$REGISTRO"
+ARGS="\$*"
 case "\$1 \$2" in
-  "compose config") echo "services: {}" ;;
-  "ps --format") printf '%s\\n' genro-bench-lab-bridge-1 genro-bench-lab-legacy-1 ;;
+  "compose config") echo "services: {}"; exit 0 ;;
+  "ps --format") printf '%s\\n' genro-bench-lab-bridge-1 genro-bench-lab-legacy-1; exit 0 ;;
 esac
+if [ "\$1" = "exec" ]; then
+  case "\$ARGS" in
+    *cpu.max*memory.max*) echo "800000 100000"; echo "4294967296" ;;
+    *cpu.max*)            echo "800000 100000" ;;
+    *memory.max*)         echo "4294967296" ;;
+    *"END{print s+0}"*)   echo "0" ;;
+    *memory.events*)      printf 'low 0\\nhigh 0\\nmax 0\\noom 0\\noom_kill 0\\noom_group_kill 0\\n' ;;
+    *cmdline*)
+      echo "1 0 python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 -w \${LEGACY_WORKERS:-0} -k gthread --threads 16"
+      echo "7 1 /usr/local/bin/python /usr/local/bin/gnrdaemon legacy_lab"
+      i=0
+      while [ "\$i" -lt "\${LEGACY_WORKERS:-0}" ]; do
+        i=\$((i + 1))
+        echo "\$((10 + i)) 1 python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 -w \${LEGACY_WORKERS} -k gthread --threads 16"
+      done
+      ;;
+    *environ*)
+      [ -n "\${GNR_ASGI_ORCH_LOG:-}" ] && echo "GNR_ASGI_ORCH_LOG=\$GNR_ASGI_ORCH_LOG"
+      echo "LEGACY_WORKERS=\${LEGACY_WORKERS:-}"
+      ;;
+  esac
+fi
 exit 0
 EOF
 cat > "$SANDBOX/bin/curl" <<EOF

@@ -16,4 +16,4 @@ b922ce6262ae2cbe3728e734f7509987a835e6e1f7e69d7e4ddf0083c91d1885  ./run_profiles
 47a7e6ac8e7cb65efe9f9ac8ea05c6ad77a650faa9d29eecaf39bc63c64229ea  ./run_smoke.sh
 edad8ed2f48c7a31ab779e85a642ec043879611375e39e7c6f5558bf9fded7f5  ./tests/test_cycle_runner.sh
 77b1683fbb250e868282ec998dc982e3007967b59a8d1e2537b7a325d1dc37ad  ./tests/test_cycle_tools.py
-b8c04a41034c56c152231d4c7f1d551f8e83b941988cd7fe136791a0ff537122  ./tests/test_profiles.sh
+96077d8b87d2a111e26e14a5a5fda01691bf23e8c74c9217643a5ec13da4fdf6  ./tests/test_profiles.sh
