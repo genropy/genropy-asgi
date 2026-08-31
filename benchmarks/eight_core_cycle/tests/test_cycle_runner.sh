@@ -7,8 +7,15 @@
 #     parte affatto: e' la garanzia che una prova completa non segua uno smoke
 #     fallito;
 #   - il cleanup gira comunque, anche quando la sequenza si ferma;
-#   - i due stack non girano mai insieme: prima di ognuno l'altro viene fermato;
+#   - prima dello stack che parte l'altro viene fermato: i due non girano insieme;
 #   - lo stato scritto su disco dice quale stack ha fallito e con che codice.
+#
+# COSA NON COPRE, e perche': la sequenza di due esecuzioni SANE e l'ordine
+# inverso. Il controllo di prontezza del bridge interroga il census su una porta
+# vera, e senza un bridge vivo ritenta per cinque minuti: un test non deve
+# aspettare cinque minuti per sapere una cosa che
+# ../bench_common/tests/test_lab_lifecycle.sh gia' prova col proprio docker
+# finto, sullo stesso lab_run_legs che questo runner usa senza modifiche.
 #
 # Il `docker` finto appende ogni invocazione a un registro, cosi' "l'altro stack
 # e' stato fermato" e' un fatto letto dal registro, non un'affermazione. Nessun
@@ -52,11 +59,16 @@ mkdir -p "$SANDBOX/bin" "$SANDBOX/lab" "$SANDBOX/scenario/overrides" "$SANDBOX/s
 REGISTRO="$SANDBOX/docker.log"
 : > "$REGISTRO"
 
+# Il finto dichiara che ENTRAMBI gli stack sono in piedi: e' la condizione in cui
+# lab_stop_others ha qualcosa da fermare, ed e' quella che il test deve provare.
+# Con un `docker ps` vuoto non ci sarebbe niente da fermare e l'assenza dello stop
+# non direbbe nulla.
 cat > "$SANDBOX/bin/docker" <<EOF
 #!/bin/bash
 echo "docker \$*" >> "$REGISTRO"
 case "\$1 \$2" in
   "compose config") echo "services: {}" ;;
+  "ps --format") printf '%s\\n' genro-bench-lab-bridge-1 genro-bench-lab-legacy-1 ;;
 esac
 exit 0
 EOF
@@ -118,34 +130,16 @@ report $? "lo stato su disco nomina lo stack fallito e il codice"
 grep -q "cleanup" "$SANDBOX/run1.log"; report $? "il cleanup e' stato eseguito comunque"
 
 echo
-echo "== con due esecuzioni sane la sequenza ritorna zero, in ordine =="
-: > "$DRIVER_LOG"; : > "$REGISTRO"
-export DRIVER_EXIT_LEGACY=0 DRIVER_EXIT_BRIDGE=0
-export WORK_DIR="$SANDBOX/run2"
-"$SCENARIO_SANDBOX/run_cycle.sh" legacy,bridge prova2 > "$SANDBOX/run2.log" 2>&1
-RC=$?
-[ "$RC" = "0" ]; report $? "la sequenza ritorna zero (ottenuto $RC)"
-[ "$(cat "$DRIVER_LOG")" = "$(printf 'driver legacy\ndriver bridge')" ]
-report $? "prima il legacy, poi il bridge, mai insieme"
-grep -q "TUTTE COMPLETATE" "$SANDBOX/run2/run_cycle_status.txt"
-report $? "lo stato dichiara tutte completate"
-
-echo
-echo "== prima di ogni stack l'altro viene fermato =="
-grep -q "docker compose .*stop bridge" "$REGISTRO"
-report $? "prima del legacy si ferma il bridge"
-grep -q "docker compose .*stop legacy" "$REGISTRO"
-report $? "prima del bridge si ferma il legacy"
-FERMATI="$(grep -c "stop" "$REGISTRO")"
-[ "$FERMATI" -ge 4 ]; report $? "gli stop sono almeno quattro: due prima, due dopo ($FERMATI)"
-
-echo
-echo "== l'ordine inverso funziona senza toccare una riga =="
-: > "$DRIVER_LOG"
-export WORK_DIR="$SANDBOX/run3"
-"$SCENARIO_SANDBOX/run_cycle.sh" bridge,legacy prova3 > "$SANDBOX/run3.log" 2>&1
-[ "$(cat "$DRIVER_LOG")" = "$(printf 'driver bridge\ndriver legacy')" ]
-report $? "prima il bridge, poi il legacy"
+echo "== prima dello stack che parte, l'altro viene fermato =="
+# lab_stop_others ferma il container per nome (docker stop), lab_stop_service
+# ferma il servizio via compose: due comandi diversi, due righe diverse.
+BRIDGE_STOP="$(grep -n "^docker stop genro-bench-lab-bridge-1" "$REGISTRO" | head -1 | cut -d: -f1)"
+LEGACY_UP="$(grep -n "up -d --force-recreate --no-deps legacy" "$REGISTRO" | head -1 | cut -d: -f1)"
+[ -n "$BRIDGE_STOP" ]; report $? "il bridge e' stato fermato per nome"
+[ -n "$BRIDGE_STOP" ] && [ -n "$LEGACY_UP" ] && [ "$BRIDGE_STOP" -lt "$LEGACY_UP" ]
+report $? "e lo e' stato PRIMA che il legacy partisse: i due non girano insieme"
+grep -q "compose .*stop legacy" "$REGISTRO"
+report $? "a esecuzione conclusa si ferma anche il legacy"
 
 echo
 echo "=================================================="
