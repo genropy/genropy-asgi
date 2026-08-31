@@ -108,7 +108,7 @@ Sul bridge, per tutta la corsa:
 - **`cpu_grow_percent=None`**: la crescita per pressione CPU non entra mai. Un
   worker nasce solo dalla domanda concreta di un placement che non trova posto
   altrove. Non c'è nessun apply a caldo: la policy della misura è nella recipe dal
-  primo istante, quindi le due gambe condividono una linea del tempo senza attese
+  primo istante, quindi i due stack condividono una linea del tempo senza attese
   di pareggio.
 - **`worker_min_life_seconds=3600`**: controllo sperimentale, non un valore di
   produzione. Il retirement non deve poter chiudere un worker a metà ciclo.
@@ -116,7 +116,7 @@ Sul bridge, per tutta la corsa:
   cinquanta residenti sul loro worker: un freeze li porterebbe su disco e la pausa
   misurerebbe il congelatore invece della residenza. Il driver certifica che
   `user_idle_freeze_minutes` torni `null` prima di misurare qualsiasi cosa, e
-  blocca la gamba se compare un solo utente congelato.
+  ferma l'esecuzione se compare un solo utente congelato.
 
 ## Cosa è riusato e cosa è nuovo
 
@@ -170,7 +170,7 @@ piattaforme.
 
 Cambiando il generatore, i piani già in `traces/` vanno rigenerati con `--force`:
 `make_plans.sh` lascia stare un piano che esiste e ne verifica solo l'hash, per
-non far leggere due file diversi alle due gambe. Un hash diverso da quello
+non far leggere due file diversi ai due stack. Un hash diverso da quello
 dichiarato ferma la campagna — ed è così che è stato colto un piano vecchio
 rimasto in `traces/` dopo una modifica al generatore.
 
@@ -185,7 +185,7 @@ il nome della fase è strutturale e non conta i suoi utenti.
 
 Identico alla prova completa: otto core, quattro gibibyte, **otto processi per
 stack**, un utente una richiesta al secondo, la stessa guardia di latenza con la
-stessa soglia e le stesse quindici valutazioni, le due gambe in sequenza, le due
+stessa soglia e le stesse quindici valutazioni, i due stack in sequenza, le due
 certificazioni.
 
 Ridotto: sedici utenti invece di centoventi e **due per worker invece di
@@ -202,8 +202,8 @@ gli otto worker, e che non resta nulla in piedi alla fine.
 ./run_cycle.sh
 ```
 
-Le due gambe in sequenza — legacy prima, bridge dopo — sullo stesso boot della
-stessa macchina, con lo stesso piano. Una gamba che finisce male ferma la
+I due stack in sequenza — legacy prima, bridge dopo — sullo stesso boot della
+stessa macchina, con lo stesso piano. Un'esecuzione che finisce male ferma la
 sequenza. `./run_cycle.sh bridge,legacy` inverte l'ordine senza toccare una riga.
 
 ## Controlli locali
@@ -214,7 +214,7 @@ python3 -m py_compile make_cycle_trace.py cycle_probe.py admission_guard.py
 python3 tests/test_cycle_tools.py
 ```
 
-Nessuno usa Docker. La sequenzialità delle gambe e l'arresto dello stack
+Nessuno usa Docker. La sequenzialità dei due stack e l'arresto di quello
 precedente sono provati da `../bench_common/tests/test_lab_lifecycle.sh`, che
 mette un `docker` finto davanti al `PATH` e registra ogni invocazione: è lo stesso
 codice condiviso che questo runner usa senza modifiche. Il cablaggio degli

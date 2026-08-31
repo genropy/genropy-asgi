@@ -1,10 +1,10 @@
 #!/bin/bash
-# Il ciclo a otto core: le due gambe in sequenza, sullo stesso boot della stessa
+# Il ciclo a otto core: i due stack in sequenza, sullo stesso boot della stessa
 # macchina, con lo stesso piano di richieste.
 #
 #   ./run_cycle.sh [ordine] [prefisso]
 #
-#   ordine     l'ordine delle gambe, separato da virgola. Default "legacy,bridge".
+#   ordine     l'ordine dei due stack, separato da virgola. Default "legacy,bridge".
 #              "bridge,legacy" funziona senza toccare una riga di codice.
 #   prefisso   battezza gli output. Default "e8c".
 #
@@ -12,14 +12,14 @@
 #   WORK_DIR          dove finiscono output e log.  Default <scenario>/runs/<prefisso>
 #   LAB_DIR           il laboratorio Docker.        Default <scenario>/../docker
 #   PLAN              il piano delle richieste.     Default traces/cycle_plan.json
-#   CYCLE_MEM_LIMIT   il limite di memoria, uguale alle due gambe. Default 4g
+#   CYCLE_MEM_LIMIT   il limite di memoria, uguale ai due stack. Default 4g
 #   CYCLE_CPUS        i core per stack.             Default 8 (solo per il log)
 #   LEGACY_WORKERS    i worker di Gunicorn.         Default 8
 #   GNR_ASGI_WORKER_MAX_USERS   gli utenti per worker bridge. Default 15
 #   EXPECT_WORKERS    i worker attesi.              Default 8
 #   MEMORY_THRESHOLD  la soglia del guardiano.      Default 80
 #
-# Una gamba che finisce male ferma la sequenza: proseguire su un laboratorio gia'
+# Un'esecuzione che finisce male ferma la sequenza: proseguire su un laboratorio
 # storto produce misure senza valore.
 set -u
 
@@ -45,7 +45,7 @@ export CYCLE_DIR="$SCENARIO_DIR"
 lab_require_tools || exit 9
 LAB_DIR="$(cd "$LAB_DIR" && pwd)" || { lab_log "LAB_DIR inesistente"; exit 9; }
 # Il tree GenroPy montato: la sua revisione e' un fatto bloccante della
-# certificazione, e le due gambe devono montare lo stesso.
+# certificazione, e i due stack devono montare lo stesso.
 GENROPY_TREE="$(sed -n 's/^GENROPY_TREE=//p' "$LAB_DIR/.env" | tail -1)"
 [ -n "$GENROPY_TREE" ] || { lab_log "STOP: GENROPY_TREE assente da $LAB_DIR/.env"; exit 9; }
 lab_log "  genropy $GENROPY_TREE"
@@ -73,7 +73,7 @@ if [ ! -f "$PLAN" ]; then
   exit 6
 fi
 lab_verify_trace "$(dirname "$PLAN")" "$(basename "$PLAN").sha256" || exit 6
-# Il digest si prende UNA VOLTA, e ogni gamba lo ricontrolla: le due gambe
+# Il digest si prende UNA VOLTA, e ogni esecuzione lo ricontrolla: i due stack
 # devono leggere lo stesso file, byte per byte.
 PLAN_SHA256="$(lab_plan_digest "$PLAN")" || exit 6
 lab_log "  piano sha256 $PLAN_SHA256"
@@ -82,7 +82,7 @@ lab_wait_for_load 4.0 || exit 4
 lab_arm_cleanup
 
 run_leg () {
-  # run_leg <stack> — una gamba: ricrea il servizio, attende, misura, chiude.
+  # run_leg <stack> — un'esecuzione: ricrea il servizio, attende, misura, chiude.
   local stack="$1"
   local service base container expect_workers expect_per_worker override extra instance
   case "$stack" in
@@ -108,7 +108,7 @@ run_leg () {
   export LAB_SERVICE="$service"
   local out="$WORK_DIR/${PREFIX}_${stack}"
 
-  lab_log "=== gamba $stack ==="
+  lab_log "=== esecuzione su $stack ==="
   lab_require_same_plan "$PLAN" "$PLAN_SHA256" "$stack" || return 6
   if [ "$stack" = "bridge" ]; then
     # Il journal nasce col nome finale: nessun mv su un file che il bridge tiene
@@ -120,7 +120,7 @@ run_leg () {
   lab_stop_others "$service"
   lab_recreate_service "$service" || { lab_log "STOP: il servizio non si e' ricreato"; return 8; }
 
-  # Attesa dell'avvio. L'asimmetria fra le due gambe e' voluta e va detta:
+  # Attesa dell'avvio. L'asimmetria fra i due stack e' voluta e va detta:
   # sul bridge un GET / conia un guest, e un guest occupa uno slot di
   # worker_max_users falsando la distribuzione, quindi si attende il census;
   # sul legacy non esiste quella contabilita' e un GET / e' innocuo.
@@ -177,7 +177,7 @@ PY
   LAB_DRIVER_PID=""
   export LAB_WRITER_PIDS=""
   lab_stop_service "$service"
-  lab_log "  gamba $stack: exit $rc"
+  lab_log "  $stack: exit $rc"
   tail -4 "${out}_driver.log" | sed 's/^/    /'
   return $rc
 }

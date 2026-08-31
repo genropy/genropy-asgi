@@ -1,4 +1,4 @@
-# La gamba legacy del ciclo a otto core: gnrdaemon piu' Gunicorn a otto worker.
+# Il legacy del ciclo a otto core: gnrdaemon piu' Gunicorn a otto worker.
 #
 # La riga di Gunicorn e' quella dell'entrypoint tracciato, che non viene toccato:
 #   python -m gnr.web.cli.gnrserveprod legacy_lab -b 0.0.0.0:8099 \

@@ -246,7 +246,7 @@ class CycleProbe:
             raise SystemExit(
                 f"il piano letto non e' quello dichiarato dalla campagna:\n"
                 f"  atteso   {expected}\n  ottenuto {digest}\n"
-                f"Le due gambe leggerebbero file diversi.")
+                f"I due stack leggerebbero file diversi.")
         self.plan_sha256 = digest
         return json.loads(raw)
 
@@ -742,14 +742,14 @@ def main(argv=None):
     parser.add_argument("--memory-threshold", type=float, default=80.0)
     parser.add_argument("--plan-sha256", default=None,
                         help="il digest che la campagna ha registrato una volta: "
-                             "questa gamba si ferma se legge altri byte")
+                             "questa esecuzione si ferma se legge altri byte")
     parser.add_argument("--instance", default=None,
                         help="il nome dell'instance: la certificazione della "
                              "page-class cache legge la preferenza da un processo "
                              "di servizio nel container")
     parser.add_argument("--genropy-tree", default=None,
                         help="il path host del tree GenroPy montato: la sua "
-                             "revisione deve essere la stessa sulle due gambe")
+                             "revisione deve essere la stessa sui due stack")
     parser.add_argument("--census", default=None, help="solo bridge")
     parser.add_argument("--journal", default=None, help="solo bridge")
     arguments = parser.parse_args(argv)

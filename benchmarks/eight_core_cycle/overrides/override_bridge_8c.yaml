@@ -1,4 +1,4 @@
-# La gamba bridge del ciclo a otto core: otto worker, quindici utenti ciascuno.
+# Il bridge del ciclo a otto core: otto worker, quindici utenti ciascuno.
 #
 # Le variabili le esporta il runner, non il file .env:
 #   CYCLE_DIR            la directory di questo scenario, per montare la recipe
@@ -6,7 +6,7 @@
 #   GNR_ASGI_ORCH_LOG    il path del journal DENTRO il container, deciso PRIMA
 #                        che il container nasca. Il path dell'host ha un altro
 #                        nome, ed e' lab_lifecycle.sh a tenerli separati.
-#   CYCLE_MEM_LIMIT      il limite di memoria, uguale alle due gambe
+#   CYCLE_MEM_LIMIT      il limite di memoria, uguale ai due stack
 #   GNR_ASGI_WORKER_MAX_USERS  quanti utenti per worker: 15 nella prova, 2 nello
 #                        smoke. E' la stessa variabile che usa la worker sensitivity.
 #

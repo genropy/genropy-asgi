@@ -10,7 +10,7 @@
 #   - un utente, una richiesta al secondo, ritmo per utente e non globale;
 #   - la stessa guardia di latenza, con la stessa soglia e le stesse quindici
 #     valutazioni consecutive;
-#   - le due gambe in sequenza, mai insieme;
+#   - i due stack in sequenza, mai insieme;
 #   - la certificazione della page-class cache e quella dei setpoint vivi.
 #
 # Cosa e' RIDOTTO:
