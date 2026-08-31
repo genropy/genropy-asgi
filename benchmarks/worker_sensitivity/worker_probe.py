@@ -9,8 +9,20 @@ La traccia e' materializzata una sola volta per tutte le corse. L'unica leva
 che cambia fra W1/W2/W4/W8 e' ``worker_max_users`` nella recipe.
 """
 
-import argparse, csv, http.client, json, os, queue, statistics, subprocess, sys
-import threading, time, traceback, urllib.parse, urllib.request
+import argparse
+import csv
+import http.client
+import json
+import os
+import queue
+import statistics
+import subprocess
+import sys
+import threading
+import time
+import traceback
+import urllib.parse
+import urllib.request
 
 # Le dipendenze del driver stanno nella directory benchmarks, una sopra questo
 # scenario. Si risolvono dalla posizione di QUESTO file, mai dalla directory
@@ -79,93 +91,6 @@ class UserRunner(threading.Thread):
         self.user = logged_user
         self.inbox = queue.Queue()
         self.counter = 0
-
-    def apply_measured_policy(self):
-        """La policy della misura entra in vigore a caldo, senza riavviare nulla."""
-        with self.lock:
-            self.state["phase"] = "apply"
-        prima = self.topology()
-        base = self.arguments.base
-        richiesta = urllib.request.Request(
-            base + "/_orchestration/apply", data=json.dumps(MEASURED_POLICY).encode(),
-            method="POST", headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(richiesta, timeout=30) as risposta:
-            esito = json.load(risposta)
-        print(f"--- apply: {esito['outcome']} generation {esito['generation']} "
-              f"changed {json.dumps(esito['changed_settings'])} ---", flush=True)
-        offset_eventi = self.read_journal_events()
-        with self.lock:
-            self.state["phase"] = "apply_wait"
-        print(f"--- attesa di {APPLY_WAIT_S:.0f}s senza richieste ---", flush=True)
-        time.sleep(APPLY_WAIT_S)
-        dopo = self.topology()
-        with urllib.request.urlopen(base + "/_orchestration/status", timeout=15) as risposta:
-            stato = json.load(risposta)
-        vivi = stato["effective_settings"]
-        problemi = []
-        for chiave, valore in MEASURED_POLICY.items():
-            if vivi.get(chiave) != valore:
-                problemi.append(f"{chiave} vale {vivi.get(chiave)} invece di {valore}")
-        if prima["workers"] != dopo["workers"]:
-            problemi.append(f"worker cambiati: {prima['workers']} -> {dopo['workers']}")
-        if prima["map"] != dopo["map"]:
-            problemi.append("la mappa utenti->worker e' cambiata durante l'apply")
-        dopo_eventi = self.read_journal_events()
-        for parola in ("close_worker", "restart_worker", "process_quitted",
-                       "placement_fallback", "cpu_closed_hard_cap_fallback"):
-            delta = dopo_eventi.get(parola, 0) - offset_eventi.get(parola, 0)
-            if delta:
-                problemi.append(f"{parola} x{delta} durante l'apply")
-        aperti = self.admission_state()
-        chiusi = [n for n, aperto in aperti.items() if aperto is False]
-        if chiusi:
-            problemi.append(f"ammissione chiusa su {chiusi}")
-        record = {"apply": esito, "policy_viva": vivi, "prima": prima, "dopo": dopo,
-                  "admission": aperti, "problemi": problemi}
-        self.checkpoints.append({"stage": "apply", **record})
-        print(f"  policy viva certificata: {not problemi}; ammissione: {aperti}", flush=True)
-        if problemi:
-            raise InvalidRun("apply non conforme: " + "; ".join(problemi))
-
-    def topology(self):
-        census = self.read_census()
-        if census is None:
-            raise InvalidRun("census non leggibile")
-        group = census["groups"]["pool"]
-        return {"workers": sorted(group["living_workers"]),
-                "map": dict(group["user_worker_map"])}
-
-    def admission_state(self):
-        """cpu_admission_open per worker, dall'ultima scansione del journal."""
-        try:
-            righe = [l for l in open(self.arguments.journal) if l.strip()]
-        except Exception:
-            return {}
-        for linea in reversed(righe[-60:]):
-            riga = json.loads(linea)
-            candidati = riga.get("candidates") or []
-            if candidati:
-                return {c["name"]: c.get("cpu_admission_open") for c in candidati}
-        return {}
-
-    def check_watch(self, where):
-        if self.topology_broken:
-            raise InvalidRun(f"topologia cambiata durante {where}: {self.topology_broken}")
-
-    def watch_topology(self, where):
-        """Al primo scostamento la corsa e' strutturalmente non valida."""
-        adesso = self.topology()
-        if adesso != self.frozen_topology:
-            righe = [json.loads(l) for l in open(self.arguments.journal) if l.strip()]
-            colpevoli = [r for r in righe[-12:]
-                         if r["decision"] in ("start_worker", "placement", "retirement",
-                                              "restart_worker", "close_worker")]
-            dettaglio = "; ".join(f"{r['decision_id']} {r['decision']} {r['reason']} "
-                                  f"-> {r['outcome']} {json.dumps(r.get('numbers', {}))}"
-                                  for r in colpevoli)
-            raise InvalidRun(f"topologia cambiata durante {where}: "
-                             f"{self.frozen_topology['workers']} -> {adesso['workers']}; "
-                             f"journal: {dettaglio}")
 
     def run(self):
         while True:
@@ -530,8 +455,10 @@ class Probe:
                 rate = self.state["level_rate"]
                 scheduled, done = self.state["scheduled"], self.state["done"]
                 errors, transport = self.state["errors"], self.state["transport_errors"]
-                lat = sorted(self.state["lat"]); self.state["lat"] = []
-                late = sorted(self.state["late"]); self.state["late"] = []
+                lat = sorted(self.state["lat"])
+                late = sorted(self.state["late"])
+                self.state["lat"] = []
+                self.state["late"] = []
             census = self.read_census()
             group = ((census or {}).get("groups") or {}).get("pool", {})
             worker_pids, users_per_worker = {}, {}
@@ -592,7 +519,9 @@ class Probe:
             }
             if cgroup.get("current") and row["pss_total_kb"]:
                 row["cg_minus_pss_kb"] = int(cgroup["current"]) // 1024 - row["pss_total_kb"]
-            writer.writerow(row); handle.flush(); os.fsync(handle.fileno())
+            writer.writerow(row)
+            handle.flush()
+            os.fsync(handle.fileno())
             self.sampler_rows += 1
             self.sampler_ready.set()
             stop.wait(max(0.0, SAMPLE_S - (time.time() - started)))
@@ -688,7 +617,7 @@ class Probe:
         counts = {}
         try:
             with open(self.arguments.journal) as handle:
-                lines = [l for l in handle if l.strip()]
+                lines = [line for line in handle if line.strip()]
         except Exception:
             return counts
         for line in lines[self.journal_offset:]:
@@ -759,7 +688,7 @@ class Probe:
     def admission_state(self):
         """cpu_admission_open per worker, dall'ultima scansione del journal."""
         try:
-            righe = [l for l in open(self.arguments.journal) if l.strip()]
+            righe = [line for line in open(self.arguments.journal) if line.strip()]
         except Exception:
             return {}
         for linea in reversed(righe[-60:]):
@@ -777,7 +706,7 @@ class Probe:
         """Al primo scostamento la corsa e' strutturalmente non valida."""
         adesso = self.topology()
         if adesso != self.frozen_topology:
-            righe = [json.loads(l) for l in open(self.arguments.journal) if l.strip()]
+            righe = [json.loads(line) for line in open(self.arguments.journal) if line.strip()]
             colpevoli = [r for r in righe[-12:]
                          if r["decision"] in ("start_worker", "placement", "retirement",
                                               "restart_worker", "close_worker")]
@@ -804,11 +733,12 @@ class Probe:
         self.sampler_thread = threading.Thread(target=self.sample, args=(writer, handle, stop), daemon=True)
         self.sampler_thread.start()
         if not self.sampler_ready.wait(timeout=15.0):
-            stop.set(); handle.close()
+            stop.set()
+            handle.close()
             raise SamplerDown(f"nessuna riga campionata: {self.sampler_error}")
         self.sampler_checked_at = time.time()
         try:
-            self.journal_offset = sum(1 for l in open(self.arguments.journal) if l.strip())
+            self.journal_offset = sum(1 for line in open(self.arguments.journal) if line.strip())
         except Exception:
             self.journal_offset = 0
         print(f"  campionatore attivo; offset journal {self.journal_offset} righe", flush=True)
@@ -821,7 +751,7 @@ class Probe:
             self.frozen_topology = self.topology()
             print(f"  topologia congelata: {self.frozen_topology['workers']}", flush=True)
             try:
-                self.journal_offset = sum(1 for l in open(self.arguments.journal) if l.strip())
+                self.journal_offset = sum(1 for line in open(self.arguments.journal) if line.strip())
             except Exception:
                 self.journal_offset = 0
             print(f"  offset journal della misura: {self.journal_offset} righe", flush=True)
@@ -837,8 +767,10 @@ class Probe:
         self.wait_quiet("observe", OBSERVE_S)
         for runner in self.runners.values():
             runner.inbox.put(None)
-        stop.set(); self.sampler_thread.join(timeout=10)
-        handle.close(); calls_handle.close()
+        stop.set()
+        self.sampler_thread.join(timeout=10)
+        handle.close()
+        calls_handle.close()
         for name, payload in (("logouts", self.logouts), ("checkpoints", self.checkpoints),
                               ("windows", self.windows),
                               ("population_log", self.population_log),
