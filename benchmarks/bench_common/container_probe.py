@@ -75,12 +75,24 @@ class BridgeRoles:
         return sorted(name for name in roles if name.startswith("pool_"))
 
 
+GUNICORN_SIGNATURE = "gnrserveprod"
+DAEMON_SIGNATURE = "gnrdaemon"
+
+
 class LegacyRoles:
     """daemon, gunicorn master, gunicorn workers.
 
-    The Gunicorn master is the ``gnrserveprod`` process whose parent is the
-    container's init; every ``gnrserveprod`` child of it is a worker, numbered by
-    pid order so the same process keeps the same name across samples of one run.
+    The Gunicorn master is the ``gnrserveprod`` process that has no
+    ``gnrserveprod`` parent; every ``gnrserveprod`` child of it is a worker,
+    numbered by pid order so the same process keeps the same name across samples
+    of one run.
+
+    Two topologies produce that shape, and the rule covers both. The lab's
+    entrypoint ``exec``s Gunicorn, so the master IS pid 1 and its workers carry
+    ``ppid=1``; behind an init or a shell the master is a child of pid 1 instead.
+    Parentage towards init therefore cannot name the master: the earlier rule
+    ``gnrserveprod`` with ``ppid == "1"`` matched the four workers of the first
+    topology and left the master in ``other``.
     """
 
     name = "legacy"
@@ -92,17 +104,25 @@ class LegacyRoles:
     def prepare(self, raw):
         """Decide the names once per sample, from the whole process table."""
         self.assigned = {}
-        master = None
+        gunicorn = {pid: ppid for pid, ppid, cmd in raw if GUNICORN_SIGNATURE in cmd}
         for pid, ppid, cmd in raw:
-            if "gnrdaemon" in cmd:
+            if DAEMON_SIGNATURE in cmd:
                 self.assigned[pid] = "daemon"
-            elif "gnrserveprod" in cmd and ppid == "1":
-                master = pid
-                self.assigned[pid] = "gunicorn_master"
-        children = sorted((int(pid) for pid, ppid, cmd in raw
-                           if master and ppid == master and "gnrserveprod" in cmd))
+        master = self.get_master_pid(gunicorn)
+        if master is None:
+            return
+        self.assigned[master] = "gunicorn_master"
+        children = sorted(int(pid) for pid, ppid in gunicorn.items()
+                          if ppid == master and pid != master)
         for number, pid in enumerate(children, start=1):
             self.assigned[str(pid)] = f"gunicorn_worker_{number:02d}"
+
+    def get_master_pid(self, gunicorn):
+        """The Gunicorn process with no Gunicorn parent, pid 1 included."""
+        if "1" in gunicorn:
+            return "1"
+        rootmost = sorted(int(pid) for pid, ppid in gunicorn.items() if ppid not in gunicorn)
+        return str(rootmost[0]) if rootmost else None
 
     def role_of(self, pid, ppid, cmd):
         return self.assigned.get(pid, "other")

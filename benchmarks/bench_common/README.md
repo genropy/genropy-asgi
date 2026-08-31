@@ -91,6 +91,12 @@ arrivano dal census perché l'albero dei processi non può dire quale figlio sia
 distinti per parentela e non per titolo: Gunicorn riscrive il titolo solo con
 `setproctitle`, che l'immagine del laboratorio non installa.
 
+Il master è il processo Gunicorn **che non ha un padre Gunicorn**. La parentela
+verso l'init non basta a nominarlo: l'entrypoint del laboratorio fa `exec`, così
+il master *è* il pid 1 e i suoi worker portano `ppid=1`. Dietro un init il master
+è invece figlio del pid 1. La regola precedente — `gnrserveprod` con `ppid == 1`
+— nominava i quattro worker e lasciava il master fra i non classificati.
+
 Per questo esiste `certify`: il runner dichiara la forma che si aspetta e la
 corsa si ferma se la classificazione non la produce.
 
@@ -98,10 +104,11 @@ corsa si ferma se la classificazione non la produce.
 
 ```
 python3 tests/test_stop_guard.py
+python3 tests/test_container_probe.py
 python3 tests/test_page_class_cache.py
 bash tests/test_lab_lifecycle.sh
 ```
 
-Nessuno dei due usa Docker: il primo fabbrica un `/proc`, il secondo mette un
+Nessuno usa Docker: il primo fabbrica un `/proc`, il secondo mette un
 `docker` finto davanti al `PATH` e ne registra ogni invocazione, così "nessun
 comando durante il cleanup" è un numero misurato e non un'affermazione.
