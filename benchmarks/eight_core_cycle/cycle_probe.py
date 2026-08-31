@@ -717,10 +717,35 @@ class CycleProbe:
         if not self.reached_full:
             problems.append(f"popolazione incompleta: {len(self.engine.runners)} utenti "
                             f"invece di {self.plan['users']}")
-        withheld = sum(self.engine.withheld.values())
-        if withheld and self.admission.admission_open:
-            problems.append(f"{withheld} richieste trattenute senza ADMISSION_STOP")
+        # UNA RIGA TRATTENUTA NON VALE LO STESSO IN OGNI FASE.
+        #
+        # Durante la rampa dei login, un utente il cui login e' ancora in corso
+        # non puo' ricevere la sua riga: il piano dice che chiama dal secondo
+        # k+1, e un ritentativo a freddo costa due secondi che ritardano il pacer.
+        # Quelle righe sono ATTESE. Si contano e si riportano, e non rendono la
+        # prova invalida: la validita' della misura sta nelle finestre dopo.
+        #
+        # Dopo la rampa, a popolazione piena e con la porta aperta, una riga
+        # trattenuta e' invece un fatto che non torna: ogni utente esiste, ogni
+        # utente e' ammesso, quindi ogni riga deve partire.
+        #
+        # Dopo un ADMISSION_STOP le righe di chi non e' entrato o non e' rientrato
+        # sono attese di nuovo, e vanno registrate a parte: sono la misura
+        # dell'effetto della porta chiusa, non un difetto.
+        ramp = self.engine.withheld.get("login_ramp", 0)
+        after_ramp = {phase: count for phase, count in self.engine.withheld.items()
+                      if phase != "login_ramp" and count}
+        admission_open = self.admission.admission_open
+        blocking_withheld = after_ramp if (admission_open and self.reached_full) else {}
+        if blocking_withheld:
+            problems.append(f"richieste trattenute dopo la rampa, a popolazione piena "
+                            f"e senza ADMISSION_STOP: {blocking_withheld}")
         record = {"stage": "fasi", "declared": declared, "played": self.phases_played,
+                  "withheld_in_login_ramp": ramp,
+                  "withheld_after_ramp_blocking": blocking_withheld,
+                  "withheld_expected_after_admission_stop":
+                      {} if admission_open else after_ramp,
+                  "admission_open": admission_open,
                   "problemi": problems}
         self.checkpoints.append(record)
         if problems:

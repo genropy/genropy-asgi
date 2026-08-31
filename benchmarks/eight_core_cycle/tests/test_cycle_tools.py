@@ -561,35 +561,68 @@ try:
     check("tutte le fasi e popolazione piena: nessun problema",
           probe.require_every_phase()["problemi"], [])
 
+    print("\n  -- 1. trattenute nella RAMPA: registrate, non bloccanti --")
+    probe = verdict_probe(every, True, withheld={"login_ramp": 12})
+    record = probe.require_every_phase()
+    check("nessun problema", record["problemi"], [])
+    check("ma le dodici sono registrate", record["withheld_in_login_ramp"], 12)
+    check("e non compaiono fra le bloccanti", record["withheld_after_ramp_blocking"], {})
+
+    print("\n  -- 2. trattenute DOPO la rampa, senza ADMISSION_STOP: bloccanti --")
+    probe = verdict_probe(every, True, withheld={"login_ramp": 12, "pause_50": 7})
+    try:
+        probe.require_every_phase()
+        check("devono fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("sollevano", "trattenute dopo la rampa" in str(failure), True)
+        check("e nominano la fase e il numero", "'pause_50': 7" in str(failure), True)
+        check("la rampa NON e' fra le colpevoli", "login_ramp" in str(failure), False)
+
+    print("\n  -- 3. trattenute dopo ADMISSION_STOP: registrate a parte --")
+    probe = verdict_probe(every, True, withheld={"return_ramp": 7, "full_measure_2": 40},
+                          admission_open=False)
+    record = probe.require_every_phase()
+    check("nessun problema", record["problemi"], [])
+    check("nessuna bloccante", record["withheld_after_ramp_blocking"], {})
+    check("registrate come attese dopo la porta chiusa",
+          record["withheld_expected_after_admission_stop"],
+          {"return_ramp": 7, "full_measure_2": 40})
+    check("e la porta risulta chiusa nel record", record["admission_open"], False)
+
+    print("\n  -- 4. popolazione incompleta: fallisce comunque --")
+    probe = verdict_probe(every, False)
+    try:
+        probe.require_every_phase()
+        check("deve fallire", "non ha sollevato", "InvalidRun")
+    except InvalidRun as failure:
+        check("solleva per la popolazione", "popolazione incompleta" in str(failure), True)
     probe = verdict_probe(["login_ramp", "full_measure_1"], False)
     try:
         probe.require_every_phase()
         check("due fasi su sei devono fallire", "non ha sollevato", "InvalidRun")
     except InvalidRun as failure:
-        check("due fasi su sei sollevano", "fasi non eseguite" in str(failure), True)
-        check("e nomina anche la popolazione incompleta",
-              "popolazione incompleta" in str(failure), True)
-
-    probe = verdict_probe(every, False)
+        check("nomina le fasi non eseguite", "fasi non eseguite" in str(failure), True)
+        check("e la popolazione incompleta", "popolazione incompleta" in str(failure), True)
+    probe = verdict_probe(every, False, withheld={"full_measure_1": 9})
     try:
         probe.require_every_phase()
-        check("popolazione incompleta deve fallire", "non ha sollevato", "InvalidRun")
-    except InvalidRun as failure:
-        check("popolazione incompleta sola solleva",
-              "popolazione incompleta" in str(failure), True)
-
-    probe = verdict_probe(every, True, withheld={"pause_50": 7})
-    try:
-        probe.require_every_phase()
-        check("richieste trattenute senza stop devono fallire",
+        check("popolazione incompleta con trattenute deve fallire",
               "non ha sollevato", "InvalidRun")
     except InvalidRun as failure:
-        check("trattenute senza ADMISSION_STOP sollevano",
-              "trattenute" in str(failure), True)
+        check("fallisce per la popolazione, non per le trattenute",
+              ("popolazione incompleta" in str(failure)
+               and "trattenute dopo la rampa" not in str(failure)), True)
 
-    probe = verdict_probe(every, True, withheld={"return_ramp": 7}, admission_open=False)
-    check("ma con ADMISSION_STOP le trattenute sono legittime",
-          probe.require_every_phase()["problemi"], [])
+    print("\n  -- 5. tutte le fasi, sole trattenute nella rampa: PASS --")
+    probe = verdict_probe(every, True, withheld={"login_ramp": 12, "full_warmup": 0,
+                                                 "full_measure_1": 0, "pause_50": 0,
+                                                 "return_ramp": 0, "full_measure_2": 0})
+    record = probe.require_every_phase()
+    check("nessun problema: e' un PASS", record["problemi"], [])
+    check("dodici registrate nella rampa", record["withheld_in_login_ramp"], 12)
+    check("zero bloccanti", record["withheld_after_ramp_blocking"], {})
+    check("porta aperta", record["admission_open"], True)
+    check("tutte e sei le fasi giocate", record["played"], every)
 
     print("\n== le colonne condivise non cambiano ==")
     check("CYCLE_COLUMNS aggiunge esattamente tre colonne",
