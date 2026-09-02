@@ -124,10 +124,9 @@ are atomic. Example:
 .. code-block:: json
 
    {
-     "cpu_grow_percent": 50,
-     "cpu_grow_rearm_percent": 40,
-     "occupancy_max_percent": 80,
-     "reception_reserved_percent": 0
+     "cpu_admission_close_percent": 50,
+     "cpu_admission_reopen_percent": 40,
+     "worker_memory_admission_percent": 80
    }
 
 Profiles live in ``<site>/data/_orchestration_profiles`` unless
