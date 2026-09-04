@@ -384,6 +384,21 @@ class GenropyRegisterClient:
         """The GenropyWorker hosting this site (set by its constructor), or None."""
         return getattr(self.site, "spa_worker", None)
 
+    @property
+    def _request_identity(self) -> Any:
+        """The user the request served on this thread speaks for, or None.
+
+        Read off ``site.currentRequest.environ["genro.identity"]``, where the
+        core's ``WsgiSeam`` puts the identity the CALL was routed on and the
+        legacy ``dispatcher`` keeps the request per thread. None outside a
+        request (a task thread, a test calling the client directly): the
+        addressed verbs then take the desk road, never the local one.
+        """
+        request = self.site.currentRequest
+        if request is None:
+            return None
+        return request.environ.get("genro.identity")
+
     # ==================================================================
     # Lifecycle commands: direct calls onto the worker's op vocabulary
     # ==================================================================
@@ -993,7 +1008,7 @@ class GenropyRegisterClient:
         kinds = {"page": "page", "user": "user_store", "connection": "connection_store"}
         kind = kinds[register_name or "page"]
         worker.set_datachange(
-            None,
+            self._request_identity,
             change=to_tytx(change, "json"),
             kind=kind,
             target=register_item_id,
@@ -1009,14 +1024,14 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
             return
-        worker.reset_datachanges(None, target=register_item_id)
+        worker.reset_datachanges(self._request_identity, target=register_item_id)
 
     def drop_datachanges(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
         """Remove a page's queued datachanges under a path prefix."""
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
             return
-        worker.drop_datachanges(None, path=path, target=register_item_id)
+        worker.drop_datachanges(self._request_identity, path=path, target=register_item_id)
 
     def subscribe_path(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
         """Widen a page's own capture with a server path (setPendingContext uses this).

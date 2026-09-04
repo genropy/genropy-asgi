@@ -22,6 +22,8 @@ import uuid
 from contextlib import contextmanager
 
 import pytest
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 from genro_asgi.spa import GUEST_PREFIX
 
@@ -72,6 +74,21 @@ def client(worker):
 def fresh_ids():
     tag = uuid.uuid4().hex[:8]
     return f"c_{tag}", f"p_{tag}"
+
+
+@contextmanager
+def as_request(worker, user):
+    """Serve the block as a request of ``user`` would: the site's per-thread
+    ``currentRequest`` is the werkzeug Request the ``dispatcher`` builds, with
+    the identity the core's ``WsgiSeam`` writes into the environ. The client's
+    addressed verbs read it there (``_request_identity``)."""
+    site = worker.gnr_site
+    environ = EnvironBuilder(path="/", environ_overrides={"genro.identity": user}).get_environ()
+    site.currentRequest = Request(environ)
+    try:
+        yield
+    finally:
+        site.currentRequest = None
 
 
 def open_page(client, worker, user=None, data=None, **page_fields):
@@ -311,11 +328,14 @@ def test_handle_ping_flags_the_running_batch_window(client, worker):
 
 
 def test_serverstore_datachanges_peeks_without_consuming(client, worker):
-    _, page_id = open_page(client, worker)
-    client.set_datachange(page_id, "thermo.q", value=42, register_name="page")
-    store = client.pageStore(page_id)
-    assert [c.path for c in store.datachanges] == ["thermo.q"]
-    assert [c.path for c in store.datachanges] == ["thermo.q"]  # still pending
+    # the serverbatch case: a request writes on its OWN page and reads the write
+    # back before its end — the local road, taken on the caller's identity
+    cid, page_id = open_page(client, worker)
+    with as_request(worker, GUEST_PREFIX + cid):
+        client.set_datachange(page_id, "thermo.q", value=42, register_name="page")
+        store = client.pageStore(page_id)
+        assert [c.path for c in store.datachanges] == ["thermo.q"]
+        assert [c.path for c in store.datachanges] == ["thermo.q"]  # still pending
     assert [c.path for c in client.subscription_storechanges(None, page_id)] == ["thermo.q"]
 
 
