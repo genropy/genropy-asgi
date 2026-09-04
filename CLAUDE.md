@@ -38,8 +38,22 @@ test suite — so changes here no longer drag the genro-asgi framework test suit
   application's `orchestration` node, so the path is
   `applications.site.orchestration.commander`. The debug door mounts the core console on
   `_console` when `GNR_ASGI_CONSOLE` is set (mounting IS the gate).
+- **Commander** (`GenropySpaCommander` on the core's `SpaCommander`, `spa/genropy_spa_commander.py`,
+  #8 / genro-asgi #59): the vertex with the site's desk. `DeliveryDesk` (`spa/delivery_desk.py`,
+  with `SubscriptionIndex`) is the `delivery` branch of the commander's dispatcher —
+  `/commander/delivery/{subscribe_table,exchange,deposit,on_datachange}`; `GenropyCommanderEnvelopeHandler`
+  is the envelope layer whose `on_new_page` hands the announced `table_subscriptions` to
+  `record_page_table_subscriptions`; `on_worker_presented` and `broadcast_subscribed_tables` push the
+  source filter down as the order `/commander/delivery/subscribed_tables`; the drop verbs reach the desk.
+  `GenropySpaApplication.commander_class` names it.
 - **Worker** (`GenropyWorker` on the core's `SpaWorker`): a child process hosting the
-  `GnrWsgiSite`; registers user/connection/page items, runs the site in a thread.
+  `GnrWsgiSite`; registers user/connection/page items, runs the site in a thread. Carries the
+  site's data-plane verbs (`setStoreSubscription`, `subscribeTable`, `notifyDbEvents`,
+  `set_datachange`, `reset_datachanges`, `drop_datachanges`, `collect_page`), the request slot
+  with the deposits (`GenropyRequestSlot`), the `delivery` orders (`DeliveryOrders`) and the
+  `subscribed_tables` filter. `GenropyRegistry` / `GenropyPageRow` (`spa/genropy_register.py`)
+  are its registry and its page row: legacy Bag stores, the row queue, the three subscription
+  sets, the `user_view`.
 - **Register client** (`GenropyRegisterClient`, `siteregister/`): the in-process fake of
   the `gnr.web.daemon` client — the surface the site calls. Reads are worker-local;
   cross-worker delivery rides the end-of-request exchange with the commander's desk.
@@ -76,6 +90,9 @@ test suite — so changes here no longer drag the genro-asgi framework test suit
 
 - Current state and open defects: `temp/problemi_ponte_2026-08-22.md` (ours) and
   `temp/problemi_genro_asgi_dal_ponte_2026-08-22.md` (what the core owes the bridge).
+- The data plane (datachanges, table subscriptions, dbevents): `docs/internal/datachanges.md`,
+  `docs/internal/dbevents.md`; the move from the core: `temp/piano_59_bridge_2026-09-04.md`,
+  `temp/note_per_genro_asgi_59.md`.
 - Workflow record: `.phased/active/bridge-rebase-new-core/` (plan + notes).
 - Historical vision (pre-rebase, superseded): `genro-asgi/temp/architettura_daemonless.html`.
 

@@ -1,8 +1,9 @@
 Status — where the work stands
 ==============================
 
-**Measured on 2026-08-26**, on branch ``wf/macro2-replica-convergence``:
-**144 tests green, 78% coverage**, 1110 statements.
+**Measured on 2026-09-04**, on branch ``feat/8-genropy-machinery-in`` against
+genro-asgi ``feat/59-genropy-machinery-out``: **254 tests green, 84% coverage**,
+1561 statements.
 
 The other pages of this guide describe the bridge in its finished shape. This
 one is the only place that says how much of it exists today, and the only one
@@ -31,10 +32,23 @@ The scale
 Serving a site
 --------------
 
-**Hosting an unmodified GnrWsgiSite** — *settled*. ``genropy_worker.py`` (103
+**Hosting an unmodified GnrWsgiSite** — *settled*. ``genropy_worker.py`` (255
 statements, 95%), ``site_engine_factory.py`` (35, 89%), ``legacy_bag.py`` (68,
 99%). Exercised end to end by ``test_legacy_e2e.py`` and
 ``test_genropy_worker_units.py``.
+
+**The site's data plane** — *settled*. Since genro-asgi #59 the datachanges,
+the table subscriptions and the dbevents are the bridge's: the desk on the
+commander (``genropy_spa_commander.py``, 60 statements, 97%;
+``delivery_desk.py``, 93, 99%; ``subscription_index.py``, 51, 100%), the page
+row and the registry (``genropy_register.py``, 83, 100%), the verbs and the
+request slot on the worker. The suites that left the core run here on the live
+lane of ``tests/lane.py``: ``test_delivery_desk.py``, ``test_page_store_row.py``,
+``test_data_plane.py``, ``test_dbevents.py``, ``test_request_exchange.py``,
+``test_slot_deposit.py``, ``test_subscribed_tables_broadcast.py``,
+``test_desk_projection.py``, ``test_carried_store_views.py``,
+``test_verb_refusal.py``, ``test_subscription_index.py``. Design notes:
+``docs/internal/datachanges.md``, ``docs/internal/dbevents.md``.
 
 **The daemonless register** — *settled*. ``siteregister_client.py`` is the
 largest module of the package by far — 724 statements, 82% — and it is what
@@ -96,9 +110,10 @@ isolating one layer so a slowdown can be attributed instead of guessed.
 What is not there yet
 ---------------------
 
-**The rebase on the current core** — the published bridge pins the frozen core
-release, and this guide describes the bridge as it will be on the current one.
-Until the migration lands there is no genropy-asgi release from this line.
+**The release on core 0.41** — the bridge on this branch runs against
+genro-asgi ``feat/59-genropy-machinery-out``; the published 0.5.0 pins core 0.40,
+which still carries the machinery this branch received. genropy-asgi 0.6.0 is
+released the day core 0.41.0 is, pinned ``>=0.41,<0.42``.
 
 **A per-worker view over HTTP** — the monitor renders the generic panel: the
 server, its sections and the mounted application. Which user sits on which

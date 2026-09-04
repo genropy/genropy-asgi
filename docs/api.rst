@@ -17,13 +17,35 @@ The classes that host a GenroPy ``GnrWsgiSite``.
 
 .. autoclass:: genropy_asgi.spa.genropy_worker.GenropyWorker
 
-.. autoclass:: genropy_asgi.spa.genropy_worker.GenropyRegistry
+.. autoclass:: genropy_asgi.spa.genropy_register.GenropyRegistry
+
+.. autoclass:: genropy_asgi.spa.genropy_register.GenropyPageRow
 
 ``GenropySpaApplication`` is the single front for both shapes: it is the core
 ``SpaApplication`` (whose commander owns the user-sticky pool and the site-wide
-``/metrics`` endpoint), and its ``worker_class`` points at ``GenropyWorker`` —
-the worker that hosts the site, in this process for the single and in each
-spawned child for a pool.
+``/metrics`` endpoint), its ``commander_class`` is ``GenropySpaCommander`` and
+its ``worker_class`` points at ``GenropyWorker`` — the worker that hosts the
+site, in this process for the single and in each spawned child for a pool.
+
+The site's data plane
+---------------------
+
+Datachanges, table subscriptions and dbevents are the bridge's since genro-asgi
+#59: the vertex half is the desk on the commander, the worker half is the verbs
+the register client calls on ``GenropyWorker``. See
+``docs/internal/datachanges.md`` and ``docs/internal/dbevents.md``.
+
+.. autoclass:: genropy_asgi.spa.genropy_spa_commander.GenropySpaCommander
+
+.. autoclass:: genropy_asgi.spa.genropy_spa_commander.GenropyCommanderEnvelopeHandler
+
+.. autoclass:: genropy_asgi.spa.delivery_desk.DeliveryDesk
+
+.. autoclass:: genropy_asgi.spa.subscription_index.SubscriptionIndex
+
+.. autoclass:: genropy_asgi.spa.genropy_worker.GenropyRequestSlot
+
+.. autoclass:: genropy_asgi.spa.genropy_worker.DeliveryOrders
 
 The OpenAPI bridge
 ------------------
