@@ -24,6 +24,13 @@ x-stack: &stack
     - ./projects:/lab/projects
     - ./entrypoints:/lab/entrypoints:ro
     - uv_cache:/root/.cache/uv
+  # The legacy stack opens and closes a TCP connection to its register daemon
+  # for EVERY register call — about fifteen per RPC. Without these two the run
+  # dies of ephemeral-port exhaustion long before the cpu is busy, and the
+  # comparison would measure the port table. Both stacks get them, declared.
+  sysctls:
+    net.ipv4.tcp_tw_reuse: "1"
+    net.ipv4.ip_local_port_range: "10000 65535"
   depends_on:
     postgres: { condition: service_healthy }
 
@@ -50,7 +57,10 @@ services:
     entrypoint: /lab/entrypoints/legacy.sh
     environment:
       LEGACY_WORKERS: ${LEGACY_WORKERS:-1}
-    ports: ["8099:8099"]
+    # Loopback only, like the bridge: on a public host the two stacks are
+    # reached through an ssh tunnel and nothing else. The bench container talks
+    # to `legacy:8099` over the compose network, which this does not touch.
+    ports: ["127.0.0.1:8099:8099"]
 
   bridge:
     <<: *stack
@@ -59,7 +69,39 @@ services:
       GNR_DAEMON_PROVIDER: genropy-asgi
       GNR_ASGI_INSPECTOR: "1"
       GNR_ASGI_WORKER_MAX_USERS: ${GNR_ASGI_WORKER_MAX_USERS:-}
-    ports: ["8098:8098"]
+      # Prova 3 turns the freeze on; unset, the core default (never) stands.
+      GNR_ASGI_IDLE_FREEZE_MINUTES: ${GNR_ASGI_IDLE_FREEZE_MINUTES:-}
+      # Lab pool recipe and its thresholds — all optional; unset, the built-in
+      # recipe runs with the core defaults (see configs/cpu_policy_config.py).
+      GNR_ASGI_POOL_RECIPE: ${GNR_ASGI_POOL_RECIPE:-}
+      GNR_ASGI_CPU_GROW_PERCENT: ${GNR_ASGI_CPU_GROW_PERCENT:-}
+      GNR_ASGI_CPU_GROW_REARM_PERCENT: ${GNR_ASGI_CPU_GROW_REARM_PERCENT:-}
+      GNR_ASGI_OCCUPANCY_MAX_PERCENT: ${GNR_ASGI_OCCUPANCY_MAX_PERCENT:-}
+      GNR_ASGI_RECEPTION_RESERVED_PERCENT: ${GNR_ASGI_RECEPTION_RESERVED_PERCENT:-}
+      GNR_ASGI_ORCH_LOG: ${GNR_ASGI_ORCH_LOG:-}
+      # Where the monitor's identity records live: a directory of the host's
+      # runtime, so the admin survives a container restart. The two SECRETS
+      # that unlock it are NOT here — they would then be in the rendered
+      # compose, in `docker inspect` and in the campaign's manifest. They ride
+      # the mounted file below and the entrypoint exports them.
+      GNR_ASGI_MONITOR_STORAGE: /lab/runtime/monitor_storage
+    volumes:
+      - ${GENROPY_TREE:?}:/src/genropy:ro
+      - ${GENROPY_PROJECTS:?}:/src/genropy-projects:ro
+      - ${GENRO_ASGI_TREE:?}:/src/genro-asgi:ro
+      - ${GENROPY_ASGI_TREE:?}:/src/genropy-asgi:ro
+      - ./gnr:/lab/gnr:ro
+      - ./projects:/lab/projects
+      - ./entrypoints:/lab/entrypoints:ro
+      - uv_cache:/root/.cache/uv
+      # The orders log and other run material land here, host-readable.
+      - ./runtime:/lab/runtime
+      # The monitor's two secrets, as a FILE and never as a value: what appears
+      # in the rendered compose is the path, and the path is not a secret.
+      # A missing file is a boot error — the entrypoint refuses to start.
+      - ${MONITOR_SECRETS_FILE:?}:/lab/monitor.secrets.env:ro
+    # Loopback only: the bridge is reached from outside through an ssh tunnel.
+    ports: ["127.0.0.1:8098:8098"]
 
   bench:
     build: { context: images, dockerfile: bench.Dockerfile }
