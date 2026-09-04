@@ -42,10 +42,12 @@ SPIN_ROUNDS = 400
 def call_sink(worker):
     """Wrap a lifecycle op the way a request does: on exit its events reach the desk.
 
-    The verbs announce onto ``worker_events``, which travel on the worker's
-    REPLYs only; a verb called from the pytest thread answers no CALL. The desk
-    files addressed writes for the rows it knows, so the lane plays the REPLY
-    here (``SiteLane.deliver_worker_events``), as the request's own tail would.
+    The verbs announce into the request slot of the CALL they serve, and the
+    events ride that CALL's REPLY; a verb called from the pytest thread answers
+    no CALL, so its events stay in the thread's slot. The desk files addressed
+    writes for the rows it knows, so the lane sends them up here on the
+    worker's own channel (``SiteLane.deliver_worker_events``), as the request's
+    own tail would on its REPLY.
     """
     yield
     worker.lane.deliver_worker_events()
@@ -647,6 +649,7 @@ def test_the_readers_tolerate_rows_demolished_mid_read(client, worker):
     churn_failure = []
 
     def churn():
+        worker.open_request_slot()  # a thread of its own: it needs its own request slot
         try:
             for cid in chains:
                 with call_sink(worker):

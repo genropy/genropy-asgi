@@ -310,6 +310,9 @@ def worker():
         )
     except Exception as exc:  # site missing or broken: skip, don't fail
         pytest.skip(f"cannot build the {_SITE} site: {exc}")
+    # The tests call the verbs from this thread, outside any CALL: the verbs
+    # announce into the request slot, so the thread needs one open.
+    instance.open_request_slot()
     yield instance
     instance.exit_process()
 

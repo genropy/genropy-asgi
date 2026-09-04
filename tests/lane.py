@@ -30,7 +30,7 @@ from typing import Any
 
 from genro_asgi.channel.frame import FrameStream
 from genro_asgi.spa.orchestration import FreezeHandler, GroupHandler, SpaCommander
-from genro_asgi.spa.orchestration.worker_handler import PING_OP_PATH, WorkerHandler
+from genro_asgi.spa.orchestration.worker_handler import WorkerHandler
 
 #: The name the lane's handler and worker share: short, because a UDS path is.
 WORKER_NAME = "pool_0001"
@@ -104,18 +104,24 @@ class SiteLane:
         await self.worker_handler.connector.stop()
 
     def deliver_worker_events(self) -> None:
-        """Play the REPLY a request ends with: the worker's queued events reach the desk.
+        """Send the desk what the verbs announced: the events of the pytest thread's slot.
 
         The commander learns its rows (pages, connections, users) from the
-        ``worker_events`` a worker puts on every REPLY it sends. A verb called
-        straight from the pytest thread answers no CALL, so its events wait on
-        the worker; one ping CALL from the handler makes the worker reply, and
-        that REPLY carries them through the handler's envelope chain — the
-        production road, with no request body.
+        ``worker_events`` a worker collects in the request slot of the CALL it
+        serves, and sends on that CALL's REPLY. A verb called straight from the
+        pytest thread answers no CALL: its events sit in the slot
+        :func:`start_site_lane` opened on that thread, and no REPLY will ever
+        carry them. This takes them off the slot and sends them up the worker's
+        own channel (``announce_worker_events``, the one the transfer cycle
+        uses) — the REPLY of that CALL is the desk's acknowledgement.
         """
         assert self.loop is not None
+        events = list(self.worker.worker_events)
+        self.worker.worker_events.clear()
+        if not events:
+            return
         asyncio.run_coroutine_threadsafe(
-            self.worker_handler.connector.call(PING_OP_PATH, {}), self.loop
+            self.worker.announce_worker_events(events), self.loop
         ).result(30)
 
     def stop(self) -> None:
@@ -147,4 +153,7 @@ def start_site_lane(source: str) -> SiteLane:
         loop.close()
         shutil.rmtree(lane.root, ignore_errors=True)
         raise
+    # The tests call the site verbs from this thread, and a verb announces into
+    # the slot of the CALL it serves: give the thread one.
+    lane.worker.open_request_slot()
     return lane
