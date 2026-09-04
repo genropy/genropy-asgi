@@ -555,7 +555,28 @@ class GenropyWorker(SpaWorker):
                 {"op": op, "kind": kind, "target": target, "filters": filters, **message},
             )
         )
-        return {"local": False, "filed": bool(answer["filed"])}
+        filed = bool(answer["filed"])
+        if not filed and kind == "user_store":
+            # The one loss the site cannot notice: a store write the desk holds
+            # nobody for. Said out loud (owner, 2026-09-04); the road that would
+            # serve it locally is D-DC3's, see temp/note_per_genro_asgi_59.md.
+            self._logger.warning(
+                "Worker %s: %s to the user store of %r went nowhere (path %r): "
+                "the desk holds no such user",
+                self.name,
+                op,
+                target,
+                self._addressed_path(message),
+            )
+        return {"local": False, "filed": filed}
+
+    def _addressed_path(self, message: dict[str, Any]) -> str | None:
+        """The path an addressed write names: the drop's own, or the change's key."""
+        if "path" in message:
+            return message["path"]
+        if "change" in message:
+            return from_tytx(message["change"], "json")["key"]["path"]
+        return None
 
     def set_datachange(
         self,

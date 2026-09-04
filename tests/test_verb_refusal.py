@@ -11,6 +11,8 @@ land as if it never happened. Migrated from the core (genro-asgi
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from genro_bag import Bag
 from genro_bag.datachange import DataChangeCollector
@@ -68,3 +70,21 @@ def test_nothing_refused_ever_reaches_the_desk(page_lane):
     assert delivery["datachanges"] == []
     assert page_lane.desk.page_datachange_map == {}
     assert page_lane.desk.user_store_change_map == {}
+
+
+def test_a_user_store_write_nobody_holds_is_said_out_loud(page_lane, caplog):
+    # The site's legacy surface returns None whatever happened: the one loss it
+    # cannot notice is logged by the worker, with the user and the path.
+    with caplog.at_level(logging.WARNING, logger="genro_asgi.spa.orchestration.spa_worker"):
+        answer = page_lane.verb(
+            "set_datachange",
+            "u1",
+            change=foreign_change("prefs.theme", "dark"),
+            kind="user_store",
+            target="nobody.here",
+        )
+    assert answer["filed"] is False and answer["local"] is False
+    records = [r for r in caplog.records if "went nowhere" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelno == logging.WARNING
+    assert "nobody.here" in records[0].getMessage()
+    assert "prefs.theme" in records[0].getMessage()
