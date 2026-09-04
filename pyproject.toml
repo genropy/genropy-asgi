@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "genropy-asgi"
-version = "0.5.0"
+version = "0.6.0"
 description = "Daemon-less commander/worker model serving GenroPy legacy sites on top of genro-asgi"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "genro-asgi>=0.40.0,<0.41",
+    "genro-asgi>=0.41.0,<0.42",
 ]
 
 [project.optional-dependencies]
