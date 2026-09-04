@@ -40,46 +40,67 @@ exactly the legacy site:
   moved user's folders must survive for the wake. A frozen user the
   commander expires leaves folders behind — the declared debt that replaces
   the retired orphan sweep;
-- ``build_registry()`` returns :class:`GenropyRegistry`, whose stores are
-  legacy Bags under :class:`~genropy_asgi.spa.legacy_bag.LegacyBagCollector`
-  capture;
+- ``build_registry()`` returns :class:`~genropy_asgi.spa.genropy_register.GenropyRegistry`:
+  the site's page row (:class:`~genropy_asgi.spa.genropy_register.GenropyPageRow`)
+  and legacy Bag stores under :class:`~genropy_asgi.spa.legacy_bag.LegacyBagCollector`
+  capture — the registry module says how;
 - ``exit_process()`` stops the site (``on_site_stop``) before the core
   teardown.
+- the site's verbs of the data plane (genro-asgi #59: they left the core and
+  live here): ``setStoreSubscription``, ``subscribeTable``, ``notifyDbEvents``,
+  ``set_datachange``, ``reset_datachanges``, ``drop_datachanges``,
+  ``collect_page`` — the register client calls them by name on
+  ``site.spa_worker``. An addressed write to a page of the caller's own user
+  living here lands on the row at once; every other address climbs to the desk
+  as ONE CALL on ``/commander/delivery/on_datachange``; a subscription is
+  filed at the desk synchronously; a commit's deposits accumulate on the
+  request's own slot (:class:`GenropyRequestSlot`) and leave at its end — in
+  ``collect_page``'s exchange, or alone through ``deliver_slot_deposits`` from
+  ``on_request_served``. ``subscribed_tables`` is the source filter the desk
+  pushes down on ``/commander/delivery/subscribed_tables``
+  (:class:`DeliveryOrders`); ``_install_carried_store`` re-attaches the
+  ``user_view`` of every watching page on the carried Bag.
 
-:class:`GenropyRegistry` overrides the core seams that touch a Bag's API and
-nothing else: ``new_store()`` returns a legacy ``gnr.core.gnrbag.Bag``,
-``new_collector(store, paths)`` returns a ``LegacyBagCollector``, and
-``subscribe_page_store``/``detach_page`` attach and remove the row-queue
-capture with the legacy ``subscribe(id, any=...)`` (no ``transaction`` kind
-exists there) — every row of the chain (user stores, page stores, the
-views) is a legacy Bag, so legacy values ride the registers untranslated
-(cemented rule B1). A legacy store travels a move pickled whole: the legacy
-Bag drops its subscribers at ``__getstate__``, and the registry re-attaches
-the capture on arrival.
-
-This module imports ``gnr.*`` at the top BY DESIGN (via ``legacy_bag``):
+This module imports ``gnr.*`` at the top BY DESIGN (via ``genropy_register``):
 it is loaded through the ``worker_class`` dotted path only where GenroPy
 is installed.
 """
 
 from __future__ import annotations
 
+import heapq
 import logging
 import os
 import shutil
-from datetime import UTC, datetime
+import time
+from collections.abc import Callable
 from typing import Any
 
 from genro_asgi.spa import RegisterRegistry
 from genro_asgi.spa.orchestration import SpaWorker
-from gnr.core.gnrbag import Bag
+from genro_asgi.spa.orchestration.spa_worker import RequestSlot
+from genro_asgi.spa.orchestration.worker_connector import CommanderCallFailed
+from genro_routes import RoutingClass, route
+from genro_tytx import from_tytx
 
-from .legacy_bag import LegacyBagCollector
+from .delivery_desk import STATE_KINDS
+from .genropy_register import GenropyRegistry
 from .site_engine_factory import GenropySiteEngineFactory
 
 log = logging.getLogger("genropy_asgi.spa")
 
-__all__ = ["GenropyRegistry", "GenropyWorker"]
+__all__ = [
+    "DESK_DEPOSIT_PATH",
+    "DESK_EXCHANGE_PATH",
+    "DESK_ON_DATACHANGE_PATH",
+    "DESK_SUBSCRIBE_TABLE_PATH",
+    "SIGNAL_KIND",
+    "STATE_KINDS",
+    "DeliveryOrders",
+    "GenropyRegistry",
+    "GenropyRequestSlot",
+    "GenropyWorker",
+]
 
 # The one legacy <cleanup> age with an equivalent on this base: the seconds of
 # silence past which the legacy register dropped a logged connection become
@@ -88,76 +109,66 @@ __all__ = ["GenropyRegistry", "GenropyWorker"]
 IDLE_FREEZE_LEGACY_KEY = "connection_max_age"
 IDLE_FREEZE_DEFAULT_SECONDS = 7200
 
+#: The routing keys of the lane going UP are paths on the tree the commander
+#: hosts: ``delivery`` is the branch :class:`~genropy_asgi.spa.delivery_desk.
+#: DeliveryDesk` serves. The call that files a page's table subscription at the
+#: desk: it goes up at once and synchronously, so the index is already right
+#: when the request that subscribed commits in the same breath.
+DESK_SUBSCRIBE_TABLE_PATH = "/commander/delivery/subscribe_table"
 
-class GenropyRegistry(RegisterRegistry):
-    """The core registry with legacy stores: every row's Bag is a gnr Bag."""
+#: The routing key of the end-of-request exchange: what this request produced
+#: goes up, what waits for its page comes back.
+DESK_EXCHANGE_PATH = "/commander/delivery/exchange"
 
-    def new_store(self) -> Any:
-        """The store factory: a legacy ``gnr.core.gnrbag.Bag``."""
-        return Bag()
+#: The routing key of the end-of-request deposit: what the slot still holds
+#: when no collect carried it away goes up alone, and nothing comes back.
+DESK_DEPOSIT_PATH = "/commander/delivery/deposit"
 
-    def new_collector(self, store: Any, paths: set[str] | None = None) -> Any:
-        """The capture factory: a ``LegacyBagCollector`` on a legacy store."""
-        return LegacyBagCollector(store, paths=paths)
+#: The routing key one addressed write climbs the moment its verb is called:
+#: it is filed at the desk at once, so a request that never collects loses
+#: nothing, and the answer says whether the target exists at all.
+DESK_ON_DATACHANGE_PATH = "/commander/delivery/on_datachange"
 
-    def subscribe_page_store(self, page: dict[str, Any]) -> None:
-        """Attach to a page's legacy store the capture that fills the row's queue.
+#: The address kind that names a page itself: the change is a SIGNAL and lands
+#: as a deposit on that page's queue at the desk — no Bag write, no residue.
+#: The STATE kinds — the ones that name a store — are ``STATE_KINDS``, declared
+#: with the desk and imported here: one word, one module.
+SIGNAL_KIND = "page"
 
-        The core's subscriber speaks the genro-bag API (four handlers, one of
-        them ``transaction``); a legacy Bag has one ``any=`` callback and no
-        transactions, so the capture is rebuilt on it the way
-        :class:`LegacyBagCollector` reads the legacy events: ``ins``/``del``
-        carry the parent's pathlist and the path is completed with the node's
-        label, ``upd_*`` carry it whole. The rest is the core's contract:
-        ``autocreate`` skipped, prefixes read from ``subscribed_paths`` at event
-        time and matched on segment boundaries, reason ``serverChange``, the
-        transient ``_fired`` popped from a copy of the attributes. The append
-        runs under the row's ``item_lock``: ``append_page_datachange`` expects
-        its caller to hold it, and the writer here is the site's ServerStore,
-        which holds no lock.
-        """
-        store = page["store"]
 
-        def on_event(
-            node: Any = None,
-            pathlist: Any = None,
-            evt: str | None = None,
-            oldvalue: Any = None,
-            ind: Any = None,
-            reason: Any = None,
-        ) -> None:
-            if reason == "autocreate":
-                return
-            if evt in ("ins", "del"):
-                path = ".".join(list(pathlist or []) + [node.label])
-            else:
-                path = ".".join(list(pathlist or []))
-            paths = page["subscribed_paths"]
-            if not any(path == p or path.startswith(f"{p}.") for p in paths):
-                return
-            delete = evt == "del"
-            attributes = dict(node.attr)
-            fired = bool(attributes.pop("_fired", False))
-            change = {
-                "key": {"path": path, "reason": "serverChange", "fired": fired},
-                "value": None if delete else node.staticvalue,
-                "attributes": attributes or None,
-                "delete": delete,
-                "change_ts": datetime.now(UTC),
-            }
-            with page["item_lock"]:
-                self.append_page_datachange(page, change)
+class GenropyRequestSlot(RequestSlot):
+    """The core's request slot plus the table-event deposits of a hosted site's request.
 
-        store.subscribe(f"page_store:{page['register_item_id']}", any=on_event)
+    ``dbevents`` are the deposits that go up the lane at the end of the request
+    (inside ``collect_page``'s exchange, or on their own through
+    ``deliver_slot_deposits``); ``own_dbevents`` are the ``local_only`` deposits
+    of the hidden transaction, which never leave this process and reach the
+    origin page's own collect alone. The addressed writes are NOT here: each one
+    leaves at once, on its own CALL, the moment its verb is called.
+    """
 
-    def detach_page(self, page: dict[str, Any]) -> None:
-        """Stop a page row's capture: on a legacy Bag ``any=True`` is the whole subscription.
+    def __init__(self) -> None:
+        super().__init__()
+        self.dbevents: list[dict[str, Any]] = []
+        self.own_dbevents: list[dict[str, Any]] = []
 
-        The core also passes ``transaction=True``, a kind the legacy Bag never had.
-        """
-        page["store"].unsubscribe(f"page_store:{page['register_item_id']}", any=True)
-        if page["user_view"] is not None:
-            page["user_view"].detach()
+
+class DeliveryOrders(RoutingClass):
+    """The ``delivery`` branch of the worker's ``commander_orders``: what the desk pushes down.
+
+    Args:
+        spa_worker: the process the order acts on.
+    """
+
+    def __init__(self, spa_worker: Any) -> None:
+        self.spa_worker = spa_worker
+
+    @route()
+    def subscribed_tables(self, tables: list[str] | None = None) -> dict[str, Any]:
+        """Replace the source filter with the whole set the commander pushes."""
+        with self.spa_worker.dispatch_lock:
+            self.spa_worker.subscribed_tables = set(tables or ())
+        return {}
 
 
 class GenropyWorker(SpaWorker):
@@ -205,6 +216,14 @@ class GenropyWorker(SpaWorker):
         caller_idle = kwargs.pop("user_idle_freeze_minutes", None)
         idle_from_site = caller_idle is None
         super().__init__(name, **kwargs)
+        #: The source filter: every table some page anywhere subscribes. Fed
+        #: ONLY by the ``/commander/delivery/subscribed_tables`` order the
+        #: commander pushes on every transition of the set and at the
+        #: presentation; ``notifyDbEvents`` filters the site's commits on it.
+        self.subscribed_tables: set[str] = set()
+        self.worker_dispatcher.commander_orders.add_branches(
+            [{"name": "delivery", "instance": DeliveryOrders(self)}]
+        )
         if not idle_from_site:
             self.user_idle_freeze_minutes = float(caller_idle)
         # The forked worker receives the site its template built; the spawned
@@ -299,6 +318,562 @@ class GenropyWorker(SpaWorker):
             node = bag.getNode(path)
             node.attr.pop("_fired", None)
             node.staticvalue = None
+
+    # ------------------------------------------------------------------
+    # The request slot: what one request produces, and its two exits
+    # ------------------------------------------------------------------
+
+    def build_request_slot(self) -> RequestSlot:
+        """The slot of one request, with the table-event deposits of a hosted site's request."""
+        return GenropyRequestSlot()
+
+    def on_request_served(self) -> None:
+        """The end of every served request, failed ones included: what the slot still holds goes up."""
+        self.deliver_slot_deposits()
+
+    def deliver_slot_deposits(self) -> None:
+        """Deliver what the slot still holds, at the end of a request that never collected.
+
+        Empties the slot's ``dbevents`` through the desk's own deposit op, which
+        files them in the subscribers' queues and retires nothing: there is no
+        page to answer. ``own_dbevents`` — the hidden transaction — are NOT
+        delivered here: they belong to the origin page's own collect and never
+        leave this process. Called on the pool thread, like ``collect_page``;
+        after a collect the slot is empty, so it delivers nothing twice.
+
+        A desk that refuses the deposit is logged and the deposits are dropped,
+        never raised: this runs in the ``finally`` of the stitching, where an
+        exception of its own would replace the site's — the lost deposits are
+        the same class of loss as a worker dying between commit and delivery.
+        """
+        slot = self.request_slot
+        if not slot.dbevents:
+            return
+        try:
+            self.run_on_loop(self.call(DESK_DEPOSIT_PATH, {"dbevents": slot.dbevents}))
+        except CommanderCallFailed:
+            self._logger.exception(
+                "Worker %s: %d deposits lost, the desk refused the end-of-request deposit",
+                self.name,
+                len(slot.dbevents),
+            )
+        slot.dbevents = []
+
+    # ------------------------------------------------------------------
+    # The site's verbs: subscriptions, the collect, the addressed writes
+    # ------------------------------------------------------------------
+
+    def setStoreSubscription(  # noqa: N802 - reserved protocol name
+        self,
+        identity: str,
+        page_id: str,
+        storename: str,
+        prefix: str,
+        active: bool = True,
+    ) -> dict[str, Any]:
+        """Open (or close) a page's window onto a store, by path prefix.
+
+        Args:
+            identity: the user the calling site speaks for.
+            page_id: the page whose window moves.
+            storename: ``'page'`` for the page's own store, ``'user'`` for the
+                view onto its owner's.
+            prefix: the path prefix the window covers.
+            active: opening it, or closing it.
+
+        Returns:
+            The page register item.
+
+        Raises:
+            KeyError: no such page here.
+            ValueError: any other storename — an impossible address.
+
+        Moves the row's ``subscribed_paths``, which the capture reads at event
+        time: the set is what a move packages and what the filter consults.
+        """
+        with self.dispatch_lock:
+            page = self.page_register.get(page_id)
+            if page is None:
+                raise KeyError(f"setStoreSubscription: unknown page {page_id!r}")
+            if storename == "page":
+                with page["item_lock"]:
+                    if active:
+                        page["subscribed_paths"].add(prefix)
+                    else:
+                        page["subscribed_paths"].discard(prefix)
+            elif storename == "user":
+                if active:
+                    self.registry.subscribe_store_path(page_id, prefix)
+                elif page["user_view"] is not None:
+                    page["store_subscriptions"].discard(prefix)
+                    page["user_view"].unsubscribe_path(prefix)
+            else:
+                raise ValueError(f"setStoreSubscription: no store named {storename!r}")
+            return page
+
+    def collect_page(self, page_id: str) -> dict[str, Any]:
+        """End the request: exchange with the desk, then drain everything for one page.
+
+        Args:
+            page_id: the page the delivery is for.
+
+        Returns:
+            ``{"datachanges": [...], "dbevents": [...]}`` — the row's queue and
+            the queue the desk handed back, merged in ARRIVAL order (the
+            ``arrival_ts`` each list was stamped with as it grew), with the
+            ``user_view`` drain merged in on its own ``change_ts``; the deposits
+            are their own species in their own key, never dressed as
+            datachanges.
+
+        Raises:
+            KeyError: no such page here.
+            CommanderCallFailed: the desk refused the exchange.
+
+        Empties the request slot, the row's queue, the user view and — through
+        the exchange — the page's queues at the desk. Each list is already in
+        its own arrival order — the row is appended under its lock, the desk's
+        queue on the commander's one loop, the two on the same wall clock — so
+        a two-way merge reproduces the order the daemon's single list would
+        have had, and nothing is sorted; the merged list is numbered as one
+        list, then the row's index goes back to zero. Nothing is discarded for
+        its age: what waits is delivered whatever its age, as the daemon did.
+        The exchange happens on EVERY request, empty-handed included: retiring
+        what waits is the reason it exists. The STATE writes it brings back are
+        applied to the user's own Bag BEFORE the drain, so the page that retired
+        them reads them in this very delivery and its siblings capture them on
+        their own ``user_view``.
+        """
+        with self.dispatch_lock:
+            if self.page_register.get(page_id) is None:
+                raise KeyError(f"collect_page: unknown page {page_id!r}")
+            user = self.registry.page_user(page_id)
+        slot = self.request_slot
+        reply = self.run_on_loop(
+            self.call(
+                DESK_EXCHANGE_PATH,
+                {"page_id": page_id, "user": user, "dbevents": slot.dbevents},
+            )
+        )
+        slot.dbevents = []
+        with self.dispatch_lock:
+            page = self.page_register.get(page_id)
+            if page is None:
+                raise KeyError(f"collect_page: unknown page {page_id!r}")
+            user_item = self.user_register.get(user)
+            with user_item["item_lock"]:
+                store = user_item["store"]
+                for change in from_tytx(reply["store_changes"], "json"):
+                    self.apply_forwarded(store, change)
+            with page["item_lock"]:
+                desk_changes = from_tytx(reply["datachanges"], "json")
+                datachanges = list(
+                    heapq.merge(page["datachanges"], desk_changes, key=self._arrival_order)
+                )
+                page["datachanges"] = []
+                page["datachanges_idx"] = 0
+                if page["user_view"] is not None:
+                    datachanges = list(
+                        heapq.merge(
+                            datachanges, page["user_view"].drain(), key=self._arrival_order
+                        )
+                    )
+            for index, change in enumerate(datachanges, start=1):
+                change["change_idx"] = index
+            dbevents = reply["dbevents"] + slot.own_dbevents
+            slot.own_dbevents = []
+        return {"datachanges": datachanges, "dbevents": dbevents}
+
+    def _arrival_order(self, change: dict[str, Any]) -> float:
+        """The instant a change joined its queue: ``arrival_ts``, or the write's own clock.
+
+        The row and the desk stamp ``arrival_ts``; the ``user_view`` collector
+        does not (the user store is another round), so its changes take their
+        ``change_ts`` — the same wall clock, read at the write.
+        """
+        arrival_ts = change.get("arrival_ts")
+        return arrival_ts if arrival_ts is not None else change["change_ts"].timestamp()
+
+    def _route_datachange(
+        self,
+        op: str,
+        identity: str,
+        kind: str,
+        target: str | None,
+        filters: str | None,
+        message: dict[str, Any],
+        act_on_row: Callable[[dict[str, Any]], None],
+    ) -> dict[str, bool]:
+        """Take one addressed write to its road: the target row here, or the desk.
+
+        Args:
+            op: the verb being routed, named in the errors and in the message.
+            identity: the user the calling site speaks for.
+            kind: what ``target`` names — a page (the SIGNAL address) or a store.
+            target: the addressed page.
+            filters: the broadcast address, whose delivery is the second pass's.
+            message: what the op adds to the desk message — ``change`` and
+                ``replace`` for a write, ``path`` for a drop.
+            act_on_row: what the verb does on the row when the road is local;
+                called with the row, under its ``item_lock``.
+
+        Returns:
+            ``{"local": ..., "filed": ...}`` — ``local`` True when the write
+            stayed here; ``filed`` False when the desk holds nobody by that
+            name and the write went nowhere, as the daemon's silent return on a
+            missing item. The verbs carry both into their answer.
+
+        Raises:
+            NotImplementedError: a ``filters`` broadcast, or a STATE kind other
+                than ``user_store`` — nothing local can serve them yet, and a
+                silent success would be a write into nowhere.
+            CommanderCallFailed: the desk refused the write.
+
+        A page of the caller's OWN user, living here, is acted on at once, under
+        ``dispatch_lock`` then the row's ``item_lock`` — the row cannot leave the
+        register between the two — so the write is in the parcel before any
+        freeze. Every other address leaves at once as ONE CALL to the desk, from
+        this very thread: an unservable write fails alone, in the caller's own
+        call, and a request that never collects loses nothing. Whether the
+        target EXISTS is the desk's judgment: a worker knows its own rows only,
+        and an unknown target is reported, never raised — a page closed a moment
+        ago, or born in this very request and not yet announced, is not an
+        error of the caller's.
+        """
+        if filters is not None:
+            raise NotImplementedError(f"{op}: filtered addresses are not delivered by this pass")
+        if kind in STATE_KINDS and kind != "user_store":
+            raise NotImplementedError(f"{op}: kind {kind!r} is not delivered by this pass")
+        with self.dispatch_lock:
+            page = self.page_register.get(target) if kind == SIGNAL_KIND else None
+            if page is not None and self.registry.page_user(target) == identity:
+                with page["item_lock"]:
+                    act_on_row(page)
+                return {"local": True, "filed": True}
+        answer = self.run_on_loop(
+            self.call(
+                DESK_ON_DATACHANGE_PATH,
+                {"op": op, "kind": kind, "target": target, "filters": filters, **message},
+            )
+        )
+        filed = bool(answer["filed"])
+        if not filed and kind == "user_store":
+            # The one loss the site cannot notice: a store write the desk holds
+            # nobody for. Said out loud (owner, 2026-09-04); the road that would
+            # serve it locally is D-DC3's, see temp/note_per_genro_asgi_59.md.
+            self._logger.warning(
+                "Worker %s: %s to the user store of %r went nowhere (path %r): "
+                "the desk holds no such user",
+                self.name,
+                op,
+                target,
+                self._addressed_path(message),
+            )
+        return {"local": False, "filed": filed}
+
+    def _addressed_path(self, message: dict[str, Any]) -> str | None:
+        """The path an addressed write names: the drop's own, or the change's key."""
+        if "path" in message:
+            return message["path"]
+        if "change" in message:
+            return from_tytx(message["change"], "json")["key"]["path"]
+        return None
+
+    def set_datachange(
+        self,
+        identity: str,
+        change: str,
+        kind: str = SIGNAL_KIND,
+        target: str | None = None,
+        filters: str | None = None,
+        replace: bool = False,
+        **addressing: Any,
+    ) -> dict[str, Any]:
+        """Write a change toward an addressed target, bypassing its filter.
+
+        Args:
+            identity: the user the calling site speaks for.
+            change: the TYTX-encoded change dict.
+            kind: what ``target`` names — a page (the SIGNAL address) or a
+                store.
+            target: the addressed page.
+            filters: the alternative address, a broadcast over the pages a
+                filter selects.
+            replace: coalesce with the pending change of the same key — same
+                path, same reason, same fired — so a value written over and
+                over reaches the browser once.
+            addressing: the caller's own ``page_id``, the pull cycle of the
+                call and never the target of the write.
+
+        Returns:
+            The address the write took, as it was resolved; ``local`` is True
+            when it stayed on a row here, ``filed`` False when nobody holds the
+            target and the write went nowhere.
+
+        Raises:
+            NotImplementedError, CommanderCallFailed: see ``_route_datachange``.
+
+        On the local road the change goes on the target row through the same
+        append the store subscriber uses, so the row keeps one list and one
+        index.
+        """
+        road = self._route_datachange(
+            "set_datachange",
+            identity,
+            kind,
+            target,
+            filters,
+            {"replace": replace, "change": change},
+            lambda page: self.registry.append_page_datachange(
+                page, from_tytx(change, "json"), replace=replace
+            ),
+        )
+        return {
+            "kind": kind,
+            "target": target,
+            "filters": filters,
+            "replace": replace,
+            **road,
+        }
+
+    def reset_datachanges(
+        self,
+        identity: str,
+        target: str | None = None,
+        filters: str | None = None,
+        **addressing: Any,
+    ) -> dict[str, Any]:
+        """Empty the pending changes of the addressed page without reading them.
+
+        Args:
+            identity: the user the calling site speaks for.
+            target: the addressed page.
+            filters: the alternative address.
+            addressing: the caller's own ``page_id``.
+
+        Returns:
+            The address the reset took; ``local`` is True when it emptied a row
+            here, ``filed`` False when nobody holds the target.
+
+        Raises:
+            NotImplementedError, CommanderCallFailed: see ``_route_datachange``.
+
+        On the local road the row's list and index go back to empty; on the
+        desk's, the queue it keeps for that page.
+        """
+        road = self._route_datachange(
+            "reset_datachanges",
+            identity,
+            SIGNAL_KIND,
+            target,
+            filters,
+            {},
+            lambda page: page.update(datachanges=[], datachanges_idx=0),
+        )
+        return {"target": target, "filters": filters, **road}
+
+    def drop_datachanges(
+        self,
+        identity: str,
+        path: str,
+        target: str | None = None,
+        filters: str | None = None,
+        **addressing: Any,
+    ) -> dict[str, Any]:
+        """Discard the pending changes under one path of the addressed page.
+
+        Args:
+            identity: the user the calling site speaks for.
+            path: the prefix whose pending changes go.
+            target: the addressed page.
+            filters: the alternative address.
+            addressing: the caller's own ``page_id``.
+
+        Returns:
+            The address the drop took and the path it named; ``local`` is True
+            when it pruned a row here, ``filed`` False when nobody holds the
+            target.
+
+        Raises:
+            NotImplementedError, CommanderCallFailed: see ``_route_datachange``.
+
+        The prefix is matched on segment boundaries, on the row here or in the
+        desk's queue for that page.
+        """
+
+        def prune(page: dict[str, Any]) -> None:
+            page["datachanges"][:] = [
+                pending
+                for pending in page["datachanges"]
+                if not (
+                    pending["key"]["path"] == path
+                    or pending["key"]["path"].startswith(f"{path}.")
+                )
+            ]
+
+        road = self._route_datachange(
+            "drop_datachanges", identity, SIGNAL_KIND, target, filters, {"path": path}, prune
+        )
+        return {"target": target, "filters": filters, "path": path, **road}
+
+    # ------------------------------------------------------------------
+    # The table events: their own ops, the desk's index, their own species
+    # ------------------------------------------------------------------
+
+    def subscribeTable(  # noqa: N802 - reserved protocol name
+        self,
+        identity: str,
+        table: str,
+        page_id: str,
+        subscribe: bool = True,
+        subscribeMode: str | None = None,  # noqa: N803 - reserved protocol name
+    ) -> dict[str, Any]:
+        """Subscribe (or unsubscribe) the calling page to a table's events.
+
+        Args:
+            identity: the user the calling site speaks for.
+            table: the table whose events the page wants.
+            page_id: the caller's own page — the subscriber is whoever asks, so
+                there is no target to address.
+            subscribe: opening the subscription, or closing it.
+            subscribeMode: vestigial, accepted and ignored exactly as the daemon
+                does: callers still pass it, and refusing it would break them at
+                mount time.
+
+        Returns:
+            The subscription as it was taken.
+
+        Raises:
+            KeyError: no such page here.
+
+        Moves the row's ``table_subscriptions`` set — what a move packages —
+        and then files the interest at the desk, which is the only index there
+        is. The call is synchronous: when this request goes on to commit, the
+        index it just changed is already right, so a site that subscribes a
+        table and commits it in the same request finds the interest filed. The
+        source filter of this process is not touched here: the commander
+        pushes it.
+        """
+        with self.dispatch_lock:
+            page = self.page_register.get(page_id)
+            if page is None:
+                raise KeyError(f"subscribeTable: unknown page {page_id!r}")
+            if subscribe:
+                page["table_subscriptions"].add(table)
+            else:
+                page["table_subscriptions"].discard(table)
+        self.run_on_loop(
+            self.call(
+                DESK_SUBSCRIBE_TABLE_PATH,
+                {"page_id": page_id, "table": table, "subscribe": subscribe},
+            )
+        )
+        return {"page_id": page_id, "table": table, "subscribe": subscribe}
+
+    def notifyDbEvents(  # noqa: N802 - reserved protocol name
+        self,
+        identity: str,
+        dbevents: dict[str, Any],
+        reason: str | None = None,
+        page_id: str | None = None,
+        local_only: bool = False,
+        **addressing: Any,
+    ) -> dict[str, Any]:
+        """Announce a commit's table events to the pages that subscribed them.
+
+        Args:
+            identity: the user the calling site speaks for.
+            dbevents: ``{table: batch}`` as the commit produced it.
+            reason: what the commit was, carried through to the subscribers.
+            page_id: the origin page — the caller's own — travelling as
+                ``from_page_id`` so a subscriber can tell its own commit from
+                somebody else's.
+            local_only: the hidden transaction, whose events belong to the page
+                that made them and to nobody else: the deposits stay on the
+                slot for the origin page's own collect and never reach the wire.
+            addressing: what the desk would read of the address; nothing reads
+                it while every deposit is announced by its table alone.
+
+        Returns:
+            The tables actually announced.
+
+        Lays the deposits on the request slot, which has two exits: the exchange
+        inside ``collect_page`` when the page collects, and ``deliver_slot_deposits``
+        at the end of the request otherwise. Filtered at the source: a table no
+        page anywhere subscribes is not announced at all — a thousand events
+        nobody wants die here rather than on the wire — and neither is a table
+        whose batch is empty. The deposits are shaped once, so every subscriber
+        reads the very same object and the origin's own ``ts``.
+        """
+        deposits = [
+            self.dbevent_deposit(table, batch, page_id, reason)
+            for table, batch in (dbevents or {}).items()
+            if batch and (local_only or table in self.subscribed_tables)
+        ]
+        slot = self.request_slot
+        if local_only:
+            slot.own_dbevents.extend(deposits)
+        else:
+            slot.dbevents.extend(deposits)
+        return {"tables": [deposit["table"] for deposit in deposits]}
+
+    def dbevent_deposit(
+        self,
+        table: str,
+        batch: Any,
+        from_page_id: str | None,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        """The deposit one table's batch becomes on the slot and in the desk's queues.
+
+        Args:
+            table: the table the batch belongs to.
+            batch: the events as the commit produced them.
+            from_page_id: the origin page.
+            reason: what the commit was.
+
+        Returns:
+            The shaped deposit, JSON by construction — ``ts`` an epoch float,
+            the batch what the caller handed over — so it rides the rail as it
+            is.
+        """
+        return {
+            "table": table,
+            "batch": batch,
+            "from_page_id": from_page_id,
+            "reason": reason,
+            "ts": time.time(),
+        }
+
+    def _install_carried_store(self, user: str, store: Any, resident: bool) -> None:
+        """The core's swap, then every page watching the row's Bag follows the carried one.
+
+        A fresh view with the same prefixes, re-fed with everything the old one
+        still held — so no window goes deaf and no captured change is lost in
+        the swap. The resident case and the empty parcel change nothing, as in
+        the core. The caller holds the lock.
+        """
+        super()._install_carried_store(user, store, resident)
+        if store is None or resident:
+            return
+        entry = self.user_register.get(user)
+        for connection_id in entry["connections"]:
+            for page_id in self.connection_register.get(connection_id)["pages"]:
+                page = self.page_register.get(page_id)
+                view = page["user_view"]
+                if view is None:
+                    continue
+                view.detach()
+                fresh = self.registry.new_collector(store, paths=set(page["store_subscriptions"]))
+                for change in view.changes:
+                    fresh.append(change)
+                page["user_view"] = fresh
+
+    def census(self) -> dict[str, Any]:
+        """The core census, plus the source filter this process commits against."""
+        census = super().census()
+        with self.dispatch_lock:
+            census["subscribed_tables"] = sorted(self.subscribed_tables)
+        return census
 
     @property
     def connections_folder(self) -> str:

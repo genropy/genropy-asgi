@@ -13,4 +13,4 @@ this package never requires GenroPy.
 from .genropy_spa_application import GenropySpaApplication
 
 __all__ = ["GenropySpaApplication"]
-__version__ = "0.1.0"
+__version__ = "0.6.0"

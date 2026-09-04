@@ -79,9 +79,11 @@ share one virtualenv.
   next request wakes him. A restart parks everybody the same way, so nobody is
   logged out by it.
 - **Changes travel addressed**: what one page writes, or a table event, reaches
-  the pages that subscribed it, wherever they sit. The legacy `globalStore()` is
-  one master on the commander with no replicas — a worker reads it with a call
-  and writes it through an all-or-nothing grant.
+  the pages that subscribed it, wherever they sit. The desk that files them and
+  the table index live in this package, on the bridge's commander (genro-asgi
+  #59). The legacy `globalStore()` is one master on the commander with no
+  replicas — a worker reads it with a call and writes it through an
+  all-or-nothing grant.
 
 See [`docs/`](docs/) for the pool, configuration, CLI reference, FAQ,
 troubleshooting — and [`docs/status.rst`](docs/status.rst) for what is built

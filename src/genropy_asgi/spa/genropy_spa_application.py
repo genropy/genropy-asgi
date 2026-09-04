@@ -36,6 +36,8 @@ from genro_routes import route
 
 from genro_asgi.applications.spa_app import SpaApplication
 
+from .genropy_spa_commander import GenropySpaCommander
+
 __all__ = ["GenropySpaApplication"]
 
 # The metric name the legacy /metrics webtool exposes (kept identical so existing
@@ -56,6 +58,8 @@ class GenropySpaApplication(SpaApplication):
     """
 
     mount = ""
+    #: The vertex the pool is born with: the core commander plus the site's desk.
+    commander_class = GenropySpaCommander
 
     def __init__(self, **kwargs: Any) -> None:
         """Args:

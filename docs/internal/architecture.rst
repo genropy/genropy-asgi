@@ -188,6 +188,13 @@ each worker's site state is local, and load scales with the number of workers.
 The switch model (datachanges)
 ------------------------------
 
+.. note::
+
+   Superseded (2026-09-04). Delivery goes through the desk on the bridge's
+   commander, addressed and never posted down as a copy: see
+   ``docs/internal/datachanges.md`` and ``docs/internal/dbevents.md``. The
+   paragraphs below are the design as first written and are kept for the record.
+
 GenroPy pushes **datachanges** to a browser: a record edited by one user must
 reach every page subscribed to that table, possibly on a different worker.
 
