@@ -386,6 +386,18 @@ def test_pages_reads_and_the_filter_grammar(client, worker):
 def connected_users_row(user, arguments):
     """The per-row body of ``Connection.connected_users_bag``, transcribed.
 
+def test_serverstore_peek_reads_the_row_queue_without_consuming_it(client, worker):
+    _, page_id = open_page(client, worker)
+    client.subscribe_path(page_id, "srv.ctx", register_name="page")
+    with client.pageStore(page_id) as store:
+        store.setItem("srv.ctx.flag", True)
+    row = worker.page_items.get(page_id)
+    assert [c["key"]["path"] for c in row["datachanges"]] == ["srv.ctx.flag"]
+    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]
+    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]  # still pending
+    assert len(row["datachanges"]) == 1  # the row's queue is untouched by the peek
+
+
     ``gnr/web/gnrwebpage_proxy/connection.py:186-212``. That method is a
     ``@public_method`` the chat component polls every 2 seconds
     (``chat_component.py:118``, ``cacheTime=2``), so anything this expression

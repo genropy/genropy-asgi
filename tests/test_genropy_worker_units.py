@@ -232,13 +232,23 @@ def make_registry():
 
 def test_registry_rows_hold_legacy_stores_under_legacy_capture():
     from gnr.core.gnrbag import Bag
-    from genropy_asgi.spa.legacy_bag import LegacyBagCollector
 
     registry = make_registry()
     page = registry.new_page("p1", user="bob", connection_id="cid1")
     assert type(page["store"]) is Bag
-    assert isinstance(page["collector"], LegacyBagCollector)
     assert type(registry.user_items.get("bob")["store"]) is Bag
+    # the row's queue is fed by the legacy capture: a write under a subscribed
+    # prefix lands on it, leaf only, with the core's reason; one outside stays out
+    page["subscribed_paths"].add("srv.ctx")
+    page["store"]["srv.ctx.flag"] = True
+    page["store"]["elsewhere.x"] = 1
+    assert [c["key"]["path"] for c in page["datachanges"]] == ["srv.ctx.flag"]
+    assert page["datachanges"][0]["key"]["reason"] == "serverChange"
+    assert page["datachanges"][0]["value"] is True
+    # detaching stops the capture without touching what is pending
+    registry.detach_page(page)
+    page["store"]["srv.ctx.other"] = 2
+    assert len(page["datachanges"]) == 1
 
 
 def test_registry_store_survives_pickle_whole():
