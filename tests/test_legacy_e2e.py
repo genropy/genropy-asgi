@@ -50,10 +50,15 @@ pytestmark = pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
 
 @contextmanager
 def call_sink(worker):
-    """The old base required an open CALL sink around every op; the new base's
-    verbs announce straight onto ``worker_events``. Kept as a no-op so the
-    scenarios read unchanged across the rebase."""
+    """Wrap a lifecycle op the way a request does: on exit its events reach the desk.
+
+    The verbs announce onto ``worker_events``, which travel on the worker's
+    REPLYs only; a verb called from the pytest thread answers no CALL. The desk
+    files addressed writes for the rows it knows, so the lane plays the REPLY
+    here (``SiteLane.deliver_worker_events``), as the request's own tail would.
+    """
     yield
+    worker.lane.deliver_worker_events()
 
 
 @pytest.fixture(scope="module")

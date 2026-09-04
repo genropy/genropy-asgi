@@ -40,10 +40,15 @@ SPIN_ROUNDS = 400
 
 @contextmanager
 def call_sink(worker):
-    """The old base required an open CALL sink around every op; the new base's
-    verbs announce straight onto ``worker_events``. Kept as a no-op so the
-    lifecycle helpers read unchanged across the rebase."""
+    """Wrap a lifecycle op the way a request does: on exit its events reach the desk.
+
+    The verbs announce onto ``worker_events``, which travel on the worker's
+    REPLYs only; a verb called from the pytest thread answers no CALL. The desk
+    files addressed writes for the rows it knows, so the lane plays the REPLY
+    here (``SiteLane.deliver_worker_events``), as the request's own tail would.
+    """
     yield
+    worker.lane.deliver_worker_events()
 
 
 @pytest.fixture(scope="module")
@@ -71,11 +76,6 @@ def client(worker):
     return worker.gnr_site.register
 
 
-def fresh_ids():
-    tag = uuid.uuid4().hex[:8]
-    return f"c_{tag}", f"p_{tag}"
-
-
 @contextmanager
 def as_request(worker, user):
     """Serve the block as a request of ``user`` would: the site's per-thread
@@ -89,6 +89,11 @@ def as_request(worker, user):
         yield
     finally:
         site.currentRequest = None
+
+
+def fresh_ids():
+    tag = uuid.uuid4().hex[:8]
+    return f"c_{tag}", f"p_{tag}"
 
 
 def open_page(client, worker, user=None, data=None, **page_fields):
@@ -381,6 +386,18 @@ def test_serverstore_subscribed_paths_mirrors_the_capture(client, worker):
     assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]
 
 
+def test_serverstore_peek_reads_the_row_queue_without_consuming_it(client, worker):
+    _, page_id = open_page(client, worker)
+    client.subscribe_path(page_id, "srv.ctx", register_name="page")
+    with client.pageStore(page_id) as store:
+        store.setItem("srv.ctx.flag", True)
+    row = worker.page_items.get(page_id)
+    assert [c["key"]["path"] for c in row["datachanges"]] == ["srv.ctx.flag"]
+    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]
+    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]  # still pending
+    assert len(row["datachanges"]) == 1  # the row's queue is untouched by the peek
+
+
 # ------------------------------------------------------------------
 # Reads and the envelope helper
 # ------------------------------------------------------------------
@@ -405,18 +422,6 @@ def test_pages_reads_and_the_filter_grammar(client, worker):
 
 def connected_users_row(user, arguments):
     """The per-row body of ``Connection.connected_users_bag``, transcribed.
-
-def test_serverstore_peek_reads_the_row_queue_without_consuming_it(client, worker):
-    _, page_id = open_page(client, worker)
-    client.subscribe_path(page_id, "srv.ctx", register_name="page")
-    with client.pageStore(page_id) as store:
-        store.setItem("srv.ctx.flag", True)
-    row = worker.page_items.get(page_id)
-    assert [c["key"]["path"] for c in row["datachanges"]] == ["srv.ctx.flag"]
-    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]
-    assert [c.path for c in store.datachanges] == ["srv.ctx.flag"]  # still pending
-    assert len(row["datachanges"]) == 1  # the row's queue is untouched by the peek
-
 
     ``gnr/web/gnrwebpage_proxy/connection.py:186-212``. That method is a
     ``@public_method`` the chat component polls every 2 seconds

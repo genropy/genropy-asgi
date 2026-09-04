@@ -30,7 +30,7 @@ from typing import Any
 
 from genro_asgi.channel.frame import FrameStream
 from genro_asgi.spa.orchestration import FreezeHandler, GroupHandler, SpaCommander
-from genro_asgi.spa.orchestration.worker_handler import WorkerHandler
+from genro_asgi.spa.orchestration.worker_handler import PING_OP_PATH, WorkerHandler
 
 #: The name the lane's handler and worker share: short, because a UDS path is.
 WORKER_NAME = "pool_0001"
@@ -82,6 +82,9 @@ class SiteLane:
         await connector.start()
         reader, writer = await asyncio.open_unix_connection(str(connector.socket_path))
         self.worker.attach_stream(FrameStream(reader, writer))
+        # The test helpers receive the worker and need the lane back (the way
+        # the e2e front is handed the lane): ``call_sink`` delivers through it.
+        self.worker.lane = self
         await self.worker.send_presentation({})
         self._reader_task = asyncio.create_task(self.worker.receive_frames())
         await connector.wait_connected()
@@ -99,6 +102,21 @@ class SiteLane:
         if self.worker is not None:
             self.worker.exit_process()
         await self.worker_handler.connector.stop()
+
+    def deliver_worker_events(self) -> None:
+        """Play the REPLY a request ends with: the worker's queued events reach the desk.
+
+        The commander learns its rows (pages, connections, users) from the
+        ``worker_events`` a worker puts on every REPLY it sends. A verb called
+        straight from the pytest thread answers no CALL, so its events wait on
+        the worker; one ping CALL from the handler makes the worker reply, and
+        that REPLY carries them through the handler's envelope chain — the
+        production road, with no request body.
+        """
+        assert self.loop is not None
+        asyncio.run_coroutine_threadsafe(
+            self.worker_handler.connector.call(PING_OP_PATH, {}), self.loop
+        ).result(30)
 
     def stop(self) -> None:
         """Tear the lane down and stop its loop; the temp root goes with it."""
