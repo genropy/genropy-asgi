@@ -69,7 +69,7 @@ import time
 from typing import Any
 
 from genro_bag import Bag as CoreBag
-from genro_tytx import from_tytx, to_tytx
+from genro_tytx import to_tytx
 from gnr.core.gnrbag import Bag
 from gnr.core.gnrclasses import GnrClassCatalog
 from gnr.web import logger
@@ -383,6 +383,21 @@ class GenropyRegisterClient:
     def spa_worker(self) -> Any:
         """The GenropyWorker hosting this site (set by its constructor), or None."""
         return getattr(self.site, "spa_worker", None)
+
+    @property
+    def _request_identity(self) -> Any:
+        """The user the request served on this thread speaks for, or None.
+
+        Read off ``site.currentRequest.environ["genro.identity"]``, where the
+        core's ``WsgiSeam`` puts the identity the CALL was routed on and the
+        legacy ``dispatcher`` keeps the request per thread. None outside a
+        request (a task thread, a test calling the client directly): the
+        addressed verbs then take the desk road, never the local one.
+        """
+        request = self.site.currentRequest
+        if request is None:
+            return None
+        return request.environ.get("genro.identity")
 
     # ==================================================================
     # Lifecycle commands: direct calls onto the worker's op vocabulary
@@ -993,7 +1008,7 @@ class GenropyRegisterClient:
         kinds = {"page": "page", "user": "user_store", "connection": "connection_store"}
         kind = kinds[register_name or "page"]
         worker.set_datachange(
-            None,
+            self._request_identity,
             change=to_tytx(change, "json"),
             kind=kind,
             target=register_item_id,
@@ -1009,14 +1024,14 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
             return
-        worker.reset_datachanges(None, target=register_item_id)
+        worker.reset_datachanges(self._request_identity, target=register_item_id)
 
     def drop_datachanges(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
         """Remove a page's queued datachanges under a path prefix."""
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
             return
-        worker.drop_datachanges(None, path=path, target=register_item_id)
+        worker.drop_datachanges(self._request_identity, path=path, target=register_item_id)
 
     def subscribe_path(self, register_item_id: Any, path: Any, register_name: Any = None) -> None:
         """Widen a page's own capture with a server path (setPendingContext uses this).
@@ -1645,15 +1660,13 @@ class GenropyRegisterClient:
     def _pending_datachanges(self, register_item_id: Any, register_name: Any = None) -> list:
         """Peek at a page's pending changes without consuming them (ServerStore.datachanges).
 
-        The ``drain(reset=False)`` equivalent of ``collect_page``: both collectors
-        peeked and merged by ``change_ts``, under the worker's lock, PLUS the
-        caller's own request slot — the writes this request has queued for the
-        exchange. The core lays addressed writes on the slot and applies them at
-        the exchange, so without the slot a serverbatch would stop reading its
-        own writes back mid-request: the healed defect, healed on this leg too.
-        Only a page has collectors; any other register answers empty. The
-        ``autocreate`` parents stay out, as in ``_collect_local_datachanges`` —
-        same envelope, same rule.
+        The non-consuming equivalent of ``collect_page``: the row's own queue
+        (``page["datachanges"]``, copied under the row's ``item_lock``) and the
+        ``user_view`` peeked, merged by ``change_ts``, under the worker's lock —
+        so a serverbatch keeps reading its own writes back mid-request: the
+        healed defect. Only a page has a queue; any other register answers
+        empty. The ``autocreate`` parents stay out, as in
+        ``_collect_local_datachanges`` — same envelope, same rule.
         """
         worker = self.spa_worker
         if worker is None or (register_name or "page") != "page":
@@ -1662,14 +1675,10 @@ class GenropyRegisterClient:
             page = worker.page_items.get(register_item_id)
             if page is None:
                 return []
-            changes = page["collector"].drain(reset=False)
+            with page["item_lock"]:
+                changes = list(page["datachanges"])
             if page["user_view"] is not None:
                 changes.extend(page["user_view"].drain(reset=False))
-        changes.extend(
-            from_tytx(entry["change"], "json")
-            for entry in worker.request_slot.datachanges
-            if entry["kind"] == "page" and entry["target"] == register_item_id
-        )
         changes.sort(key=lambda change: change["change_ts"])
         return [
             self._change_to_client(raw)

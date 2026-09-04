@@ -46,13 +46,16 @@ exactly the legacy site:
 - ``exit_process()`` stops the site (``on_site_stop``) before the core
   teardown.
 
-:class:`GenropyRegistry` overrides the two core seams and nothing else:
-``new_store()`` returns a legacy ``gnr.core.gnrbag.Bag`` and
-``new_collector(store, paths)`` returns a ``LegacyBagCollector`` — every
-row of the chain (user stores, page stores, the views) is a legacy Bag, so
-legacy values ride the registers untranslated (cemented rule B1). A legacy
-store travels a move pickled whole: the legacy Bag drops its subscribers at
-``__getstate__``, and the registry re-attaches collectors on arrival.
+:class:`GenropyRegistry` overrides the core seams that touch a Bag's API and
+nothing else: ``new_store()`` returns a legacy ``gnr.core.gnrbag.Bag``,
+``new_collector(store, paths)`` returns a ``LegacyBagCollector``, and
+``subscribe_page_store``/``detach_page`` attach and remove the row-queue
+capture with the legacy ``subscribe(id, any=...)`` (no ``transaction`` kind
+exists there) — every row of the chain (user stores, page stores, the
+views) is a legacy Bag, so legacy values ride the registers untranslated
+(cemented rule B1). A legacy store travels a move pickled whole: the legacy
+Bag drops its subscribers at ``__getstate__``, and the registry re-attaches
+the capture on arrival.
 
 This module imports ``gnr.*`` at the top BY DESIGN (via ``legacy_bag``):
 it is loaded through the ``worker_class`` dotted path only where GenroPy
@@ -64,6 +67,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from datetime import UTC, datetime
 from typing import Any
 
 from genro_asgi.spa import RegisterRegistry
@@ -95,6 +99,65 @@ class GenropyRegistry(RegisterRegistry):
     def new_collector(self, store: Any, paths: set[str] | None = None) -> Any:
         """The capture factory: a ``LegacyBagCollector`` on a legacy store."""
         return LegacyBagCollector(store, paths=paths)
+
+    def subscribe_page_store(self, page: dict[str, Any]) -> None:
+        """Attach to a page's legacy store the capture that fills the row's queue.
+
+        The core's subscriber speaks the genro-bag API (four handlers, one of
+        them ``transaction``); a legacy Bag has one ``any=`` callback and no
+        transactions, so the capture is rebuilt on it the way
+        :class:`LegacyBagCollector` reads the legacy events: ``ins``/``del``
+        carry the parent's pathlist and the path is completed with the node's
+        label, ``upd_*`` carry it whole. The rest is the core's contract:
+        ``autocreate`` skipped, prefixes read from ``subscribed_paths`` at event
+        time and matched on segment boundaries, reason ``serverChange``, the
+        transient ``_fired`` popped from a copy of the attributes. The append
+        runs under the row's ``item_lock``: ``append_page_datachange`` expects
+        its caller to hold it, and the writer here is the site's ServerStore,
+        which holds no lock.
+        """
+        store = page["store"]
+
+        def on_event(
+            node: Any = None,
+            pathlist: Any = None,
+            evt: str | None = None,
+            oldvalue: Any = None,
+            ind: Any = None,
+            reason: Any = None,
+        ) -> None:
+            if reason == "autocreate":
+                return
+            if evt in ("ins", "del"):
+                path = ".".join(list(pathlist or []) + [node.label])
+            else:
+                path = ".".join(list(pathlist or []))
+            paths = page["subscribed_paths"]
+            if not any(path == p or path.startswith(f"{p}.") for p in paths):
+                return
+            delete = evt == "del"
+            attributes = dict(node.attr)
+            fired = bool(attributes.pop("_fired", False))
+            change = {
+                "key": {"path": path, "reason": "serverChange", "fired": fired},
+                "value": None if delete else node.staticvalue,
+                "attributes": attributes or None,
+                "delete": delete,
+                "change_ts": datetime.now(UTC),
+            }
+            with page["item_lock"]:
+                self.append_page_datachange(page, change)
+
+        store.subscribe(f"page_store:{page['register_item_id']}", any=on_event)
+
+    def detach_page(self, page: dict[str, Any]) -> None:
+        """Stop a page row's capture: on a legacy Bag ``any=True`` is the whole subscription.
+
+        The core also passes ``transaction=True``, a kind the legacy Bag never had.
+        """
+        page["store"].unsubscribe(f"page_store:{page['register_item_id']}", any=True)
+        if page["user_view"] is not None:
+            page["user_view"].detach()
 
 
 class GenropyWorker(SpaWorker):
