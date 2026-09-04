@@ -86,3 +86,18 @@ target-version = "py311"
 python_version = "3.11"
 warn_unused_configs = true
 exclude = ["tests/", ".*/tests/"]
+
+# The bridge's registry and worker read register rows the core hands back as
+# ``dict | None`` (``Register.get``): a missing row is a KeyError the verbs raise
+# on purpose, not a None to branch on. The worker also reaches its own additions
+# through attributes the core types on the base class (``request_slot`` is a
+# ``RequestSlot``, ``registry`` a ``RegisterRegistry``): ``GenropyRequestSlot``
+# and ``GenropyRegistry`` are what actually live there (``build_request_slot``,
+# ``build_registry``). Silenced per category, never in code (mypy policy).
+[[tool.mypy.overrides]]
+module = "genropy_asgi.spa.genropy_register"
+disable_error_code = ["index"]
+
+[[tool.mypy.overrides]]
+module = "genropy_asgi.spa.genropy_worker"
+disable_error_code = ["index", "attr-defined", "arg-type"]
