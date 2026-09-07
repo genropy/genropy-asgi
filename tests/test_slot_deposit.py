@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pytest
 
-from genro_asgi.spa.environ import WsgiSeam
 from genro_asgi.spa.orchestration.worker_connector import CommanderCallFailed
 from tests.lane import wait_until
 
@@ -68,17 +67,17 @@ def test_an_empty_slot_places_no_call(two_pages, monkeypatch):
     assert calls == []
 
 
-def test_a_request_failing_after_its_commit_still_delivers(two_pages):
+def test_a_request_failing_after_its_commit_still_delivers(two_pages, monkeypatch):
     lane, other = two_pages
 
     def wsgi_app(environ, start_response):
         lane.worker.notifyDbEvents("alice", dbevents={TABLE: ["ins:1"]}, page_id="p1")
         raise RuntimeError("the site failed after its commit")
 
-    seam = WsgiSeam(wsgi_app)
+    monkeypatch.setattr(lane.worker, "wsgi_app", wsgi_app)
     payload = {"http": {"method": "GET", "path": "/", "cid": "c1"}, "identity": "alice"}
     with pytest.raises(RuntimeError):
-        lane.worker._serve_on_thread(seam, payload)
+        lane.run(lane.worker._serve_request(payload))
     assert [deposit["table"] for deposit in lane.desk.page_dbevent_map["p2"]] == [TABLE]
 
 
@@ -94,8 +93,8 @@ def test_a_refused_deposit_never_replaces_the_sites_own_exception(two_pages, mon
         lane.worker.notifyDbEvents("alice", dbevents={TABLE: ["ins:1"]}, page_id="p1")
         raise RuntimeError("the site failed after its commit")
 
-    seam = WsgiSeam(wsgi_app)
+    monkeypatch.setattr(lane.worker, "wsgi_app", wsgi_app)
     payload = {"http": {"method": "GET", "path": "/", "cid": "c1"}, "identity": "alice"}
     with pytest.raises(RuntimeError):
-        lane.worker._serve_on_thread(seam, payload)
+        lane.run(lane.worker._serve_request(payload))
     assert "p2" not in lane.desk.page_dbevent_map
