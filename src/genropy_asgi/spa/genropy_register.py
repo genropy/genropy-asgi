@@ -59,7 +59,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from genro_asgi.spa import PageRow, RegisterRegistry
+from genro_asgi_multiworker_spa import PageRow, RegisterRegistry
 from gnr.core.gnrbag import Bag
 
 from .legacy_bag import LegacyBagCollector

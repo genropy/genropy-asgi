@@ -75,7 +75,7 @@ def test_nothing_refused_ever_reaches_the_desk(page_lane):
 def test_a_user_store_write_nobody_holds_is_said_out_loud(page_lane, caplog):
     # The site's legacy surface returns None whatever happened: the one loss it
     # cannot notice is logged by the worker, with the user and the path.
-    with caplog.at_level(logging.WARNING, logger="genro_asgi.spa.orchestration.spa_worker"):
+    with caplog.at_level(logging.WARNING, logger="genro_asgi_multiworker_spa.orchestration.spa_worker"):
         answer = page_lane.verb(
             "set_datachange",
             "u1",

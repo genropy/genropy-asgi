@@ -30,8 +30,8 @@ from pathlib import Path
 from typing import Any
 
 from genro_asgi.channel.frame import FrameStream
-from genro_asgi.spa.orchestration import FreezeHandler, GroupHandler
-from genro_asgi.spa.orchestration.worker_handler import WorkerHandler
+from genro_asgi_multiworker_spa.orchestration import FreezeHandler, GroupHandler
+from genro_asgi_multiworker_spa.orchestration.worker_handler import WorkerHandler
 
 from genropy_asgi.spa.genropy_spa_commander import GenropySpaCommander
 

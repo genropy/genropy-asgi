@@ -299,7 +299,7 @@ def test_login_reattaches_the_user_view_and_redeposits_pending():
 @pytest.fixture(scope="module")
 def worker():
     """One real GnrWsgiSite hosted by a GenropyWorker; skip if the site is missing."""
-    from genro_asgi.spa.orchestration import FreezeHandler
+    from genro_asgi_multiworker_spa.orchestration import FreezeHandler
 
     from genropy_asgi.spa.genropy_worker import GenropyWorker
 
@@ -344,7 +344,7 @@ def test_the_sites_cleanup_age_becomes_the_idle_valve(worker):
 
 
 def test_a_callers_idle_valve_wins_over_the_site(worker):
-    from genro_asgi.spa.orchestration import FreezeHandler
+    from genro_asgi_multiworker_spa.orchestration import FreezeHandler
 
     from genropy_asgi.spa.genropy_worker import GenropyWorker
 

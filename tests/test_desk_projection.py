@@ -12,7 +12,7 @@ at ``f3c7962``) with #59.
 
 from __future__ import annotations
 
-from genro_asgi.spa import GUEST_PREFIX
+from genro_asgi_multiworker_spa import GUEST_PREFIX
 
 
 def subscribed_guest(lane, table: str = "mytable") -> str:

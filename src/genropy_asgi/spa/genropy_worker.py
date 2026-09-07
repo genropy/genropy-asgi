@@ -76,10 +76,10 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from genro_asgi.spa import RegisterRegistry
-from genro_asgi.spa.orchestration import SpaWorker
-from genro_asgi.spa.orchestration.spa_worker import RequestSlot
-from genro_asgi.spa.orchestration.worker_connector import CommanderCallFailed
+from genro_asgi_multiworker_spa import RegisterRegistry
+from genro_asgi_multiworker_spa.orchestration import SpaWorker
+from genro_asgi_multiworker_spa.orchestration.spa_worker import RequestSlot
+from genro_asgi_multiworker_spa.orchestration.worker_connector import CommanderCallFailed
 from genro_routes import RoutingClass, route
 from genro_tytx import from_tytx
 

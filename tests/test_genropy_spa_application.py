@@ -23,7 +23,7 @@ import tempfile
 import pytest
 
 from genro_asgi import AsgiServer
-from genro_asgi.applications.spa_app import SPA_CONNECTION_ID_COOKIE, SpaApplication
+from genro_asgi_multiworker_spa.spa_app import SPA_CONNECTION_ID_COOKIE, SpaApplication
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa import GenropySpaApplication
@@ -130,7 +130,7 @@ def test_the_recipe_declares_the_pool_where_the_core_reads_it(booted):
     groups = booted.config.group_kwargs("site")
     assert set(groups) == {"pool"}
     pool = groups["pool"]
-    assert pool["entry_module"] == "genro_asgi.spa.orchestration.worker_entry"
+    assert pool["entry_module"] == "genro_asgi_multiworker_spa.orchestration.worker_entry"
     assert pool["worker_class"] == "genropy_asgi.spa.genropy_worker:GenropyWorker"
     assert pool["instance_dir"]  # the sockets root travels to the group
     worker_kwargs = pool["worker_kwargs"]

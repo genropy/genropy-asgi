@@ -25,7 +25,7 @@ import pytest
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
 
-from genro_asgi.spa import GUEST_PREFIX
+from genro_asgi_multiworker_spa import GUEST_PREFIX
 
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 _SITE = "test_invoice_pg"
