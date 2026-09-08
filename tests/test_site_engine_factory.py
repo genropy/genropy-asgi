@@ -87,7 +87,7 @@ def test_the_engine_starts_no_thread():
 
 
 def test_a_worker_handed_an_engine_hosts_it_and_builds_nothing(engine):
-    from genro_asgi.spa.orchestration import FreezeHandler
+    from genro_asgi_multiworker_spa.orchestration import FreezeHandler
 
     from genropy_asgi.spa.genropy_worker import GenropyWorker
 
@@ -109,7 +109,7 @@ def test_a_worker_handed_an_engine_hosts_it_and_builds_nothing(engine):
 
 
 def test_a_worker_without_an_engine_builds_its_own():
-    from genro_asgi.spa.orchestration import FreezeHandler
+    from genro_asgi_multiworker_spa.orchestration import FreezeHandler
 
     from genropy_asgi.spa.genropy_worker import GenropyWorker
 

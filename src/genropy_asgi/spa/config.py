@@ -57,7 +57,7 @@ from typing import Any
 from genro_bag.resolvers import EnvResolver
 
 from genro_asgi import ConfigurationProfilesApplication
-from genro_asgi.applications.spa_console import SpaConsoleMcpApplication
+from genro_asgi_multiworker_spa.spa_console import SpaConsoleMcpApplication
 from genro_asgi.config import AsgiConfigBuilder
 
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
@@ -137,7 +137,7 @@ class ServerConfiguration(AsgiConfigBuilder):
         )
         group_kwargs: dict[str, Any] = {
             "name": "pool",
-            "entry_module": "genro_asgi.spa.orchestration.worker_entry",
+            "entry_module": "genro_asgi_multiworker_spa.orchestration.worker_entry",
             "worker_class": "genropy_asgi.spa.genropy_worker:GenropyWorker",
             "worker_kwargs": {"source": source, "debug": debug, "debugger": debugger},
             # The group's workers are born by fork, out of a template process

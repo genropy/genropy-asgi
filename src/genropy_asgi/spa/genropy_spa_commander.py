@@ -43,8 +43,8 @@ import asyncio
 import logging
 from typing import Any
 
-from genro_asgi.spa.orchestration import SpaCommander
-from genro_asgi.spa.orchestration.envelope_handler import CommanderEnvelopeHandler
+from genro_asgi_multiworker_spa.orchestration import SpaCommander
+from genro_asgi_multiworker_spa.orchestration.envelope_handler import CommanderEnvelopeHandler
 
 from .delivery_desk import DeliveryDesk
 

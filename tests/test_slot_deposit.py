@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from genro_asgi.spa.orchestration.worker_connector import CommanderCallFailed
+from genro_asgi_multiworker_spa.orchestration.worker_connector import CommanderCallFailed
 from tests.lane import wait_until
 
 TABLE = "customer"

@@ -37,8 +37,8 @@ from genro_routes import RoutingClass, route
 from genro_tytx import from_tytx, to_tytx
 
 from genro_asgi.channel.frame import FrameStream
-from genro_asgi.spa.orchestration import FreezeHandler, GroupHandler, SpaWorker
-from genro_asgi.spa.orchestration.worker_handler import WorkerHandler
+from genro_asgi_multiworker_spa.orchestration import FreezeHandler, GroupHandler, SpaWorker
+from genro_asgi_multiworker_spa.orchestration.worker_handler import WorkerHandler
 
 from genropy_asgi.spa.genropy_spa_commander import GenropySpaCommander
 
