@@ -1,11 +1,15 @@
 # Copyright 2025 Softwell S.r.l.
 # Licensed under the Apache License, Version 2.0
 
-"""Bridge contract at the opaque HTTP transport's WSGI endpoint.
+"""Bridge contract of ``WsgiSeam``, the core's WSGI endpoint.
 
 The core owns framing and HTTP records; the bridge owns the requirement that
-their endpoint reconstructs the exact legacy environ and answer. These tests
-stay at that public seam and do not inspect frame internals.
+their endpoint reconstructs the exact legacy environ and answer: cookies
+joined with ``; ``, repeated headers joined with ``,``, the query string in
+latin-1, ``SCRIPT_NAME``/``PATH_INFO``, a binary reply with every header.
+These tests pass identically on the core before and after the two-envelope
+frame of genro-asgi #72: they are a contract of the seam, not a proof of the
+transport.
 """
 
 from __future__ import annotations
