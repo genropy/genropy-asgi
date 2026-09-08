@@ -78,4 +78,10 @@ The browser connected successfully (`WebSocket /websocket [accepted]`, `connecti
 
 Issue 72's opaque frame migration preserves the current bridge HTTP/polling behavior, which passed both the 260-test bridge suite and this live browser exercise. Enabling WSX for an unmodified legacy Genro browser is a separate compatibility feature, not a factory flag: it needs an explicit adapter for browser request/reply envelopes **and** replacement of the site's server-side `gnrasync` registration/push proxy calls. Turning on `websockets` without both pieces breaks page creation or creates a connected socket whose messages are all dropped.
 
-Therefore the safe acceptance claim for this issue is HTTP login/RPC/datastore/datachanges polling plus opaque transport regression. Live openchannel/push, two-page websocket datachanges, and websocket-assisted freeze/wake remain independently blocked by the documented protocol mismatch and should not be overclaimed. Whether to add a legacy-browser WSX adapter is a substantive scope decision still pending with the user; it is not required to establish the opaque transport regression result recorded here.
+The accepted scope for issue 72 is HTTP login/RPC/datastore/datachanges polling
+plus opaque transport regression. On 2026-09-08 the owner explicitly chose to
+handle the legacy WebSocket in a separate project, with an approach analogous
+to this transport work. Legacy openchannel/push, two-page websocket datachanges,
+and websocket-assisted freeze/wake are excluded from this delivery; the
+protocol mismatch above is evidence for that subsequent project, not an open
+scope decision or a claim of legacy-browser WSX compatibility.
