@@ -66,7 +66,8 @@ import datetime
 import re
 import threading
 import time
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 
 from genro_tytx import to_tytx
 from gnr.core.gnrbag import Bag
@@ -127,7 +128,7 @@ class ServerStore:
         self.triggered = triggered
         self.thread_id = threading.get_ident()
 
-    def __enter__(self) -> ServerStore:
+    def __enter__(self) -> Self:
         if self.register_name == "global":
             # The block holds the commander's WHOLE dictionary, for this thread:
             # the turn lives on the adapter, never on this object, so every
@@ -147,7 +148,12 @@ class ServerStore:
             f"Lock timed out for {self.register_name!r} item {self.register_item_id!r}"
         )
 
-    def __exit__(self, exc_type: Any, exc_value: Any, tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         if self.register_name == "global":
             self.siteregister.global_store_adapter.close_turn(exc_type)
             return
@@ -227,7 +233,7 @@ class ServerStore:
         item = self.register_item
         return item.get("data") if item else None
 
-    def getItem(self, path: str, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface
+    def getItem(self, path: str, default: Any = None) -> Any:
         """Read one path — on the global store, one CALL to the commander.
 
         The global read goes through the adapter: the first path segment is the
@@ -255,7 +261,7 @@ class ServerStore:
             return default
         return self._copied(data.getItem(path, default))
 
-    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:  # noqa: N802 - legacy Bag surface
+    def setItem(self, path: str, value: Any = None, **kwargs: Any) -> Any:
         """Write one path — the store keeps a copy, never the caller's own object.
 
         The mirror of the read above, and the same reason: the daemon received
@@ -277,7 +283,7 @@ class ServerStore:
             return None
         return data.setItem(path, self._copied(value), **kwargs)
 
-    def delItem(self, path: str) -> Any:  # noqa: N802 - legacy Bag surface
+    def delItem(self, path: str) -> Any:
         """Remove one path — on the global store, the key or one path inside it."""
         if self.register_name == "global":
             return self.siteregister.global_store_adapter.delete_global_item(path)
@@ -385,7 +391,7 @@ class GenropyRegisterClient:
 
     @property
     def locks_mutex(self) -> threading.Lock:
-        self.item_locks  # ensure created
+        _ = self.item_locks  # ensure created
         return self.__dict__["_locks_mutex"]
 
     @property
@@ -431,7 +437,7 @@ class GenropyRegisterClient:
         worker = self.spa_worker
         if worker.connection_items.get(connection_id) is None:
             fields = self._conn_kwargs(connection, kwargs)
-            fields["start_ts"] = datetime.datetime.now()
+            fields["start_ts"] = datetime.datetime.now()  # noqa: DTZ005 - legacy API requires naive local timestamps
             worker.new_connection(connection_id, **fields)
         return self._item_with_data(connection_id, "connection")
 
@@ -462,7 +468,7 @@ class GenropyRegisterClient:
         data = fields.pop("data", None)
         if data is not None:
             fields["store"] = data
-        fields["start_ts"] = datetime.datetime.now()
+        fields["start_ts"] = datetime.datetime.now()  # noqa: DTZ005 - legacy API requires naive local timestamps
         worker.new_page(user, page_id=page_id, connection_id=connection_id, **fields)
         return self._item_with_data(page_id, "page")
 
@@ -962,7 +968,7 @@ class GenropyRegisterClient:
                 child_id, last_user_ts=self._parse_typed(child_user_ts),
                 last_rpc_ts=self._parse_typed(child_rpc),
             )
-        envelope = Bag(dict(result=None))
+        envelope = Bag({"result": None})
         changes = self._changes_to_bag(self._collect_local_datachanges(page_id))
         if changes is not None:
             envelope.setItem("dataChanges", changes)
@@ -1011,7 +1017,7 @@ class GenropyRegisterClient:
             return sorted(worker.subscribed_tables)
         with worker.dispatch_lock:
             tables: set = set()
-            for page_id in worker.page_items.keys():
+            for page_id in worker.page_items.keys():  # noqa: SIM118 - custom register exposes snapshot keys
                 page = worker.page_items.get(page_id)
                 if page is not None:
                     tables.update(page["table_subscriptions"])
@@ -1060,15 +1066,15 @@ class GenropyRegisterClient:
 
     def on_reloader_restart(self, *args: Any, **kwargs: Any) -> None:
         """Dev reloader restart hook — nothing to persist in-process."""
-        return None
+        return
 
     def on_site_stop(self, *args: Any, **kwargs: Any) -> None:
         """Site shutdown hook — persistence is the future Service Store's business."""
-        return None
+        return
 
     def updatePageProfilers(self, *args: Any, **kwargs: Any) -> None:
         """Page profilers update — not collected in-process."""
-        return None
+        return
 
     # ==================================================================
     # Not served in-process (PROVISIONAL): inter-process bus, persistence.
@@ -1076,7 +1082,7 @@ class GenropyRegisterClient:
 
     def sendProcessCommand(self, *args: Any, **kwargs: Any) -> None:
         """Inter-process command bus — the commander will host it (PROVISIONAL no-op)."""
-        return None
+        return
 
     def pendingProcessCommands(self, *args: Any, **kwargs: Any) -> list:
         """Inter-process command bus — the commander will host it (PROVISIONAL empty)."""
@@ -1232,7 +1238,9 @@ class GenropyRegisterClient:
         elif register_name == "user":
             adapted["user"] = item_id
         if adapted["start_ts"] is None:
-            adapted["start_ts"] = datetime.datetime.fromtimestamp(register_item["last_refresh_ts"])
+            adapted["start_ts"] = datetime.datetime.fromtimestamp(  # noqa: DTZ006 - legacy API requires naive local timestamps
+                register_item["last_refresh_ts"]
+            )
         return adapted
 
     def _ensure_item_data(self, item: dict | None) -> dict | None:
@@ -1490,7 +1498,7 @@ class GenropyRegisterClient:
         last_batch_update = data.getItem("lastBatchUpdate")
         if not last_batch_update:
             return
-        if (datetime.datetime.now() - last_batch_update).seconds < RUNNING_BATCH_WINDOW:
+        if (datetime.datetime.now() - last_batch_update).seconds < RUNNING_BATCH_WINDOW:  # noqa: DTZ005 - legacy API requires naive local timestamps
             envelope.setItem("runningBatch", True)
         else:
             data.setItem("lastBatchUpdate", None)

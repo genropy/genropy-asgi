@@ -113,7 +113,7 @@ class GenropySiteEngineFactory:
         thread, so the fork invariant survives (verified, same day).
         """
         gnr_site = self.build_site()
-        gnr_site.resources_dirs
+        _ = gnr_site.resources_dirs
         gnr_site.storage("gnr")
         gnr_site.db.closeConnection()
         return gnr_site
