@@ -18,12 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 import pytest
-from genro_bag import Bag
-from genro_bag.datachange import DataChangeCollector
 from genro_tytx import to_tytx
 
 from genropy_asgi.spa.genropy_worker import GenropyRequestSlot
-from tests.lane import wait_until
+from tests.lane import foreign_change, wait_until
 
 USER = "alice"
 PAGE = "p1"
@@ -40,14 +38,6 @@ def worker(lane):
     # worker's own channel, and the fold reads them before the announcement is answered.
     lane.deliver_worker_events()
     return lane.worker
-
-
-def foreign_change(path: str, value):
-    """A change born elsewhere, TYTX-encoded the way the site hands it over."""
-    source = Bag()
-    producer = DataChangeCollector(source)
-    source[path] = value
-    return to_tytx(producer.drain()[-1], "json")
 
 
 # ----------------------------------------------------------------------

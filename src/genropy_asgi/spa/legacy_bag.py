@@ -7,8 +7,8 @@ Two pieces, one module:
 
 - ``LegacyBagCollector`` — the datachange capture attached to a legacy
   ``gnr.core.gnrbag.Bag``, implementing the collector contract the core
-  registry and worker consume (``genro_bag.datachange.DataChangeCollector``
-  is the model): ``drain(reset=True)``, ``append(change, replace=False)``,
+  registry and worker consume (genro-bag 0.22 dropped its own collector; the
+  contract lives here): ``drain(reset=True)``, ``append(change, replace=False)``,
   ``reset()``, ``drop(prefix)``, ``subscribe_path``/``unsubscribe_path``,
   ``detach()``, the ``changes`` list and the ``pending`` count. A change is
   genro-bag's plain dict — ``{key: {path, reason, fired}, value, attributes,
