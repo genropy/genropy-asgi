@@ -1,5 +1,9 @@
 # Issue 72 bridge live acceptance
 
+> Session log, not a procedure. This records one live session of 2026-09-08 run on an
+> uncommitted working tree: the paths are personal, the runtime files are gitignored and a
+> temporary `sitecustomize` was in place. It cannot be replayed as written.
+
 Date: 2026-09-08. Bridge HEAD `664dda96f6da7715af5eadbc993f3f0896c0c296`; candidate core working tree based on `2465fcc47dadb1761ec1c09466c847715725daa9`.
 
 ## Isolation and launch
