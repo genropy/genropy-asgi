@@ -54,11 +54,10 @@ import os
 import tempfile
 from typing import Any
 
-from genro_bag.resolvers import EnvResolver
-
 from genro_asgi import ConfigurationProfilesApplication
-from genro_asgi_multiworker_spa.spa_console import SpaConsoleMcpApplication
 from genro_asgi.config import AsgiConfigBuilder
+from genro_asgi_multiworker_spa.spa_console import SpaConsoleMcpApplication
+from genro_bag.resolvers import EnvResolver
 
 from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
 

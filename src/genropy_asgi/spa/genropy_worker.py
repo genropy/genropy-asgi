@@ -261,7 +261,7 @@ class GenropyWorker(SpaWorker):
         # 291 ms against 100. The legacy makes them too, at the startup of its
         # one long-lived process. Settling them here puts them where the legacy
         # has them: outside the request, in the birth.
-        self._gnr_site.resources_dirs
+        _ = self._gnr_site.resources_dirs
         self._gnr_site.storage("gnr")
         self._gnr_site.storage("dojo")
         self._gnr_site.spa_worker = self
@@ -363,7 +363,7 @@ class GenropyWorker(SpaWorker):
     # The site's verbs: subscriptions, the collect, the addressed writes
     # ------------------------------------------------------------------
 
-    def setStoreSubscription(  # noqa: N802 - reserved protocol name
+    def setStoreSubscription(
         self,
         identity: str,
         page_id: str,
@@ -719,13 +719,13 @@ class GenropyWorker(SpaWorker):
     # The table events: their own ops, the desk's index, their own species
     # ------------------------------------------------------------------
 
-    def subscribeTable(  # noqa: N802 - reserved protocol name
+    def subscribeTable(
         self,
         identity: str,
         table: str,
         page_id: str,
         subscribe: bool = True,
-        subscribeMode: str | None = None,  # noqa: N803 - reserved protocol name
+        subscribeMode: str | None = None,
     ) -> dict[str, Any]:
         """Subscribe (or unsubscribe) the calling page to a table's events.
 
@@ -769,7 +769,7 @@ class GenropyWorker(SpaWorker):
         )
         return {"page_id": page_id, "table": table, "subscribe": subscribe}
 
-    def notifyDbEvents(  # noqa: N802 - reserved protocol name
+    def notifyDbEvents(
         self,
         identity: str,
         dbevents: dict[str, Any],
@@ -941,7 +941,7 @@ class GenropyWorker(SpaWorker):
         with self.dispatch_lock:
             connection_ids = [
                 connection_id
-                for connection_id in self.connection_register.keys()
+                for connection_id in self.connection_register.keys()  # noqa: SIM118 - custom register exposes snapshot keys
                 if (item := self.connection_register.get(connection_id))
                 and item["user"] == user
             ]

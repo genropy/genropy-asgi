@@ -32,9 +32,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from genro_routes import route
-
 from genro_asgi_multiworker_spa.spa_app import SpaApplication
+from genro_routes import route
 
 from .genropy_spa_commander import GenropySpaCommander
 
