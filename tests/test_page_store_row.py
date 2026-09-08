@@ -20,6 +20,8 @@ import importlib.util
 
 import pytest
 
+from tests.lane import foreign_change
+
 _HAS_GNR = importlib.util.find_spec("gnr") is not None
 
 pytestmark = pytest.mark.skipif(not _HAS_GNR, reason="GenroPy not installed")
@@ -171,18 +173,6 @@ def test_append_page_datachange_with_replace_keeps_one_pending_per_key(registry)
 # ----------------------------------------------------------------------
 # On the live lane: the collect and the addressed writes reach the row
 # ----------------------------------------------------------------------
-
-
-def foreign_change(path: str, value):
-    """A change born elsewhere, TYTX-encoded the way the site hands it over."""
-    from genro_bag import Bag
-    from genro_bag.datachange import DataChangeCollector
-    from genro_tytx import to_tytx
-
-    source = Bag()
-    producer = DataChangeCollector(source)
-    source[path] = value
-    return to_tytx(producer.drain()[-1], "json")
 
 
 def test_collect_page_returns_the_queue_and_leaves_the_row_empty(lane):

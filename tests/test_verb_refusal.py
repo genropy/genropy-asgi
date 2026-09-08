@@ -14,17 +14,8 @@ from __future__ import annotations
 import logging
 
 import pytest
-from genro_bag import Bag
-from genro_bag.datachange import DataChangeCollector
-from genro_tytx import to_tytx
 
-
-def foreign_change(path: str, value):
-    """A change born elsewhere, TYTX-encoded the way the site hands it over."""
-    source = Bag()
-    producer = DataChangeCollector(source)
-    source[path] = value
-    return to_tytx(producer.drain()[-1], "json")
+from tests.lane import foreign_change
 
 
 @pytest.fixture

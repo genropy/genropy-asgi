@@ -30,13 +30,29 @@ from pathlib import Path
 from typing import Any
 
 from genro_asgi.channel.frame import FrameStream
+from genro_tytx import to_tytx
+from gnr.core.gnrbag import Bag
 from genro_asgi_multiworker_spa.orchestration import FreezeHandler, GroupHandler
 from genro_asgi_multiworker_spa.orchestration.worker_handler import WorkerHandler
 
 from genropy_asgi.spa.genropy_spa_commander import GenropySpaCommander
+from genropy_asgi.spa.legacy_bag import LegacyBagCollector
 
 #: The name the lane's handler and worker share: short, because a UDS path is.
 WORKER_NAME = "pool_0001"
+
+
+def foreign_change(path: str, value: Any) -> str:
+    """A change born elsewhere, TYTX-encoded the way the site hands it over.
+
+    Born on a legacy Bag through the bridge's own collector: that is the only
+    producer of changes the site has, genro-bag 0.22 having no collector of
+    its own.
+    """
+    source = Bag()
+    producer = LegacyBagCollector(source)
+    source.setItem(path, value)
+    return to_tytx(producer.drain()[-1], "json")
 
 
 class SiteLane:
