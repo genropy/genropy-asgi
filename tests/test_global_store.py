@@ -210,6 +210,26 @@ def test_an_aware_datetime_inside_a_bag_reads_back_naive_local(register, master)
     assert back == stamp
 
 
+def test_a_naive_datetime_written_as_a_scalar_reads_back_the_same_clock(register, master):
+    # The legacy writes datetime.now() naive local; TYTX reads a naive value as
+    # UTC, so the adapter attaches the local zone before the wire (owner, 2026-09-08).
+    stamp = datetime.datetime.now().replace(microsecond=0)
+    register.globalStore().setItem("RESTART_TS", stamp)
+    assert master["RESTART_TS"].tzinfo is not None
+    back = register.globalStore().getItem("RESTART_TS")
+    assert back.tzinfo is None
+    assert back == stamp
+
+
+def test_a_whole_turn_that_leaves_a_date_alone_does_not_shift_it(register, master):
+    stamp = datetime.datetime.now().replace(microsecond=0)
+    with register.globalStore() as store:
+        store.setItem("TASK_TS", stamp)
+    with register.globalStore() as store:
+        store.setItem("CACHE_TS.other", 1)
+    assert register.globalStore().getItem("TASK_TS") == stamp
+
+
 # ------------------------------------------------------------------
 # Two workers on one dictionary
 # ------------------------------------------------------------------

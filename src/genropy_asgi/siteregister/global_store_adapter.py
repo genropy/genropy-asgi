@@ -39,12 +39,17 @@ out untouched.
 built) a local legacy Bag answers reads and writes. It is local only and is
 never uploaded: after the attach the commander alone answers.
 
-**The legacy date boundary.** The wire hands back an aware datetime — a naive
-value stored inside a legacy Bag comes back with this process's own offset on
-it — while the legacy world compares naive clocks. Every value that goes out to
-the site is therefore normalized: aware becomes naive local, naive is left
-alone, and the leaves of a returned Bag are walked. The same walk is what makes
-the value a private copy: nothing the site mutates afterwards reaches the store.
+**The legacy date boundary, both ways.** The legacy world writes and compares
+naive LOCAL clocks; the wire (TYTX) reads a naive datetime as UTC. So a naive
+scalar handed to the wire as it is would come back shifted by the local offset.
+On the way IN (``wire_value``) a naive datetime gets the local zone attached,
+its clock preserved — 12:00 naive becomes 12:00 with the local tzinfo — on every
+road to the master: the scalar ``set``, a value written into a turn's private
+dictionary, and the whole dictionary a turn republishes. On the way OUT
+(``legacy_value``) aware becomes naive local, naive is left alone, and the
+leaves of a returned Bag are walked. The same walk is what makes the value a
+private copy: nothing the site mutates afterwards reaches the store. A date
+INSIDE a legacy Bag needs neither: its typed XML carries the local offset.
 """
 
 from __future__ import annotations
@@ -150,6 +155,9 @@ class GlobalStoreAdapter:
         """
         lease = self.active_turn
         self._active_global_turn.lease = None
+        if exc_type is None:
+            for key, value in lease.value.items():
+                lease.value[key] = self.wire_value(value)
         lease.__exit__(exc_type, None, None)
 
     # ------------------------------------------------------------------
@@ -199,7 +207,7 @@ class GlobalStoreAdapter:
             self.local_bag.setItem(path, self.legacy_value(value))
             return
         if not rest:
-            store.set(key, value)
+            store.set(key, self.wire_value(value))
             return
         with store.for_update(key) as keyed:
             bag = keyed.value if keyed.exists and isinstance(keyed.value, Bag) else Bag()
@@ -298,6 +306,18 @@ class GlobalStoreAdapter:
             return copy.deepcopy(value)
         return value
 
+    def wire_value(self, value: Any) -> Any:
+        """The value as the wire must receive it: a naive datetime gets the local zone.
+
+        TYTX reads a naive datetime as UTC, so a legacy ``datetime.now()`` would
+        come back shifted by the local offset. ``astimezone()`` on a naive value
+        attaches the process's own zone and keeps the clock, which is exactly
+        what the legacy meant. Everything else travels as it is.
+        """
+        if isinstance(value, datetime.datetime) and value.tzinfo is None:
+            return value.astimezone()
+        return value
+
     def _legacy_read(self, value: Any, rest: str, default: Any) -> Any:
         """One stored value, answered for the legacy side; ``rest`` reads into its Bag."""
         if rest:
@@ -309,7 +329,7 @@ class GlobalStoreAdapter:
     def _write_into(self, content: dict, key: str, rest: str, value: Any) -> None:
         """Write one path into a dictionary this thread owns (a turn's private copy)."""
         if not rest:
-            content[key] = self.legacy_value(value)
+            content[key] = self.wire_value(self.legacy_value(value))
             return
         bag = content.get(key)
         if not isinstance(bag, Bag):
