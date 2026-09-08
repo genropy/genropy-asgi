@@ -38,14 +38,14 @@ Who serves what (FIXED):
   collectors watch and a move would package); ``ServerStore`` locks the item and
   reads/writes it in-process. The legacy ``data`` seed of ``new_page`` becomes the
   page's store, so channel-A writes, the dbenv walk and the capture all see one Bag.
-- Global store — the ONLY copy lives on the commander (owner design, 2026-08-21).
-  Writes: one stable legacy Bag (``global_bag``), write-by-reference — every LEAF
-  write ships up as ``store_set``/``store_del`` with a FULL-PATH key and a
-  TYTX-encoded SCALAR value. Reads: a lock-less ``globalStore().getItem(path)``
-  PAYS one ``store_get`` CALL and answers the master at the moment it was asked —
-  no local copy that ages. A read-modify-write block holds the real lease, whose
-  grant materializes the master snapshot into ``global_bag`` for the block's
-  duration (``_materialize_global_snapshot``).
+- Global store — the ONLY copy lives on the commander, as ONE DICTIONARY behind
+  one FIFO lock (owner design 2026-08-21, genro-asgi #74). Every access is a CALL,
+  and :class:`~genropy_asgi.siteregister.global_store_adapter.GlobalStoreAdapter`
+  is the whole surface: the FIRST segment of a legacy path is the dictionary key,
+  the rest of the path lives inside the legacy Bag stored under it. A subpath
+  write or delete holds a keyed read-modify-write turn (a sibling leaf another
+  worker wrote must not be lost); a ``with globalStore()`` block holds the whole
+  dictionary for its thread and publishes it once, on the exit.
 
 NOT served (explicit, PROVISIONAL): dump/load (future Service Store),
 sendProcessCommand/pendingProcessCommands (inter-process bus, will move to the
@@ -68,7 +68,6 @@ import threading
 import time
 from typing import Any
 
-from genro_bag import Bag as CoreBag
 from genro_tytx import to_tytx
 from gnr.core.gnrbag import Bag
 from gnr.core.gnrclasses import GnrClassCatalog
@@ -76,6 +75,7 @@ from gnr.web import logger
 from gnr.web.gnrwebpage import ClientDataChange
 
 from .exceptions import GnrDaemonLocked
+from .global_store_adapter import GlobalStoreAdapter
 
 # Lock retry budget for a ServerStore context (in-process contention is rare and short).
 LOCK_MAX_RETRY = 50
@@ -129,8 +129,10 @@ class ServerStore:
 
     def __enter__(self) -> ServerStore:
         if self.register_name == "global":
-            # The REAL lease (develop == deploy): the block holds the master.
-            self._lease = self.siteregister._open_global_lease()
+            # The block holds the commander's WHOLE dictionary, for this thread:
+            # the turn lives on the adapter, never on this object, so every
+            # facade of the thread finds it and none of them outlives it.
+            self.siteregister.global_store_adapter.open_turn()
             return self
         delay = RETRY_DELAY
         for attempt in range(LOCK_MAX_RETRY + 1):
@@ -147,9 +149,7 @@ class ServerStore:
 
     def __exit__(self, exc_type: Any, exc_value: Any, tb: Any) -> None:
         if self.register_name == "global":
-            lease = self.__dict__.pop("_lease", None)
-            if lease is not None:
-                self.siteregister._close_global_lease(lease, exc_type)
+            self.siteregister.global_store_adapter.close_turn(exc_type)
             return
         self.siteregister.unlock_item(
             self.register_item_id, reason=self.thread_id, register_name=self.register_name
@@ -214,17 +214,26 @@ class ServerStore:
 
     @property
     def data(self) -> Any:
+        """The item's live Bag — on the global store, the whole dictionary as one Bag.
+
+        The global answer is a SNAPSHOT (``GlobalStoreAdapter.store_bag``): the
+        dictionary lives on the commander and no Bag of this process backs it.
+        The delegation below (``__getattr__``) therefore reads through it, and
+        the three explicit operations — ``getItem``, ``setItem``, ``delItem`` —
+        are the only ones that reach the store itself.
+        """
+        if self.register_name == "global":
+            return self.siteregister.global_store_adapter.store_bag
         item = self.register_item
         return item.get("data") if item else None
 
     def getItem(self, path: str, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface
-        """Read one path — on the bare global store, a paid ``store_get`` CALL.
+        """Read one path — on the global store, one CALL to the commander.
 
-        A lock-less global read answers the commander's master at the moment it
-        was asked (owner design, 2026-08-21): no local copy that ages. Inside a
-        ``with`` block the lease already materialized the master locally, so the
-        block reads (and sees its own writes) on the local Bag; every other
-        register reads its in-process item as before.
+        The global read goes through the adapter: the first path segment is the
+        dictionary key, and what comes back is the master as it stood when the
+        read was served — inside a ``with`` block, the block's own private copy,
+        its own writes included. Every other register reads its in-process item.
 
         **What comes back is a copy.** The daemon answered this read over the
         wire, so what the site received was a pickle round-trip: a mutation
@@ -239,8 +248,8 @@ class ServerStore:
         the second login of the same page found an avatar stripped of them and
         fell back to the username.
         """
-        if self.register_name == "global" and "_lease" not in self.__dict__:
-            return self.siteregister._global_read(path, default)
+        if self.register_name == "global":
+            return self.siteregister.global_store_adapter.get_global_item(path, default)
         data = self.data
         if data is None:
             return default
@@ -257,11 +266,25 @@ class ServerStore:
         ``tableCachedData`` has just written into the page store: in-process the
         stored object was the popped one, and the next login read an avatar
         stripped of the three, falling back to the username for all of them.
+
+        A global write takes the path and the value alone: no caller has ever
+        put attributes on one, and the dictionary has nowhere to keep them.
         """
+        if self.register_name == "global":
+            return self.siteregister.global_store_adapter.set_global_item(path, value)
         data = self.data
         if data is None:
             return None
         return data.setItem(path, self._copied(value), **kwargs)
+
+    def delItem(self, path: str) -> Any:  # noqa: N802 - legacy Bag surface
+        """Remove one path — on the global store, the key or one path inside it."""
+        if self.register_name == "global":
+            return self.siteregister.global_store_adapter.delete_global_item(path)
+        data = self.data
+        if data is None:
+            return None
+        return data.delItem(path)
 
     def _copied(self, value: Any) -> Any:
         """The value as the wire handed it over: nothing the site can write through.
@@ -327,33 +350,19 @@ class GenropyRegisterClient:
     # ------------------------------------------------------------------
 
     @property
-    def global_bag(self) -> Bag:
-        """The in-process legacy Bag backing the global store (one stable object).
+    def global_store_adapter(self) -> GlobalStoreAdapter:
+        """The legacy surface over the commander's dictionary (one per register).
 
-        ``get_item(register_name='global')`` hands it back on every call so a ``setItem``
-        on it persists (write-by-reference), exactly as the daemon-backed store did.
-        The Bag is subscribed to the global-store RAIL: every local leaf write ships
-        up as a full-path scalar (``_on_global_change``). It is a WRITE vehicle, not
-        a read cache: a lock-less read pays ``store_get`` (``_global_read``), and the
-        only descent is the lease grant (``_materialize_global_snapshot``).
+        It holds no store of its own: it resolves the calling thread's turn on
+        every operation, so the same object serves a lock-less write, a
+        ``with globalStore()`` block and the diagnostic reader alike. Before the
+        worker attaches, its own local Bag answers — local only, never uploaded.
         """
-        bag = self.__dict__.get("_global_bag")
-        if bag is None:
-            bag = Bag()
-            self.__dict__["_global_bag"] = bag
-            bag.subscribe("global_rail", any=self._on_global_change)
-        return bag
-
-    @property
-    def _global_rail_state(self) -> threading.local:
-        """Thread-local rail state: ``applying`` is True only on the thread that is
-        materializing a commander push, so its Bag writes do not re-dispatch while
-        legacy writes on other threads keep shipping."""
-        state = self.__dict__.get("_global_rail_local")
-        if state is None:
-            state = threading.local()
-            self.__dict__["_global_rail_local"] = state
-        return state
+        adapter = self.__dict__.get("_global_store_adapter")
+        if adapter is None:
+            adapter = GlobalStoreAdapter(self)
+            self.__dict__["_global_store_adapter"] = adapter
+        return adapter
 
     @property
     def catalog(self) -> GnrClassCatalog:
@@ -529,13 +538,20 @@ class GenropyRegisterClient:
         """Return one register item by id (page/connection/user), or the global store.
 
         The read primitive the whole read side builds on. ``register_name='global'``
-        returns the stable global Bag; ``include_data == 'lazy'`` attaches the item's
-        in-process Bag — the item's own live store. What goes out is the LEGACY
-        ANSWER (``_adapt_to_legacy``): the daemon's own field set, the live Bag, the
-        daemon-era keys — never the core's own bookkeeping.
+        answers an item whose ``data`` is the ADAPTER — the facade that resolves the
+        calling thread's turn on every operation, never a shared Bag that a caller
+        could keep writing into after the block that owned it ended.
+        ``include_data == 'lazy'`` attaches the item's in-process Bag — the item's
+        own live store. What goes out is the LEGACY ANSWER (``_adapt_to_legacy``):
+        the daemon's own field set, the live Bag, the daemon-era keys — never the
+        core's own bookkeeping.
         """
         if register_name == "global":
-            return {"register_item_id": "*", "register_name": "global", "data": self.global_bag}
+            return {
+                "register_item_id": "*",
+                "register_name": "global",
+                "data": self.global_store_adapter,
+            }
         item = self.local_item(register_item_id, register_name)
         adapted = self._adapt_to_legacy(item, register_name=register_name)
         if adapted is not None and (include_data == "lazy" or include_data):
@@ -721,252 +737,6 @@ class GenropyRegisterClient:
             if held["count"] <= 0:
                 del self.item_locks[key]
             return True
-
-    # ==================================================================
-    # Global-store rail: local leaf writes ship up, pushes materialize back
-    # ==================================================================
-
-    def _on_global_change(
-        self,
-        node: Any = None,
-        pathlist: Any = None,
-        evt: str | None = None,
-        oldvalue: Any = None,
-        ind: Any = None,
-        reason: Any = None,
-    ) -> None:
-        """Bag trigger on ``global_bag``: ship each LEAF write on the store rail.
-
-        Full path: for ``ins``/``del`` it is ``pathlist + [node.label]``; for the
-        update events the trigger's pathlist already ends with the node's label. A Bag
-        value is walked to its leaves (one write per key), so a wholesale subtree
-        set/delete becomes per-key writes — an autocreated parent (empty Bag) ships
-        nothing, and a subtree REPLACE also drops the old leaves that are gone. Inert
-        while this thread is materializing a commander push (the echo must not bounce).
-        """
-        if getattr(self._global_rail_state, "applying", False):
-            return
-        if evt in ("ins", "del"):
-            path = ".".join(list(pathlist or []) + [node.label])
-        else:
-            path = ".".join(list(pathlist or []))
-        op = "store_del" if evt == "del" else "store_set"
-        value = node.value
-        if isinstance(value, Bag):
-            new_leaves = self._global_leaves(value, path)
-            for leaf_path, leaf_value in new_leaves:
-                self._ship_global(op, leaf_path, leaf_value)
-            if isinstance(oldvalue, Bag):
-                kept = {leaf_path for leaf_path, _ in new_leaves}
-                for leaf_path, _ in self._global_leaves(oldvalue, path):
-                    if leaf_path not in kept:
-                        self._ship_global("store_del", leaf_path, None)
-            return
-        if isinstance(oldvalue, Bag):
-            for leaf_path, _ in self._global_leaves(oldvalue, path):
-                self._ship_global("store_del", leaf_path, None)
-        self._ship_global(op, path, value)
-
-    def _global_leaves(self, bag: Any, prefix: str) -> list[tuple[str, Any]]:
-        """The ``(full_path, scalar)`` leaves under *bag*, prefixed; resolvers skipped."""
-        leaves: list[tuple[str, Any]] = []
-
-        def collect(node: Any, _pathlist: Any = None) -> None:
-            if getattr(node, "resolver", None) is not None:
-                logger.debug("global-store rail: resolver at %r not replicated", node.label)
-                return
-            if not isinstance(node.value, Bag):
-                full = ".".join([prefix] + list(_pathlist or []) + [node.label])
-                leaves.append((full, node.value))
-
-        bag.walk(collect, _pathlist=[])
-        return leaves
-
-    def _ship_global(self, op: str, path: str, value: Any) -> None:
-        """One rail write: ``store_set`` ships the TYTX-encoded scalar, ``store_del``
-        the key alone — directly on the worker's store ops. While this THREAD holds
-        the global lease, the write is COLLECTED on the lease instead of shipping:
-        the block's writes travel once, on the release, all-or-nothing. Best-effort:
-        a missing worker never breaks the legacy write (the boot writes before the
-        worker attaches; nothing to replicate yet)."""
-        if op == "store_set" and callable(value):
-            logger.debug("global-store rail: callable at %r not replicated", path)
-            return
-        state = self._global_rail_state
-        if getattr(state, "lease_writes", None) is not None:
-            state.lease_writes.append(
-                (op, path, None if op == "store_del" else self._encode_leased(value))
-            )
-            return
-        worker = self.spa_worker
-        if worker is None:
-            return
-        if op == "store_del":
-            worker.store_del(None, path)
-            return
-        worker.store_set(None, path, value=self._encode_global(value))
-
-    def _encode_global(self, value: Any) -> str:
-        """Scalar -> TYTX wire text, ALWAYS suffixed.
-
-        A bare ``asTypedText`` leaves plain strings unsuffixed, so a string that
-        LOOKS typed (``'42::L'``) would decode as an int on the other side.
-
-        This is the text the MASTER holds: the ascending store op carries it
-        untouched (the commander is a blind courier and writes what arrived),
-        and the descending push decodes it exactly once — so what every replica
-        and every legacy Bag reads back is the value that was written.
-        """
-        text, cls = self.catalog.asTextAndType(value)
-        return f"{text}::{cls}"
-
-    def _encode_leased(self, value: Any) -> str:
-        """The same wire text, encoded ONCE MORE for the lease's extra hop.
-
-        A lease write does not ascend on a store op: it is applied to the lease's
-        working copy and the release carries the drained changes through a
-        ``to_tytx``/``from_tytx`` hop of its own (core ``release_global_lock`` ->
-        ``apply_changes``) before reaching the master. That hop decodes the typed
-        text, so a value encoded once would land on the master DECODED —
-        ``'42::L'`` as the int 42 on the way out, one decode ahead of the
-        immediate rail. Encoding twice spends the extra hop and leaves the master
-        holding the same text a lock-less write leaves there, which is what makes
-        the two rails agree on what a replica reads.
-        """
-        return self._encode_global(self._encode_global(value))
-
-    def _open_global_lease(self) -> Any:
-        """Acquire the REAL global-store lock and hand back the lease (D4, ratified).
-
-        Runs on the WSGI thread — the sync ``with`` form of the core lease, which
-        parks this thread on the worker's loop until the commander grants the
-        master. On grant, the master content — whose leaves arrive DECODED, the
-        grant having crossed a tytx hop of its own — is materialized into
-        ``global_bag`` under the ``applying`` flag, and this
-        THREAD's rail switches to collecting: the block's leaf writes join the
-        lease instead of shipping one by one. A lease that cannot be acquired —
-        channel down, worker not started — maps to ``GnrDaemonLocked``, the
-        exception the legacy already catches around a store lock.
-        """
-        worker = self.spa_worker
-        if worker is None:
-            raise GnrDaemonLocked("global store lease: no worker attached")
-        try:
-            lease = worker.global_store_lock()
-            master = lease.__enter__()
-        except Exception as exc:
-            raise GnrDaemonLocked(f"global store lease not acquired: {exc}") from exc
-        try:
-            # The grant crossed a tytx hop, so its leaves arrive DECODED.
-            self._materialize_global_snapshot(
-                {
-                    path: node.value
-                    for path, node in master.walk()
-                    if not isinstance(node.value, CoreBag)
-                }
-            )
-            self._global_rail_state.lease_writes = []
-        except Exception as exc:
-            # The grant is already in force here, and the core lock has neither a
-            # TTL nor a wait timeout: anything raised on the way out would hold
-            # the master forever, parking the WSGI thread of every later block.
-            lease.__exit__(type(exc), exc, exc.__traceback__)
-            raise
-        return lease
-
-    def _close_global_lease(self, lease: Any, exc_type: Any) -> None:
-        """Apply the block's collected writes to the lease's working copy and release.
-
-        The writes travel ONCE, on ``store_unlock``, all-or-nothing: a body that
-        raised releases with nothing applied (the core's own apply-on-success
-        rule), and the collecting state ends with the block either way. Lock-less
-        writes on other threads kept shipping immediately throughout.
-
-        A path the working copy REJECTS (the core Bag raises on ``'#3'`` and the
-        other index forms) fails the same way: the lease is released applying
-        nothing, so the master never sees half a block — and it IS released,
-        which is what keeps the next block from parking forever on a lock that
-        has no timeout.
-        """
-        state = self._global_rail_state
-        writes = getattr(state, "lease_writes", None) or []
-        state.lease_writes = None
-        try:
-            if exc_type is None:
-                for op, path, value in writes:
-                    if op == "store_del":
-                        lease.copy.delete(path)
-                    else:
-                        lease.copy.set(path, value)
-        except Exception as exc:
-            lease.__exit__(type(exc), exc, exc.__traceback__)
-            raise
-        lease.__exit__(exc_type, None, None)
-
-    def _global_read(self, path: str, default: Any = None) -> Any:
-        """One lock-less read of the global store: a ``store_get`` CALL on the lane.
-
-        The owner design (2026-08-21): the only copy lives on the commander, so a
-        read pays its round trip and answers the master at the moment it was asked
-        — never a local copy that ages. Before the worker attaches, the local Bag
-        answers (the site touches the register during its own construction). A
-        subtree comes back as a core Bag and is translated leaf by leaf into a
-        legacy Bag; aware datetimes are normalized to naive local, the same
-        boundary convention as ``_materialize_global_snapshot``.
-        """
-        worker = self.spa_worker
-        if worker is None:
-            return self.global_bag.getItem(path, default)
-        value = worker.store_get(None, path)
-        if value is None:
-            return default
-        if isinstance(value, CoreBag):
-            bag = Bag()
-            for leaf_path, node in value.walk():
-                leaf = node.value
-                if isinstance(leaf, CoreBag):
-                    continue
-                if isinstance(leaf, datetime.datetime) and leaf.tzinfo is not None:
-                    leaf = leaf.astimezone().replace(tzinfo=None)
-                bag.setItem(leaf_path, leaf)
-            return bag
-        if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-            value = value.astimezone().replace(tzinfo=None)
-        return value
-
-    def _materialize_global_snapshot(self, leaves: dict) -> None:
-        """Replace the whole Bag content from DECODED ``{full_path: value}`` leaves.
-
-        Validate-then-apply: every leaf lands in a SCRATCH legacy Bag first,
-        and only a fully materialized scratch clears and refills the live Bag,
-        so a failing leaf leaves the legacy ``global_bag`` untouched instead
-        of empty-to-partial for the process lifetime. The scratch validates
-        KEY GRAMMAR only — a path the Bag grammar rejects raises there — not
-        the full live-write semantics: the live Bag carries backref and
-        subscribers, the bare scratch neither. The live Bag
-        stays THE SAME object (write-by-reference, subscribers attached —
-        cemented). The channel is FIFO: later writes apply on top, no partial
-        window. The refill runs under the ``applying`` flag — the rebuild
-        never re-ships. Aware datetimes are normalized like every
-        materialized value.
-        """
-        scratch = Bag()
-        normalized: list[tuple[str, Any]] = []
-        for key in sorted(leaves):
-            value = leaves[key]
-            if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-                value = value.astimezone().replace(tzinfo=None)
-            scratch.setItem(key, value)
-            normalized.append((key, value))
-        state = self._global_rail_state
-        state.applying = True
-        try:
-            bag = self.global_bag
-            bag.clear()
-            for key, value in normalized:
-                bag.setItem(key, value)
-        finally:
-            state.applying = False
 
     # ==================================================================
     # Datachange writes (used by ServerStore and setInClientData)
@@ -1630,7 +1400,7 @@ class GenropyRegisterClient:
         """One genro-bag change dict -> the legacy ClientDataChange.
 
         ``change_ts`` is normalized aware -> naive local at this boundary: the legacy
-        world compares naive clocks (same convention as ``_materialize_global_snapshot``).
+        world compares naive clocks (same convention as ``GlobalStoreAdapter.legacy_value``).
         """
         key = change["key"]
         change_ts = change["change_ts"]

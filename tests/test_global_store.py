@@ -167,6 +167,19 @@ def test_deleting_a_subpath_of_an_absent_key_creates_nothing_and_frees_the_lock(
     assert master["CACHE_TS"].getItem("invoices") == 1
 
 
+def test_a_path_under_a_scalar_key_answers_the_default(register, master):
+    register.globalStore().setItem("RESTART_TS", 7)
+    assert register.globalStore().getItem("RESTART_TS.deeper", 0) == 0
+
+
+def test_the_whole_store_is_not_a_value_a_write_can_address(register, master):
+    store = register.globalStore()
+    with pytest.raises(ValueError):
+        store.setItem("", 1)
+    with pytest.raises(ValueError):
+        store.delItem("")
+
+
 def test_mutating_a_returned_bag_never_reaches_the_master(register, master):
     store = register.globalStore()
     store.setItem("CACHE_TS.invoices", 1)
@@ -175,6 +188,14 @@ def test_mutating_a_returned_bag_never_reaches_the_master(register, master):
     cache.setItem("smuggled", 1)
     assert master["CACHE_TS"].getItem("invoices") == 1
     assert master["CACHE_TS"].getItem("smuggled") is None
+
+
+def test_mutating_a_returned_dictionary_value_never_reaches_the_master(register, master):
+    store = register.globalStore()
+    store.setItem("RESTART_TS", {"stamp": 1})
+    read = store.getItem("RESTART_TS")
+    read["stamp"] = 999
+    assert master["RESTART_TS"] == {"stamp": 1}
 
 
 def test_an_aware_datetime_inside_a_bag_reads_back_naive_local(register, master):
@@ -198,24 +219,13 @@ def test_two_workers_write_two_leaves_of_the_same_key_and_both_survive(
     register, sibling_register, master
 ):
     # The read-modify-write turn is what makes this hold: a read-then-overwrite
-    # would lose whichever leaf lost the race.
-    start = threading.Event()
-
-    def write(store, path, value):
-        start.wait(THREAD_TIMEOUT)
-        store.setItem(path, value)
-
-    threads = [
-        threading.Thread(target=write, args=(register.globalStore(), "CACHE_TS.invoices", 1)),
-        threading.Thread(
-            target=write, args=(sibling_register.globalStore(), "CACHE_TS.customers", 2)
-        ),
-    ]
-    for thread in threads:
-        thread.start()
-    start.set()  # both threads race into the store: the FIFO lock orders them
-    for thread in threads:
-        thread.join(THREAD_TIMEOUT)
+    # would drop the leaf the other worker had already put under CACHE_TS.
+    # The two writes are sequential on purpose — each lane of this harness runs
+    # its own event loop, and the commander's FIFO lock is one asyncio.Lock,
+    # which cannot be waited on from two loops. Contention is asserted between
+    # two threads of ONE worker (test_another_thread_waits_until_the_turn_exits).
+    register.globalStore().setItem("CACHE_TS.invoices", 1)
+    sibling_register.globalStore().setItem("CACHE_TS.customers", 2)
     assert master["CACHE_TS"].getItem("invoices") == 1
     assert master["CACHE_TS"].getItem("customers") == 2
     # and either worker still reads the key as one complete Bag
@@ -244,6 +254,19 @@ def test_a_turn_reads_what_it_has_just_written(register, master):
         store.setItem("CACHE_TS.invoices", 5)
         assert store.getItem("CACHE_TS.invoices") == 5
         assert store.getItem("CACHE_TS").getItem("invoices") == 5
+
+
+def test_a_turn_deletes_a_subpath_and_a_whole_key_together(register, master):
+    store = register.globalStore()
+    store.setItem("CACHE_TS.invoices", 1)
+    store.setItem("CACHE_TS.customers", 2)
+    store.setItem("RESTART_TS", 3)
+    with register.globalStore() as turn:
+        turn.delItem("CACHE_TS.invoices")
+        turn.delItem("RESTART_TS")
+    assert master["CACHE_TS"].getItem("invoices") is None
+    assert master["CACHE_TS"].getItem("customers") == 2
+    assert "RESTART_TS" not in master
 
 
 def test_a_second_facade_inside_a_turn_sees_the_private_copy(register, master):
@@ -377,7 +400,11 @@ def test_before_the_worker_attaches_the_store_is_local_only():
     store.setItem("CACHE_TS.invoices", 1)
     assert store.getItem("CACHE_TS.invoices") == 1
     assert store.getItem("RESTART_TS", 0) == 0
-    store.delItem("CACHE_TS.invoices")
+    assert store.data.getItem("CACHE_TS.invoices") == 1
+    # the same local Bag answers the register item's own facade
+    item = client.get_item("*", register_name="global")
+    assert item["data"].getItem("CACHE_TS.invoices") == 1
+    item["data"].delItem("CACHE_TS.invoices")
     assert store.getItem("CACHE_TS.invoices") is None
 
 
