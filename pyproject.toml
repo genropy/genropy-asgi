@@ -30,6 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+portal = ["psycopg[binary]>=3.2,<4"]
 test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

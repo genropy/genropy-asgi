@@ -11,6 +11,17 @@ source trees, not only on the machine they were born on.
 | `bridge` | `gnrasgiserve` with the SPA pool, inspector on (`/_server/inspector/census`) | 8098 |
 | `bench` | the driver (profile `bench`, run on demand) | — |
 
+## Local validation and measurement campaigns
+
+Use local Docker to verify instrumentation, recording/replay, scenario lifecycle
+and functional parity with Gunicorn. Reserve Hetzner for stress tests, saturation
+and performance measurements. Local smoke timings are diagnostic output, not
+capacity measurements or evidence of a performance advantage.
+
+The selected bridge worktree must be explicit in `.env` (`GENROPY_ASGI_TREE`).
+Use fresh campaign output directories and an isolated database volume. Do not
+reinitialize an existing laboratory volume merely to refresh a smoke test.
+
 ## Why a lab
 
 - **`/proc` exists**: `rss_bytes` reads real memory, so the occupancy's memory

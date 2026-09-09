@@ -1,0 +1,15 @@
+services:
+  db:
+    image: genro-portal-postgres:17-backup
+    volumes:
+      - ./backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=benchmark archive-push %p
+      - -c
+      - archive_timeout=300

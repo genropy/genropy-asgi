@@ -1,0 +1,328 @@
+{
+  "storage_root": "~/genro_bench/genropy-asgi",
+  "preservation_import": "2026-09-08-benchmark-preservation",
+  "updated": "2026-09-08",
+  "entries_are_independent_runs": false,
+  "evidence": [
+    {
+      "id": "evidence-01",
+      "name": "Historical first implementation",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "campaigns/benchmark/README.md",
+      "original_path": "temp/benchmark/README.md",
+      "assessment": "Historical tools; README references assets that are absent/empty here; current CLI incompatible."
+    },
+    {
+      "id": "evidence-02",
+      "name": "Local indexed-record + elasticity",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "imports/2026-09-08-benchmark-preservation/legacy-layout/temp/benchmark_legacy_vs_bridge_2026-08-26.md",
+      "original_path": "temp/benchmark_legacy_vs_bridge_2026-08-26.md",
+      "assessment": "Native macOS, single worker and elastic population; short levels and Pyro port exhaustion."
+    },
+    {
+      "id": "evidence-03",
+      "name": "Local bottleneck diagnosis",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "imports/2026-09-08-benchmark-preservation/legacy-layout/temp/handoff_analisi_colli_2026-08-27.md",
+      "original_path": "temp/handoff_analisi_colli_2026-08-27.md",
+      "assessment": "Diagnostic ladder; historical core and temporary diagnostic tools."
+    },
+    {
+      "id": "evidence-04",
+      "name": "Local Docker raw runs",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "local-runtime/2026-09-08",
+      "original_path": "benchmarks/docker/runtime",
+      "assessment": "Loose raw CSVs and HTML; no single run catalogue."
+    },
+    {
+      "id": "evidence-05",
+      "name": "Hetzner early raw runs",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "local-runtime/2026-09-08/hetzner",
+      "original_path": "benchmarks/docker/runtime/hetzner",
+      "assessment": "Multiple levels and churn; do not assume identical contents to exported report copies."
+    },
+    {
+      "id": "evidence-06",
+      "name": "Hetzner HTML report",
+      "group": "Early local and Hetzner evidence",
+      "storage_path": "campaigns/report_hetzner_2026-08-27/index.html",
+      "original_path": "temp/report_hetzner_2026-08-27/index.html",
+      "assessment": "Report snapshot, subset of results; original report sources retained separately."
+    },
+    {
+      "id": "evidence-07",
+      "name": "CPU policy first evaluation",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/report_cpu_policy_2026-08-28/README.md",
+      "original_path": "temp/report_cpu_policy_2026-08-28/README.md",
+      "assessment": "NO-GO on initial policy; evolving document contains old infrastructure status."
+    },
+    {
+      "id": "evidence-08",
+      "name": "CPU soft admission",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/report_cpu_policy_2026-08-28/pulse_soft_admission/README.md",
+      "original_path": "temp/report_cpu_policy_2026-08-28/pulse_soft_admission/README.md",
+      "assessment": "Functional PASS; tuning issues remain, one execution."
+    },
+    {
+      "id": "evidence-09",
+      "name": "CPU rearm30",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/report_cpu_policy_2026-08-28/pulse_rearm30/README.md",
+      "original_path": "temp/report_cpu_policy_2026-08-28/pulse_rearm30/README.md",
+      "assessment": "Progressive growth works; retirement still causes close/grow cycles."
+    },
+    {
+      "id": "evidence-10",
+      "name": "CPU quiet60",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/report_cpu_policy_2026-08-28/pulse_quiet60/README.md",
+      "original_path": "temp/report_cpu_policy_2026-08-28/pulse_quiet60/README.md",
+      "assessment": "Functional PASS; paired Type1 and churn."
+    },
+    {
+      "id": "evidence-11",
+      "name": "CPU quiet60 repeats",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/report_cpu_policy_2026-08-28/pulse_quiet60/varianza/README.md",
+      "original_path": "temp/report_cpu_policy_2026-08-28/pulse_quiet60/varianza/README.md",
+      "assessment": "Four balanced pairs, one exploratory; descriptive variation only."
+    },
+    {
+      "id": "evidence-12",
+      "name": "Capacity P1/P2 initial",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-28/runtime",
+      "original_path": "temp/campagna_2026-08-28/runtime",
+      "assessment": "Early summary/raw files; historical protocol."
+    },
+    {
+      "id": "evidence-13",
+      "name": "P1 analysis presentation",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/p1_analisi",
+      "original_path": "temp/p1_analisi",
+      "assessment": "Copies of P1 data and analysis HTML."
+    },
+    {
+      "id": "evidence-14",
+      "name": "Cgroup-accounting run",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/runtime",
+      "original_path": "temp/campagna_2026-08-29/runtime",
+      "assessment": "Intermediate accounting experiment; superseded by PSS correction."
+    },
+    {
+      "id": "evidence-15",
+      "name": "PSS accounting",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/p2_pss/README.md",
+      "original_path": "temp/campagna_2026-08-29/p2_pss/README.md",
+      "assessment": "Accounting fix confirmed; structural policy problem remains."
+    },
+    {
+      "id": "evidence-16",
+      "name": "Memory-only restart",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/p2_restart/README.md",
+      "original_path": "temp/campagna_2026-08-29/p2_restart/README.md",
+      "assessment": "Structural PASS, memory safety stop; not an uncensored capacity result."
+    },
+    {
+      "id": "evidence-17",
+      "name": "Decision journal",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/p2_journal/README.md",
+      "original_path": "temp/campagna_2026-08-29/p2_journal/README.md",
+      "assessment": "Sufficient diagnosis of 29 unused workers; memory-censored run."
+    },
+    {
+      "id": "evidence-18",
+      "name": "Demand-driven growth",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/p2_demand/README.md",
+      "original_path": "temp/campagna_2026-08-29/p2_demand/README.md",
+      "assessment": "Functional PASS, zero unused workers; memory/capacity still limited."
+    },
+    {
+      "id": "evidence-19",
+      "name": "Population200 pilot",
+      "group": "Policy and capacity progression",
+      "storage_path": "campaigns/campagna_2026-08-29/p3_pilot/README.md",
+      "original_path": "temp/campagna_2026-08-29/p3_pilot/README.md",
+      "assessment": "Failed guard and cleanup; failure evidence, no capacity claim."
+    },
+    {
+      "id": "evidence-20",
+      "name": "Failed sensitivity archive",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/worker_sensitivity_hz2_2026-08-31",
+      "original_path": "temp/archive/worker_sensitivity_hz2_2026-08-31",
+      "assessment": "Earlier attempt; imported-source certification problem, separate from valid campaign."
+    },
+    {
+      "id": "evidence-21",
+      "name": "Sensitivity smoke",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/worker_sensitivity_smoke_hetzner_2026-08-31",
+      "original_path": "temp/worker_sensitivity_smoke_hetzner_2026-08-31",
+      "assessment": "Certification and smoke artifacts precede valid sensitivity."
+    },
+    {
+      "id": "evidence-22",
+      "name": "Sensitivity W1/W2/W4/W8",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/worker_sensitivity_hetzner_2026-08-31/RISULTATI.md",
+      "original_path": "temp/worker_sensitivity_hetzner_2026-08-31/RISULTATI.md",
+      "assessment": "Four structural runs; historical generator verdicts require interpretation."
+    },
+    {
+      "id": "evidence-23",
+      "name": "L120 first attempt",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/l120_hetzner_2026-08-31/README.md",
+      "original_path": "temp/l120_hetzner_2026-08-31/README.md",
+      "assessment": "Invalid; bridge pool failed before comparison."
+    },
+    {
+      "id": "evidence-24",
+      "name": "L120 corrected attempt",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/l120_hetzner_2026-08-31/run2/README.md",
+      "original_path": "temp/l120_hetzner_2026-08-31/run2/README.md",
+      "assessment": "Complete paired run; growing dispatch delay, corrected legacy process roles."
+    },
+    {
+      "id": "evidence-25",
+      "name": "Eight-core first smoke",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_smoke_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_smoke_hetzner_2026-08-31/README.md",
+      "assessment": "False success: missing legacy phases; full experiment not executed."
+    },
+    {
+      "id": "evidence-26",
+      "name": "Eight-core second smoke",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_smoke2_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_smoke2_hetzner_2026-08-31/README.md",
+      "assessment": "Invalid: retry loop did not retry."
+    },
+    {
+      "id": "evidence-27",
+      "name": "Eight-core third smoke",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_smoke3_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_smoke3_hetzner_2026-08-31/README.md",
+      "assessment": "Protocol completed but rejected by additional criterion; no full pair."
+    },
+    {
+      "id": "evidence-28",
+      "name": "Eight-core fourth smoke",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_smoke4_hetzner_2026-08-31",
+      "original_path": "temp/e8c_smoke4_hetzner_2026-08-31",
+      "assessment": "Successful smoke reported by subsequent full-run report."
+    },
+    {
+      "id": "evidence-29",
+      "name": "Eight-core first full",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_full_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_full_hetzner_2026-08-31/README.md",
+      "assessment": "Legacy login failure; bridge not run."
+    },
+    {
+      "id": "evidence-30",
+      "name": "Eight-core second full",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_full2_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_full2_hetzner_2026-08-31/README.md",
+      "assessment": "Complete W8 pair with different latency/resource advantages."
+    },
+    {
+      "id": "evidence-31",
+      "name": "Eight-core extra profiles first",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_profiles_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_profiles_hetzner_2026-08-31/README.md",
+      "assessment": "W12 valid; dynamic blocked before measurement; W16 not run."
+    },
+    {
+      "id": "evidence-32",
+      "name": "Eight-core extra profiles second",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/e8c_profiles2_hetzner_2026-08-31/README.md",
+      "original_path": "temp/e8c_profiles2_hetzner_2026-08-31/README.md",
+      "assessment": "Dynamic and W16 complete; five-profile comparison reuses earlier valid W8/W12 runs."
+    },
+    {
+      "id": "evidence-33",
+      "name": "Population2000 pilot",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/pop2000_pilot_hetzner_2026-08-31",
+      "original_path": "temp/pop2000_pilot_hetzner_2026-08-31",
+      "assessment": "Pilot artifacts, no README; do not treat as another full comparison."
+    },
+    {
+      "id": "evidence-34",
+      "name": "Population2000 complete",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/pop2000_hetzner_2026-08-31/README.md",
+      "original_path": "temp/pop2000_hetzner_2026-08-31/README.md",
+      "assessment": "Freeze/ramp comparison; stable-level wording needs reconciliation."
+    },
+    {
+      "id": "evidence-35",
+      "name": "CPU offload",
+      "group": "CPU orchestration and offload",
+      "storage_path": "campaigns/cpu_offload_hetzner_2026-09-01/README.md",
+      "original_path": "temp/cpu_offload_hetzner_2026-09-01/README.md",
+      "assessment": "54 cessions verified; README throughput differs from steps."
+    },
+    {
+      "id": "evidence-36",
+      "name": "Capacity current-to-campaign core",
+      "group": "Load, population and stack comparisons",
+      "storage_path": "campaigns/capacity_hetzner_2026-09-01/README.md",
+      "original_path": "temp/capacity_hetzner_2026-09-01/README.md",
+      "assessment": "One valid paired threshold experiment; original invalid attempt kept separate."
+    },
+    {
+      "id": "evidence-37",
+      "name": "CPU temperature candidate",
+      "group": "CPU orchestration and offload",
+      "storage_path": "campaigns/temperature_hetzner_2026-09-01/README.md",
+      "original_path": "temp/temperature_hetzner_2026-09-01/README.md",
+      "assessment": "Complete diagnostics; includes duplicated reference corpus and archive copies."
+    },
+    {
+      "id": "evidence-38",
+      "name": "CPU orchestration candidate",
+      "group": "CPU orchestration and offload",
+      "storage_path": "campaigns/temperature_hetzner_2026-09-02/README.md",
+      "original_path": "temp/temperature_hetzner_2026-09-02/README.md",
+      "assessment": "Behavior criteria pass; predecessor cession attribution needs correction."
+    },
+    {
+      "id": "evidence-39",
+      "name": "Recording archives",
+      "group": "Recordings",
+      "storage_path": "imports/2026-09-08-benchmark-preservation/recordings/runs",
+      "original_path": "~/genro_bench/runs",
+      "assessment": "74 SQLite archives plus WAL/SHM and divergence reports; not a performance table."
+    }
+  ],
+  "preservation": {
+    "copied_files": 6504,
+    "copied_bytes": 880539559,
+    "sqlite_databases_checked": 74,
+    "snapshot_manifest_entries": 6514,
+    "archive_verified_entries": 6514,
+    "backup_sha256": "23faf776cb812152bce5af14ccabd51f9398af285eb49839020774b3419bbedf"
+  }
+}

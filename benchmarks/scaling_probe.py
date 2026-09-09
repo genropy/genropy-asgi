@@ -15,15 +15,20 @@ Run from temp/benchmark/assets with the pool on 8081:
 """
 
 import argparse
-import http.client
 import json
 import re
 import time
-import urllib.parse
 import urllib.request
-from http.cookies import SimpleCookie
 
-from replay_a1 import build_plan, load_capture
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPOSITORY_ROOT not in sys.path:
+    sys.path.insert(0, _REPOSITORY_ROOT)
+
+from benchmarks.execution.http_client import StickyClient  # noqa: E402
+from benchmarks.replay_a1 import build_plan, load_capture  # noqa: E402
 
 PAGE_ID_RE = re.compile(rb"page_id:'([A-Za-z0-9_-]{22})'")
 BAG_USER_RE = re.compile(r"<user>[^<]*</user>")
@@ -31,44 +36,6 @@ BAG_PASSWORD_RE = re.compile(r"<password>[^<]*</password>")
 CAPTURE = "session_capture.jsonl"
 USERNAMES = "usernames.txt"
 
-
-class StickyClient:
-    """One persistent keep-alive connection to the commander, with a cookie jar."""
-
-    def __init__(self, host, port):
-        self.conn = http.client.HTTPConnection(host, port, timeout=60)
-        self.cookies: dict[str, str] = {}
-
-    def _headers(self):
-        headers = {"Connection": "keep-alive"}
-        if self.cookies:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
-        return headers
-
-    def _store_cookies(self, resp):
-        for hk, hv in resp.getheaders():
-            if hk.lower() == "set-cookie":
-                jar = SimpleCookie()
-                jar.load(hv)
-                for name, morsel in jar.items():
-                    self.cookies[name] = morsel.value
-
-    def get(self, path):
-        self.conn.request("GET", path, headers=self._headers())
-        resp = self.conn.getresponse()
-        body = resp.read()
-        self._store_cookies(resp)
-        return resp.status, body
-
-    def post(self, path, form):
-        data = urllib.parse.urlencode(form)
-        headers = self._headers()
-        headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
-        self.conn.request("POST", path, body=data, headers=headers)
-        resp = self.conn.getresponse()
-        body = resp.read()
-        self._store_cookies(resp)
-        return resp.status, body
 
 
 def page_id_from(html):
