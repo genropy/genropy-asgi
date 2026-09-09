@@ -101,7 +101,7 @@ def test_a_worker_handed_an_engine_hosts_it_and_builds_nothing(engine):
     )
     try:
         assert worker.gnr_site is engine
-        assert worker.wsgi_app is engine
+        assert worker.wsgi_app.application is engine
         assert engine.spa_worker is worker
     finally:
         worker.wsgi_app = None

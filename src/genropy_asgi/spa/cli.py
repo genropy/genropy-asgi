@@ -90,6 +90,7 @@ def cmd_serve(argv: list[str]) -> int:
     # declared BEFORE the site machinery is imported, so gnr.web.daemon is
     # this package's in-process register and never the Pyro client.
     os.environ.setdefault("GNR_DAEMON_PROVIDER", DAEMON_PROVIDER)
+    os.environ.setdefault("GNR_WEBSOCKET_PROVIDER", "genropy-asgi")
 
     # The CLI instance always wins: it is written to the environment BEFORE the server is
     # built, so a --config that reads GNR_ASGI_PATH serves the instance named on the CLI.
