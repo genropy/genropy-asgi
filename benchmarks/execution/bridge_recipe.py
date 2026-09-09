@@ -1,0 +1,178 @@
+# Copyright 2025 Softwell S.r.l.
+# Licensed under the Apache License, Version 2.0
+
+"""Recording configuration mirroring the shipped bridge recipe.
+
+PROVISIONAL: this copy changes only worker_class and engine_factory. The full
+recipe equivalence check guards drift, including optional applications and
+orchestration defaults. Keep this in the bridge laboratory, not the generic core.
+
+Used by the ``gnrasgiserve`` CLI: a normal multi-app ``AsgiServer`` on which the
+GenroPy instance is mounted on the root. The variable elements (the resolved
+instance ``path``, host/port/debug, the installation paths, the idle valve)
+come from the environment; the rest of the recipe is fixed. No register daemon
+in either shape: the register is served in-process, on each worker.
+
+ONE shape: a single ``GenropySpaApplication`` whose pool is declared here, under
+its ``orchestration`` node — ``orchestration.commander`` and, below that, one
+group named ``pool`` (the cemented decision: one group, the reception serves the
+guests). There is no worker count to declare and no single/pool selector: the
+pool always runs and sizes itself. A ``GNR_ASGI_WORKERS`` still set in the
+environment is reported by the CLI and ignored.
+
+The group sets ``cpu_retirement_quiet_seconds=60.0`` explicitly; every other
+threshold is the core's own default.
+
+The environment enters the tree as VALUES read at recipe-build time: the CLI
+writes the variables just before the server is built, and ``main()`` runs
+during that build. ``EnvResolver`` stays only where the core grammar declares
+resolver-typed attributes (host/port).
+
+The two installation paths and the valve, overridable per installation:
+
+- ``GNR_ASGI_FROZEN_USERS_PATH`` — the freezer root; durable by necessity
+  (a frozen user is kept for days), so it defaults INSIDE the site's own
+  ``data`` directory.
+- ``GNR_ASGI_INSTANCE_DIR`` — where the workers' sockets live; ephemeral,
+  so it defaults under the system temp directory (UDS paths must stay
+  short).
+- ``GNR_ASGI_IDLE_FREEZE_MINUTES`` — the silence past which a user is
+  parked in the freezer. Unset, the worker reads the site's ``<cleanup>``
+  section (``connection_max_age`` seconds, 7200 where the site is silent).
+- ``GNR_ASGI_CONSOLE`` — set to any value, the pool's debug door is mounted
+  on ``_console`` as MCP tools: an expression is evaluated inside the
+  commander or inside a named worker, and its ``repr`` comes back. It reads
+  the live registers WITHOUT going through the site, so looking does not mint
+  a cid nor open a connection — an observer that leaves no trace in what it
+  observes. The door is full ``eval`` by construction, so mounting IS the
+  gate (core doctrine): unset here means the door does not exist, and a
+  production environment never sets it.
+- ``GNR_ASGI_ORCHESTRATION_PROFILES`` — set to any value, mounts the named
+  JSON profile editor below ``/_sysop/configuration`` and its MCP tools below
+  ``/_sysop/mcp``. Unset, the write surface does not exist. Profiles default
+  to ``<site>/data/_orchestration_profiles``; move them with
+  ``GNR_ASGI_ORCHESTRATION_PROFILES_PATH``.
+"""
+
+import os
+import tempfile
+from typing import Any
+
+from genro_bag.resolvers import EnvResolver
+
+from genro_asgi import ConfigurationProfilesApplication
+from genro_asgi_multiworker_spa.spa_console import SpaConsoleMcpApplication
+from genropy_asgi.spa.config import ServerConfiguration as BridgeConfiguration
+
+from genropy_asgi.spa.genropy_spa_application import GenropySpaApplication
+
+# The words that turn the debug flag OFF when GNR_ASGI_DEBUG carries one.
+DEBUG_OFF_WORDS = frozenset({"", "0", "false", "no", "off"})
+
+
+# Canonical import strings survive both spawn and template/worker fork.
+RECORDING_WORKER = "benchmarks.recording.recording_worker:RecordingGenropyWorker"
+RECORDING_ENGINE_FACTORY = "benchmarks.recording.recording_engine_factory:RecordingSiteEngineFactory"
+
+
+class ServerConfiguration(BridgeConfiguration):
+    def main(self, root: Any) -> None:
+        """The one document: the listener, the middleware, the site and its pool."""
+        cfg = root.configuration()
+        cfg.server(
+            host=EnvResolver("GNR_ASGI_HOST", default="127.0.0.1"),
+            port=EnvResolver("GNR_ASGI_PORT", default=8000, dtype="L"),
+        )
+        cfg.middleware()
+        source = os.environ.get("GNR_ASGI_PATH") or ""
+        # Unset means the dev default (True), exactly as the pre-rebase recipe
+        # read it; the CLI's --nodebug writes the empty string. A value is read
+        # as a word, never as a truthy string: "false"/"0"/"no"/"off" mean OFF,
+        # and getting that wrong would serve the site wrapped in the Werkzeug
+        # debugger AND change what the site measures (the SQL time counters are
+        # incremented only under debug).
+        debug_env = os.environ.get("GNR_ASGI_DEBUG")
+        debug = True if debug_env is None else debug_env.strip().lower() not in DEBUG_OFF_WORDS
+        # The werkzeug debugger is NOT part of debug: its error page evaluates
+        # Python in the process, so it comes on only when asked for by name.
+        debugger = bool(os.environ.get("GNR_ASGI_DEBUGGER"))
+        site_key = os.path.basename(os.path.normpath(source)) or "site"
+        frozen_users_path = os.environ.get("GNR_ASGI_FROZEN_USERS_PATH") or os.path.join(
+            source, "data", "_frozen_users"
+        )
+        instance_dir = os.environ.get("GNR_ASGI_INSTANCE_DIR") or os.path.join(
+            tempfile.gettempdir(), f"gnrasgi_{site_key}"
+        )
+        # mount="" IS the site root: a GenroPy site owns its absolute URLs
+        # (/_rsrc, /sys, the dojo tree), so it cannot live under a /site prefix.
+        applications = cfg.applications()
+        front = applications.application(
+            code="site",
+            mount="",
+            app_class=GenropySpaApplication,
+        )
+        if os.environ.get("GNR_ASGI_ORCHESTRATION_PROFILES"):
+            # Persistence only: applying a profile to the live pool will be a
+            # separate SpaApplication command. Mounting is explicit because
+            # this first version has no sysop authentication of its own.
+            profiles_path = os.environ.get(
+                "GNR_ASGI_ORCHESTRATION_PROFILES_PATH"
+            ) or os.path.join(source, "data", "_orchestration_profiles")
+            applications.application(
+                code="_sysop",
+                mount="_sysop",
+                app_class=ConfigurationProfilesApplication,
+                folder=profiles_path,
+            )
+        if os.environ.get("GNR_ASGI_CONSOLE"):
+            # The first path segment decides the app, so the door answers on
+            # /_console while the site keeps every other URL of the root mount.
+            applications.application(
+                code="console",
+                mount="_console",
+                app_class=SpaConsoleMcpApplication,
+            )
+        # genro-asgi 0.36 moved the pool one rung down: a front declares an
+        # ``orchestration`` node, and the commander lives under it. The node is
+        # mandatory for a spa front — declared without one, the server does not
+        # start. Its own three words (profiles_path, profile_name,
+        # control_enabled) are left at their defaults here: the profile archive
+        # keeps being mounted as the ``_sysop`` application above, exactly as
+        # before, so this migration changes the SHAPE of the recipe and nothing
+        # of what it builds.
+        commander = front.orchestration().commander(
+            frozen_users_path=frozen_users_path,
+            instance_dir=instance_dir,
+        )
+        group_kwargs: dict[str, Any] = {
+            "name": "pool",
+            "entry_module": "genro_asgi_multiworker_spa.orchestration.worker_entry",
+            "worker_class": RECORDING_WORKER,
+            "worker_kwargs": {"source": source, "debug": debug, "debugger": debugger},
+            # The group's workers are born by fork, out of a template process
+            # that builds the GnrWsgiSite once for all of them (fork contract,
+            # 2026-08-24). The factory takes the same two values the worker
+            # would have used to build its own site.
+            "engine_factory": RECORDING_ENGINE_FACTORY,
+            "engine_kwargs": {"source": source, "debug": debug},
+            # How long the cpu must stay silent before a worker may be retired.
+            # Written here rather than left to the core's default because it is
+            # a decision of this product: without the quiet period a worker is
+            # closed while the pool is still climbing, and the pool regrows it
+            # seconds later. Every other threshold stays the core's default —
+            # the laboratory's 50/30/80/0 belongs to the laboratory.
+            "cpu_retirement_quiet_seconds": 60.0,
+        }
+        idle_minutes = os.environ.get("GNR_ASGI_IDLE_FREEZE_MINUTES")
+        if idle_minutes:
+            group_kwargs["user_idle_freeze_minutes"] = float(idle_minutes)
+        # How many users one worker may hold before it refuses the next. Unset,
+        # the core's own default governs and a worker takes everybody, so the
+        # pool never grows on a small site. Set to 1 the bench puts each user on
+        # a worker of his own, which is the only way the cross-worker paths —
+        # the register population, the stores, the datachanges between users —
+        # are exercised at all.
+        max_users = os.environ.get("GNR_ASGI_WORKER_MAX_USERS")
+        if max_users:
+            group_kwargs["worker_max_users"] = int(max_users)
+        commander.groups().group(**group_kwargs)

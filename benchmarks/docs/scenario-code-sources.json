@@ -1,0 +1,152 @@
+{
+  "source_worktree": "/Users/gporcari/Sviluppo/genro_ng/meta-genro-modules/sub-projects/genropy-asgi/worktrees/l120-population-comparison",
+  "source_commit": "0779a2631afa8ac766345bef1fc6c739250a86c0",
+  "files": [
+    {
+      "source": "bench_common/load_engine.py",
+      "target": "execution/load_engine.py",
+      "source_sha256": "67143c20fa0d8197e6135fba1d91daa5f7397c8f6bf6f79f115f1507489c3c85"
+    },
+    {
+      "source": "bench_common/stop_guard.py",
+      "target": "measurement/stop_guard.py",
+      "source_sha256": "e312331f51be342b3ac2fc4401699eb1049544485648da33d178fa96b9f9b1c0"
+    },
+    {
+      "source": "bench_common/container_probe.py",
+      "target": "measurement/container_probe.py",
+      "source_sha256": "a809b5a0f484ed9b810a0078384229d445abac8ede53ac3667ac34264a4fb234"
+    },
+    {
+      "source": "bench_common/bridge_eyes.py",
+      "target": "measurement/bridge_eyes.py",
+      "source_sha256": "02ff751b6c01a3af1016a48eac7e792320df5e36424fcb3c19bd03498255e23d"
+    },
+    {
+      "source": "bench_common/page_class_cache.py",
+      "target": "measurement/page_class_cache.py",
+      "source_sha256": "ef0a436604b4670b07dac4f01372066725c90f0c140f7aa0e5831ba760f20902"
+    },
+    {
+      "source": "eight_core_cycle/cycle_probe.py",
+      "target": "scenarios/eight_core_cycle/cycle_probe.py",
+      "source_sha256": "9e734a9375b06eac218c219597dfd6ec4de23bb10e6ff5d48d5f9fdabfaec5db"
+    },
+    {
+      "source": "eight_core_cycle/make_cycle_trace.py",
+      "target": "scenarios/eight_core_cycle/make_cycle_trace.py",
+      "source_sha256": "05fe9db66bd7d757a7d521406a834e2dbad261a9be2df562d08f29eb19bfaa33"
+    },
+    {
+      "source": "eight_core_cycle/admission_guard.py",
+      "target": "scenarios/eight_core_cycle/admission_guard.py",
+      "source_sha256": "235a28ff7f7661a51b45642d9543c2cd825eb6f2b184443990e7ddf7deb35b22"
+    },
+    {
+      "source": "eight_core_cycle/certify_dynamic_cap.py",
+      "target": "scenarios/eight_core_cycle/certify_dynamic_cap.py",
+      "source_sha256": "50c427b7c094c050ebaa9e654d73d9f79fbda46bf164530d99854a195691de31"
+    },
+    {
+      "source": "eight_core_cycle/tests/test_cycle_tools.py",
+      "target": "scenarios/eight_core_cycle/checks.py",
+      "source_sha256": "f4674882a1f1ed0ab06ad12bd4df8d5f3eaea52f397bd243c434a91f3ca44d1a"
+    },
+    {
+      "source": "bench_common/tests/test_stop_guard.py",
+      "target": "measurement/checks/stop_guard_check.py",
+      "source_sha256": "395980e77846cb20f46fb65b10d5e40fa4d2f9e8f4749bdf56d485c4defb6249"
+    },
+    {
+      "source": "bench_common/tests/test_container_probe.py",
+      "target": "measurement/checks/container_probe_check.py",
+      "source_sha256": "b17e5346205d41f29b9dc07d81915e5eaaec49f864deb8d5794dc1ebd7943b75"
+    },
+    {
+      "source": "bench_common/tests/test_page_class_cache.py",
+      "target": "measurement/checks/page_class_cache_check.py",
+      "source_sha256": "15799e6b5e512814a286efbaa0fff81386026f5bd1291f65f993cf33d35dfce9"
+    },
+    {
+      "source": "churn_driver.py",
+      "target": "replay/genropy_session.py",
+      "source_sha256": "713ee704eab4b1b79baf7810dd00f6ae6176140f42e922cd545b4250fdab943a",
+      "selection": "LoggedUser class; WHERE from single_record_bench.py"
+    },
+    {
+      "source": "bench_common/lab_lifecycle.sh",
+      "target": "execution/lab_lifecycle.sh",
+      "source_sha256": "5ba524e2b2bdd9fb768ba264ea5e7d5cea560c97ac7b022f2ed7124054b46ec2"
+    },
+    {
+      "source": "bench_common/tests/test_lab_lifecycle.sh",
+      "target": "execution/checks/test_lab_lifecycle.sh",
+      "source_sha256": "8deaf48d68adf0bde8786539fe6831a70618ab435bb70f41aad054b717d78d1e"
+    },
+    {
+      "source": "eight_core_cycle/run_cycle.sh",
+      "target": "scenarios/eight_core_cycle/run_cycle.sh",
+      "source_sha256": "75ec3009bfc6d38c71e37e171d289080a98179fa9b97f0febfcf1431018c6953"
+    },
+    {
+      "source": "eight_core_cycle/run_smoke.sh",
+      "target": "scenarios/eight_core_cycle/run_smoke.sh",
+      "source_sha256": "47a7e6ac8e7cb65efe9f9ac8ea05c6ad77a650faa9d29eecaf39bc63c64229ea"
+    },
+    {
+      "source": "eight_core_cycle/cycle_recipe.py",
+      "target": "scenarios/eight_core_cycle/cycle_recipe.py",
+      "source_sha256": "63d5200c24203e3225b34834440c00f0ae146656f2beab4ce9008ba538be1324"
+    },
+    {
+      "source": "eight_core_cycle/plans.spec.json",
+      "target": "scenarios/eight_core_cycle/plans.spec.json",
+      "source_sha256": "18bed37632940bb8663cc2b5c25bafefb47ba52dc1e7eb5608c803a980cc5ba8"
+    },
+    {
+      "source": "eight_core_cycle/tests/test_cycle_runner.sh",
+      "target": "scenarios/eight_core_cycle/tests/test_cycle_runner.sh",
+      "source_sha256": "edad8ed2f48c7a31ab779e85a642ec043879611375e39e7c6f5558bf9fded7f5"
+    },
+    {
+      "source": "eight_core_cycle/overrides/override_bridge_8c.yaml",
+      "target": "scenarios/eight_core_cycle/overrides/override_bridge_8c.yaml",
+      "source_sha256": "79407b877b26dac024148d8ae2dbd13992dbef5498c24858154a194dd95fcb6b"
+    },
+    {
+      "source": "eight_core_cycle/overrides/override_legacy_g8.yaml",
+      "target": "scenarios/eight_core_cycle/overrides/override_legacy_g8.yaml",
+      "source_sha256": "336937417decd0cc0f2f59709a846ebf52066ce04bd0edbee5ab26832e214381"
+    },
+    {
+      "source": "eight_core_cycle/dynamic_recipe.py",
+      "target": "scenarios/eight_core_cycle/dynamic_recipe.py",
+      "source_sha256": "0ade7ba5f0c7a6d3c866b645217e22f6055120d151e4c364dee899c69d633e53"
+    },
+    {
+      "source": "eight_core_cycle/run_profiles.sh",
+      "target": "scenarios/eight_core_cycle/run_profiles.sh",
+      "source_sha256": "4d4f7a2322f989d2581aa483e88fb5f4593e583acc2e7d641b14b70fbb40e5cd"
+    },
+    {
+      "source": "eight_core_cycle/tests/test_profiles.sh",
+      "target": "scenarios/eight_core_cycle/tests/test_profiles.sh",
+      "source_sha256": "23d2265fcd6b29363921bd4c7694ce35d3f81d7da060e9388b9b808bdaeea931"
+    },
+    {
+      "source": "eight_core_cycle/overrides/override_bridge_dynamic.yaml",
+      "target": "scenarios/eight_core_cycle/overrides/override_bridge_dynamic.yaml",
+      "source_sha256": "8585b7d70c547adc549f6da9b9426700ef6e7a3a001d24423e6d0435024a45e8"
+    },
+    {
+      "source": "eight_core_cycle/overrides/override_legacy_g12.yaml",
+      "target": "scenarios/eight_core_cycle/overrides/override_legacy_g12.yaml",
+      "source_sha256": "e31417b9d0c35020b0672efd92081c3ec4319237ef7d25e7da32c55166edcb76"
+    },
+    {
+      "source": "eight_core_cycle/overrides/override_legacy_g16.yaml",
+      "target": "scenarios/eight_core_cycle/overrides/override_legacy_g16.yaml",
+      "source_sha256": "06839e15b7f6a87e51820796378aacfd17f1a457314d5134a09eedfb9a11229a"
+    }
+  ]
+}

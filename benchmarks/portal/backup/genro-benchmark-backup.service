@@ -1,0 +1,10 @@
+[Unit]
+Description=PostgreSQL benchmark backup to Hetzner Object Storage
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/genro-asgi-portal/backup/run-backup.sh
+TimeoutStartSec=2h
+Nice=10

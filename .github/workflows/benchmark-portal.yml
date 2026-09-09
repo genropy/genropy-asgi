@@ -1,0 +1,110 @@
+name: Benchmark portal
+on:
+  pull_request:
+    paths: ['benchmarks/portal/**', 'benchmarks/analysis/**', 'tests/test_benchmark_portal.py', 'tests/test_benchmark_documentation.py', 'pyproject.toml', '.github/workflows/benchmark-portal.yml']
+  push:
+    branches: [main]
+    paths: ['benchmarks/portal/**', 'benchmarks/analysis/**', 'tests/test_benchmark_portal.py', 'tests/test_benchmark_documentation.py', 'pyproject.toml', '.github/workflows/benchmark-portal.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-portal-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: benchmark
+          POSTGRES_PASSWORD: test_only
+          POSTGRES_DB: benchmark
+        ports: ['5432:5432']
+        options: --health-cmd 'pg_isready -U benchmark' --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      BENCH_DATABASE_URL: postgresql://benchmark:test_only@127.0.0.1:5432/benchmark
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install '.[test]' 'psycopg[binary]>=3.2,<4'
+      - run: python -m pytest tests/test_benchmark_portal.py tests/test_benchmark_documentation.py tests/test_benchmark_report.py --no-cov -q
+      - run: docker build -f benchmarks/portal/docker/Dockerfile -t portal-test .
+      - name: Container smoke
+        env:
+          BENCH_DB_PASSWORD: ci_demo_only
+          PORTAL_IMAGE: portal-test
+        run: |
+          docker compose -f benchmarks/portal/docker/compose.yaml up -d --wait db
+          docker compose -f benchmarks/portal/docker/compose.yaml run --rm portal python -m benchmarks.portal.store init
+          docker compose -f benchmarks/portal/docker/compose.yaml up -d --no-build --wait portal
+          curl --fail http://127.0.0.1:19080/health
+      - name: Preserve verified image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: docker save portal-test | gzip > portal-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          name: verified-portal-image
+          path: portal-image.tar.gz
+          retention-days: 2
+      - if: always()
+        run: docker compose -f benchmarks/portal/docker/compose.yaml down -v
+        env:
+          BENCH_DB_PASSWORD: ci_demo_only
+  release:
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-portal-image
+      - name: Publish the tested image
+        id: build
+        run: |
+          gunzip -c portal-image.tar.gz | docker load
+          image="ghcr.io/genropy/genropy-asgi-portal:${GITHUB_SHA}"
+          docker tag portal-test "$image"
+          docker push "$image"
+          ref=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          echo "digest=${ref#*@}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: release
+    if: vars.BENCH_PORTAL_DEPLOY_ENABLED == 'true'
+    environment: hetzner-base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.BENCH_PORTAL_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.BENCH_PORTAL_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Deploy verified digest
+        env:
+          DESTINATION: ${{ vars.BENCH_PORTAL_SSH_DESTINATION }}
+          DIGEST: ${{ needs.release.outputs.digest }}
+        run: |
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes benchmarks/portal/docker/compose.yaml benchmarks/portal/docker/deploy.sh "$DESTINATION:/opt/genro-asgi-portal/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DESTINATION" bash /opt/genro-asgi-portal/deploy.sh "ghcr.io/genropy/genropy-asgi-portal@$DIGEST"
