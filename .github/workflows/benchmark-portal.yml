@@ -22,7 +22,11 @@ jobs:
           POSTGRES_PASSWORD: test_only
           POSTGRES_DB: benchmark
         ports: ['5432:5432']
-        options: --health-cmd 'pg_isready -U benchmark' --health-interval 3s --health-timeout 3s --health-retries 20
+        options: >-
+          --health-cmd "pg_isready -U benchmark"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
     env:
       BENCH_DATABASE_URL: postgresql://benchmark:test_only@127.0.0.1:5432/benchmark
     steps:
@@ -51,7 +55,7 @@ jobs:
           name: verified-portal-image
           path: portal-image.tar.gz
           retention-days: 2
-      - if: always()
+      - if: always() && hashFiles('benchmarks/portal/docker/compose.yaml') != ''
         run: docker compose -f benchmarks/portal/docker/compose.yaml down -v
         env:
           BENCH_DB_PASSWORD: ci_demo_only
