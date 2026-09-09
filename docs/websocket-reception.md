@@ -56,7 +56,7 @@ JavaScript syntax checking and git whitespace checks passed.
 ## Integration
 
 The companion GenroPy compatibility worktree provides the
-`GNR_WEBSOCKET_PROVIDER` switch. The bridge CLI selects `genropy-asgi`; its
+`GNR_DAEMON_PROVIDER` switch. The bridge CLI selects `genropy-asgi`; its
 `gnr.web:websockethandler` entry point exports the handler. Without the environment
 selection, classic GenroPy retains its original handler.
 

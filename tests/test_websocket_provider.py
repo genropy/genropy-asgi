@@ -22,9 +22,9 @@ class WebSocketProviderTest(unittest.TestCase):
             (metadata / 'entry_points.txt').write_text(
                 f'[gnr.web]\nwebsockethandler = {entry}\n')
             env = os.environ.copy()
-            env.pop('GNR_WEBSOCKET_PROVIDER', None)
+            env.pop('GNR_DAEMON_PROVIDER', None)
             if provider:
-                env['GNR_WEBSOCKET_PROVIDER'] = provider
+                env['GNR_DAEMON_PROVIDER'] = provider
             env['PYTHONPATH'] = os.pathsep.join(
                 [temporary, str(root / 'src'), env.get('PYTHONPATH', '')])
             return subprocess.run(
