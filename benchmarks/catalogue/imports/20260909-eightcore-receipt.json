@@ -1,0 +1,25 @@
+{
+  "batch": "20260909-eightcore",
+  "runs": [
+    {
+      "run": "e8cv5_legacy",
+      "id": "f8d85432fdf403a682712afe5021df82244bb68a2d64e52c7bbca4db15789d50"
+    },
+    {
+      "run": "e8cv5_bridge",
+      "id": "15ec2d7d1ac50c9c0c6003843f6bbaa52ab0c76268cab9ae5604b7ac355274be"
+    },
+    {
+      "run": "e8cp_legacy_w12",
+      "id": "5a88181a29e40d821c68b0bdbf115ed1e782cd6657d2323463a089f9cfe6c448"
+    },
+    {
+      "run": "e8cq_bridge_dynamic",
+      "id": "01297779b1a8b685664546cd12565a545654c69d6a3a19df642494941b9473b4"
+    },
+    {
+      "run": "e8cq_legacy_w16",
+      "id": "a19f17144b6c9d3c9d806152b14eaa9b938907f0d3537133078851c3daaf07df"
+    }
+  ]
+}
