@@ -269,15 +269,15 @@ class GlobalStoreAdapter:
     # The legacy names the site calls
     # ------------------------------------------------------------------
 
-    def getItem(self, path: str | None, default: Any = None) -> Any:  # noqa: N802 - legacy Bag surface
+    def getItem(self, path: str | None, default: Any = None) -> Any:
         """The legacy read name of :meth:`get_global_item`."""
         return self.get_global_item(path, default)
 
-    def setItem(self, path: str, value: Any = None) -> None:  # noqa: N802 - legacy Bag surface
+    def setItem(self, path: str, value: Any = None) -> None:
         """The legacy write name of :meth:`set_global_item`."""
         self.set_global_item(path, value)
 
-    def delItem(self, path: str) -> None:  # noqa: N802 - legacy Bag surface
+    def delItem(self, path: str) -> None:
         """The legacy delete name of :meth:`delete_global_item`."""
         self.delete_global_item(path)
 

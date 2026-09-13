@@ -15,6 +15,6 @@ resolves for the daemon-CLI / ``app.gnrdaemon`` paths (never reached in the requ
 path), and raise if actually used — there is no daemon in this build.
 """
 
-__all__ = ["SiteRegisterClient", "GenropyRegisterClient"]
+__all__ = ["GenropyRegisterClient", "SiteRegisterClient"]
 
 from .siteregister_client import GenropyRegisterClient, SiteRegisterClient
