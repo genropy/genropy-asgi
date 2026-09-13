@@ -113,12 +113,15 @@ def test_e2e_real_gnrapp_closes_connection():
     from genro_asgi import AsgiServer
 
     api = _DemoApi(None)
-    app = GenropyProxyOpenApiApplication(instance=_INSTANCE, routing_class=api)
+    server = AsgiServer(
+        applications=[
+            (GenropyProxyOpenApiApplication, {"code": "proxy", "instance": _INSTANCE, "routing_class": api})
+        ]
+    )
+    app = server.applications["proxy"]
     api.application = app  # the demo api reads parent.gnr_app
     assert app.gnr_app is not None
     assert app.gnr_app.db is not None
-
-    server = AsgiServer(applications=[app])  # routed dispatch needs the owning server
     assert app.server is server
     received = _fire_get(app, "/api/whoami")
     assert received["status"] == 200
