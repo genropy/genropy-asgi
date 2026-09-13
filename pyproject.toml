@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "genro-asgi>=0.46,<0.47",
+    "genro-asgi>=0.46.3,<0.47",
 ]
 
 [project.optional-dependencies]
