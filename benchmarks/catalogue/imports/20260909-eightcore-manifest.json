@@ -1,0 +1,361 @@
+{
+  "batch": "20260909-eightcore",
+  "selection": "Five completed final population cycles; blocked dynamic attempt and earlier trials excluded.",
+  "files": [
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/CERTIFICAZIONE.txt",
+      "sha256": "3d57b209dd29eefc196cd676f89e9413c34de7f833cd0436f5b77fda0506ff62",
+      "bytes": 579,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/MANIFEST.sha256",
+      "sha256": "d1c0b4e5b14270274946c1a7d776db0f30b33bb163d0a33c2572f97041f0f35d",
+      "bytes": 3357,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/README.md",
+      "sha256": "180eea367c50d2ee9bcfb6163f24002d18d13c4b2e0845874d8b155368a7dcf6",
+      "bytes": 14199,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_outcome.json",
+      "sha256": "2bc92ca352e11ef0ef8f1887b6f345f211ad5749bbb86c56e6926eb4b82326d6",
+      "bytes": 134870,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_windows.json",
+      "sha256": "fd5e328d639b47ecfdde00217c4f9b473df2d551556bff921c21c3987c30360a",
+      "bytes": 4209,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_calls.csv",
+      "sha256": "216393d82d48161dff13e4161cf9790633d67934ae7cda58f14ebf3cd79dd631",
+      "bytes": 5118409,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_samples.csv",
+      "sha256": "e8b8ce872d66331d348f123e3fe986de3fd2d9dd6ea1d8b5d7ebe1d04482dad1",
+      "bytes": 1887487,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_checkpoints.json",
+      "sha256": "859dcc0895f8abf7396bae27ceccae6d8d2d1cb003ac9d931598d1252a60f795",
+      "bytes": 506,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_page_class_cache.json",
+      "sha256": "2af124a517595665efaadf3ba42e1139b1a507fb8066a89c91c3ef234ae3663f",
+      "bytes": 1005,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_memory_guard.json",
+      "sha256": "f62c605eda7dd3b921aed98f4b7741ed8c91d3db34c39f6929d1c1138021c6dd",
+      "bytes": 138628,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy_admission.json",
+      "sha256": "e4d78fb36cee48a07f78c9b28d8c853daf5eb6e25850dfb772961d92b7d33760",
+      "bytes": 119883,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_outcome.json",
+      "sha256": "10267dbe689403168ddf438bc9ffbb57076cd9c337bb894e5ea2521aac96d838",
+      "bytes": 134654,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_windows.json",
+      "sha256": "c8e84c4b79ef990312accb4d8d8e4d8840d1ad61de6b79e3f24e45d681e903c2",
+      "bytes": 4201,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_calls.csv",
+      "sha256": "ed13148b2f6f996d89e44cb08552cf8eac6e45792a59ec3f7cb192b1b3704f9b",
+      "bytes": 5669327,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_samples.csv",
+      "sha256": "62968d1050b420e034f0d49d0a51609a51a8cf6cee57e27abb92e17b6ba2c734",
+      "bytes": 1624103,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_checkpoints.json",
+      "sha256": "7201593f81ec1fb4d729edbf995c2c6be47e3b7a41b4802c14edb1444706602e",
+      "bytes": 3059,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_page_class_cache.json",
+      "sha256": "fb66b494e870c730a19ec732443f8e665d7ad80bef34f2e3c058a037d25fa64c",
+      "bytes": 948,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_memory_guard.json",
+      "sha256": "d3b1c44413619bf14eef9c0e1217d85626cc3ec2416098f7f0b2e7acae6ca381",
+      "bytes": 138626,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge_admission.json",
+      "sha256": "af825447777081fba342bf0074b67e3cdc3b485087026869563b735ec1464bf5",
+      "bytes": 119722,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/CERTIFICAZIONE.txt",
+      "sha256": "5d009ea56cedda2e74ae5e19fb70013123b966d8f272eb8415e6b3bf0c2dd72e",
+      "bytes": 822,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/MANIFEST.sha256",
+      "sha256": "8159e5e819c093a9f356471321bf6762095112ee2d9a1c21c3a3516bd1afb901",
+      "bytes": 2609,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/README.md",
+      "sha256": "64bc84be7616648e89d06afc4f5813185adea277bd2069133ff38c5fb1eb64ef",
+      "bytes": 7468,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_outcome.json",
+      "sha256": "4d5ef7ab4b929a73a446b91f667c3c34097b383f1091c9f916e21ded117bc783",
+      "bytes": 134769,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_windows.json",
+      "sha256": "7f8b122fe49974c4ca984238096f5f6e333c916b332c94e5f362240f8af2c872",
+      "bytes": 4210,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_calls.csv",
+      "sha256": "57495b685eca44febc594ebd8c7fee11fab6285bd54887405123c8e1da77dd6b",
+      "bytes": 5147661,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_samples.csv",
+      "sha256": "e6fef6d65c9075b6845a9ad3801397d95aa242ec04c7f3519c8fa8e9f37e64e9",
+      "bytes": 2614323,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_checkpoints.json",
+      "sha256": "10160d7fe6156ca20cb3d51c7a245474afe5008e8a05e950992f99674dee053e",
+      "bytes": 506,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_worker_history.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_page_class_cache.json",
+      "sha256": "2af124a517595665efaadf3ba42e1139b1a507fb8066a89c91c3ef234ae3663f",
+      "bytes": 1005,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_memory_guard.json",
+      "sha256": "b876f648185e08efee94fa63e549b82a08e235d374971071873e91e233c1f08e",
+      "bytes": 139136,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12_admission.json",
+      "sha256": "4ba75530750b9985f5920d9303084e726a3029f8d4e2d112bf10c70a6cc15469",
+      "bytes": 119744,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/CERTIFICAZIONE.txt",
+      "sha256": "ddcac41978aadb6869731890561e6d32dbfcda5623c0709c25c3a6cce1f76c4b",
+      "bytes": 608,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/MANIFEST.sha256",
+      "sha256": "6d6dff5718b4132d809a9182758db24814b6d6a6f1b3c5aad207689d846a96d8",
+      "bytes": 4276,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/README.md",
+      "sha256": "f407e722d857200805a73f3461234ebb9712dd05307084ea26a521c5c8b8a179",
+      "bytes": 11670,
+      "original_seal_verified": false
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_outcome.json",
+      "sha256": "22b43d0499ee4e85e31017162a6e4fce0dc5f3f03a2c4fb02e92572c7419ba04",
+      "bytes": 141421,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_windows.json",
+      "sha256": "1c9faf215cadb429f175d9cfe9936515fd38a66962df35f22793799b0df5950a",
+      "bytes": 4202,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_calls.csv",
+      "sha256": "555d671c02aeb537049f8306c4e03416214aa15de0b3d35ced14a85a17ee1091",
+      "bytes": 5671000,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_samples.csv",
+      "sha256": "c05c96be3fb20d61ffd85c10a19a324623ea7e1a5cfbc00d4442248cd728214f",
+      "bytes": 1425033,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_checkpoints.json",
+      "sha256": "677c5d7093fd5f050ae4bc20f4c159708e61f5c5b456c8b606d19da958a242ad",
+      "bytes": 3734,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_worker_history.json",
+      "sha256": "fda3425b19ad5b4bf9340896cef9713254fb2defaa5dcab387098db7b10ed527",
+      "bytes": 6090,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_page_class_cache.json",
+      "sha256": "8153f0c9bb39324d138e94f28f437cec8a34d90c09d831e138ca5f958e8f51fb",
+      "bytes": 947,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_memory_guard.json",
+      "sha256": "9c41ae72253823b2a9f398d4dbc986f0096c919422a8fb253524b7950592cc82",
+      "bytes": 138540,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_admission.json",
+      "sha256": "39f4b8b78daf3485552efccfd59fda7ca318578b69e200e7333907ed516c9431",
+      "bytes": 119710,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic_dynamic_cap.json",
+      "sha256": "68437494b75e591357f71fcb0a557e93939953945fa8e72b7ace0a9c61532a29",
+      "bytes": 702,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_outcome.json",
+      "sha256": "1baa1ed027068f153dc0a578630ec3f70f4167b5356004695335f5de04be65d3",
+      "bytes": 134820,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_windows.json",
+      "sha256": "1451a4cfe801816fa94b0220fed9ae79d9dffa7655de101138ab61bf34141917",
+      "bytes": 4206,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_calls.csv",
+      "sha256": "7c364f7d366e18aa8686e1e53a811f65bcde06fed0f80df0af2391bfc7a4d4e1",
+      "bytes": 5113023,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_samples.csv",
+      "sha256": "6a7458aab85114be2a666c02a2c96455208c4f8e86206a5fc2823e0b6bce808f",
+      "bytes": 3327782,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_checkpoints.json",
+      "sha256": "59e3d602be5ca7cd274b93cbe992048a14c879bf361806452b853aae087597cc",
+      "bytes": 506,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_worker_history.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_page_class_cache.json",
+      "sha256": "2af124a517595665efaadf3ba42e1139b1a507fb8066a89c91c3ef234ae3663f",
+      "bytes": 1005,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_memory_guard.json",
+      "sha256": "d2e3a56e291bb0abf22847ae5f4f90699e1d9b11b560a6cb5086c2a4e630004d",
+      "bytes": 139015,
+      "original_seal_verified": true
+    },
+    {
+      "path": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16_admission.json",
+      "sha256": "f0c7993787db0211039b2f801c8f671922342c19e67904abf95b4d308a7a88d8",
+      "bytes": 119795,
+      "original_seal_verified": true
+    }
+  ],
+  "runs": [
+    {
+      "prefix": "e8c_full2_hetzner_2026-08-31/e8cv5_legacy",
+      "revision": "7492e46987c1a611bb00bc3e29fbd765395320b9",
+      "campaign": "Historical eight-core cycle 2026-08-31 \u2014 single trials; see assessment",
+      "environment": "Hetzner dedicated benchmark host; 8 CPU / 4 GiB container; 120 users",
+      "purpose": "performance"
+    },
+    {
+      "prefix": "e8c_full2_hetzner_2026-08-31/e8cv5_bridge",
+      "revision": "7492e46987c1a611bb00bc3e29fbd765395320b9",
+      "campaign": "Historical eight-core cycle 2026-08-31 \u2014 single trials; see assessment",
+      "environment": "Hetzner dedicated benchmark host; 8 CPU / 4 GiB container; 120 users",
+      "purpose": "performance"
+    },
+    {
+      "prefix": "e8c_profiles_hetzner_2026-08-31/e8cp_legacy_w12",
+      "revision": "f9740a59d49290ce8431de4d02053824debb97ef",
+      "campaign": "Historical eight-core cycle 2026-08-31 \u2014 single trials; see assessment",
+      "environment": "Hetzner dedicated benchmark host; 8 CPU / 4 GiB container; 120 users",
+      "purpose": "performance"
+    },
+    {
+      "prefix": "e8c_profiles2_hetzner_2026-08-31/e8cq_bridge_dynamic",
+      "revision": "7f553a22ab6f292a0e201748f447a59e73865b9f",
+      "campaign": "Historical eight-core cycle 2026-08-31 \u2014 single trials; see assessment",
+      "environment": "Hetzner dedicated benchmark host; 8 CPU / 4 GiB container; 120 users",
+      "purpose": "performance"
+    },
+    {
+      "prefix": "e8c_profiles2_hetzner_2026-08-31/e8cq_legacy_w16",
+      "revision": "7f553a22ab6f292a0e201748f447a59e73865b9f",
+      "campaign": "Historical eight-core cycle 2026-08-31 \u2014 single trials; see assessment",
+      "environment": "Hetzner dedicated benchmark host; 8 CPU / 4 GiB container; 120 users",
+      "purpose": "performance"
+    }
+  ]
+}

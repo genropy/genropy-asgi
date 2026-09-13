@@ -27,6 +27,7 @@ imports genropy to read the instance configuration:
 import os
 import sys
 import time
+from unittest.mock import patch
 
 BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
 BENCH_ROOT = os.path.dirname(os.path.dirname(BENCH_DIR))
@@ -137,12 +138,16 @@ check("neither site ever sees the bench's cookie",
 check("and a browser carrying only that cookie sends no Cookie header at all",
       "Cookie" not in proxy.get_browser_headers({"Cookie": f"{TWIN_COOKIE}={first}"}))
 
-alice = proxy.get_shadow("alice")
-bob = proxy.get_shadow("bob")
-check("two browsers get two shadows, each with its own connection and jar",
-      alice is not bob and alice.client is not bob.client)
-check("the same browser comes back to the same shadow",
-      proxy.get_shadow("alice") is alice)
+# These checks cover identity allocation, not the live archive consumer. The
+# fixture has no launched stacks, so starting that consumer is invalid.
+with patch("twin_proxy.threading.Thread.start") as start:
+    alice = proxy.get_shadow("alice")
+    bob = proxy.get_shadow("bob")
+    check("two browsers get two shadows, each with its own connection and jar",
+          alice is not bob and alice.client is not bob.client)
+    check("the same browser comes back to the same shadow",
+          proxy.get_shadow("alice") is alice)
+    check("only new browser identities start consumers", start.call_count == 2)
 
 legacy_page = "aBcDeFgHiJkLmNoPqRsTuv"
 bridge_page = "ZyXwVuTsRqPoNmLkJiHgFe"

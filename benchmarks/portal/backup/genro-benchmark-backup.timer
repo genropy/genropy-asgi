@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily PostgreSQL benchmark backup
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+Unit=genro-benchmark-backup.service
+
+[Install]
+WantedBy=timers.target

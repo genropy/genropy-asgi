@@ -13,7 +13,7 @@ Usage, from the repository root:
 The hook holds no logic of its own: installing a recorder is one call, the same
 call the bridge makes in macro-phase 2, where there is no gunicorn at all. The
 import lives inside the hook because this directory has to reach `sys.path`
-first — the same shape as `benchmarks/gunicorn_count.conf.py`.
+first, after the worker has loaded the application.
 """
 
 import inspect

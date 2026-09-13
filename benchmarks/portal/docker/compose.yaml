@@ -1,0 +1,45 @@
+name: genro-asgi-portal
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: benchmark
+      POSTGRES_DB: benchmark
+      POSTGRES_PASSWORD: ${BENCH_DB_PASSWORD:?Set BENCH_DB_PASSWORD}
+    volumes:
+      - results:/var/lib/postgresql/data
+    cpus: 0.5
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U benchmark -d benchmark']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  portal:
+    image: ${PORTAL_IMAGE:-genro-asgi-portal:local}
+    build:
+      context: ../../..
+      dockerfile: benchmarks/portal/docker/Dockerfile
+    environment:
+      BENCH_DATABASE_URL: postgresql://benchmark:${BENCH_DB_PASSWORD:?Set BENCH_DB_PASSWORD}@db/benchmark
+    volumes:
+      - ${PORTAL_DOCS_HOST_DIR:-./internals}:/docs:ro
+      - ${PORTAL_USER_DOCS_HOST_DIR:-./docs}:/user-docs:ro
+    ports:
+      - '127.0.0.1:${PORTAL_PORT:-19080}:8080'
+    depends_on:
+      db:
+        condition: service_healthy
+    cpus: 0.5
+    mem_limit: 256m
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+volumes:
+  results:
