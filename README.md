@@ -1,5 +1,12 @@
 # genropy-asgi
 
+> **Continued as [genropy-kajenn](https://github.com/genropy/genropy-kajenn).** The bridge
+> goes on as [`genropy-kajenn`](https://pypi.org/project/genropy-kajenn/), on
+> [kajenn](https://github.com/kajenn-org/kajenn) and
+> [kajenn-orchestra](https://github.com/kajenn-org/kajenn-orchestra), with the command
+> `gnrkajenn`. Documentation: https://genropy-kajenn.readthedocs.io/en/latest/.
+> genropy-asgi stays available on PyPI at 0.8.0 and receives no further releases.
+
 Serve legacy (synchronous) **GenroPy** sites on an ASGI server — no register
 daemon. genropy-asgi is the GenroPy-specific bridge on top of
 [genro-asgi](https://github.com/genropy/genro-asgi): it hosts an unmodified
