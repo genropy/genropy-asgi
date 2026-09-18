@@ -56,6 +56,7 @@ gnrasgiserve = "genropy_asgi.spa.cli:main"
 # resolve to genropy_asgi.siteregister — no register daemon. Replaces genro-nodaemon.
 [project.entry-points."gnr.web"]
 daemon = "genropy_asgi.siteregister"
+websockethandler = "genropy_asgi.websockethandler:WsgiWebSocketHandler"
 
 [project.urls]
 Homepage = "https://github.com/genropy/genropy-asgi"

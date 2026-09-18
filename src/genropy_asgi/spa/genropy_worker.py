@@ -86,6 +86,7 @@ from genro_tytx import from_tytx
 from .delivery_desk import STATE_KINDS
 from .genropy_register import GenropyRegistry
 from .site_engine_factory import GenropySiteEngineFactory
+from .websocket_receiver import WebSocketReceiver
 
 log = logging.getLogger("genropy_asgi.spa")
 
@@ -265,6 +266,7 @@ class GenropyWorker(SpaWorker):
         self._gnr_site.storage("gnr")
         self._gnr_site.storage("dojo")
         self._gnr_site.spa_worker = self
+        self.wsgi_app = WebSocketReceiver(self.wsgi_app)
 
     def build_registry(self) -> RegisterRegistry:
         """The registry factory: legacy stores under legacy capture."""

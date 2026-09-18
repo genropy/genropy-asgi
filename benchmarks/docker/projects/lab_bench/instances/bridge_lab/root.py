@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import sys
 sys.stdout = sys.stderr
-from gnr.web.gnrwsgisite import GnrWsgiSite
+from gnr.web.gnrwsgisite import GnrWsgiSite  # noqa: E402 - redirect stdout before site imports
 site = GnrWsgiSite(__file__)
 
 

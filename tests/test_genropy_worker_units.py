@@ -320,7 +320,7 @@ def worker():
 def test_worker_hosts_the_site_behind_the_wsgi_seam(worker):
     from genropy_asgi.spa.genropy_worker import GenropyRegistry
 
-    assert worker.wsgi_app is worker.gnr_site  # debug=False: unwrapped
+    assert worker.wsgi_app.application is worker.gnr_site  # WSK adapter around the site
     assert worker.gnr_site.spa_worker is worker
     assert isinstance(worker.registry, GenropyRegistry)
     assert worker.gnr_site._local_mode is True
